@@ -177,26 +177,29 @@ export default function NuevoDespacho() {
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
+  e.preventDefault()
+  setLoading(true)
+  setError('')
 
-    // Subir PDF a Storage
-    let pdf_url = null
-    if (pdfFile) {
-      const fileName = `${form.id_despacho || form.nv}_${Date.now()}.pdf`
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('solicitudes-despacho')
-        .upload(fileName, pdfFile)
+  // Subir PDF a Storage
+  let pdf_url = null
+  if (pdfFile) {
+    const fileName = `${form.id_despacho || form.nv}_${Date.now()}.pdf`
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('solicitudes-despacho')
+      .upload(fileName, pdfFile)
 
-      if (uploadError) {
-        console.error('Error subiendo PDF:', uploadError)
-      } else {
-        pdf_url = uploadData?.path
-      }
+    if (uploadError) {
+      console.error('Error subiendo PDF:', uploadError)
+    } else {
+      pdf_url = uploadData?.path
     }
+  }
 
-    const { error } = await supabase.from('pedidos').insert({
+  // Insertar pedido
+  const { data: pedidoInsertado, error } = await supabase
+    .from('pedidos')
+    .insert({
       nv: form.nv,
       id_despacho: form.id_despacho,
       cliente: form.cliente,
@@ -212,16 +215,38 @@ export default function NuevoDespacho() {
       peso_total_kg: pesoTotal,
       volumen_total_m3: posicionesTotal,
     })
+    .select('id')
+    .single()
 
-    if (error) {
-      setError(error.message)
-      setLoading(false)
-      return
-    }
-
-    setExito(true)
+  if (error) {
+    setError(error.message)
     setLoading(false)
+    return
   }
+
+  // Insertar productos en pedido_items
+  if (pedidoInsertado && productosNV.length > 0) {
+    const items = productosNV.map((p: any) => ({
+      pedido_id: pedidoInsertado.id,
+      codigo_material: String(p.id_producto),
+      nombre: p.descripcion,
+      cantidad: p.cantidad,
+      unidad: p.material?.unidad_base || 'u',
+    }))
+
+    const { error: itemsError } = await supabase
+      .from('pedido_items')
+      .insert(items)
+
+    if (itemsError) {
+      console.error('Error guardando productos:', itemsError)
+      // No bloqueamos — el pedido ya se guardó
+    }
+  }
+
+  setExito(true)
+  setLoading(false)
+}
 
   if (exito) return (
     <div className="min-h-screen bg-gray-100 flex items-center justify-center">

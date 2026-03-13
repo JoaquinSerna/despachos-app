@@ -1,277 +1,197 @@
 'use client'
-
+ 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
-
+ 
 const CARDS = [
-  {
-    href: '/despachos',
-    emoji: '📦',
-    titulo: 'Nuevo despacho',
-    descripcion: 'Cargar solicitud desde PDF',
-    color: 'border-blue-400',
-    bg: 'hover:bg-blue-50',
-    disponible: true,
-  },
-  {
-    href: '/flota',
-    emoji: '🚛',
-    titulo: 'Flota del día',
-    descripcion: 'Configurar camiones disponibles',
-    color: 'border-orange-400',
-    bg: 'hover:bg-orange-50',
-    disponible: true,
-  },
-  {
-    href: '/programacion',
-    emoji: '📅',
-    titulo: 'Programación',
-    descripcion: 'Asignar pedidos a camiones',
-    color: 'border-purple-400',
-    bg: 'hover:bg-purple-50',
-    disponible: true,
-  },
-  {
-    href: '/ruteo',
-    emoji: '🗺️',
-    titulo: 'Ruteo',
-    descripcion: 'Hoja de ruta por chofer',
-    color: 'border-green-400',
-    bg: 'hover:bg-green-50',
-    disponible: false,
-  },
-  {
-    href: '/metricas',
-    emoji: '📊',
-    titulo: 'Métricas',
-    descripcion: 'KPIs y estadísticas',
-    color: 'border-pink-400',
-    bg: 'hover:bg-pink-50',
-    disponible: false,
-  },
+  { href: '/despachos', icon: '📦', titulo: 'Nuevo despacho', descripcion: 'Cargar solicitud desde PDF', disponible: true },
+  { href: '/flota', icon: '🚛', titulo: 'Flota del día', descripcion: 'Configurar camiones disponibles', disponible: true },
+  { href: '/programacion', icon: '📅', titulo: 'Programación', descripcion: 'Asignar pedidos a camiones', disponible: true },
+  { href: '/ruteo', icon: '🗺️', titulo: 'Ruteo', descripcion: 'Hoja de ruta por chofer', disponible: false },
+  { href: '/metricas', icon: '📊', titulo: 'Métricas', descripcion: 'KPIs y estadísticas', disponible: false },
 ]
-
+ 
 const ESTADO_COLOR: Record<string, string> = {
-  pendiente:   'bg-yellow-100 text-yellow-700',
-  programado:  'bg-blue-100 text-blue-700',
-  en_camino:   'bg-purple-100 text-purple-700',
-  entregado:   'bg-green-100 text-green-700',
-  cancelado:   'bg-red-100 text-red-700',
+  pendiente:  'bg-yellow-100 text-yellow-700',
+  programado: 'bg-blue-100 text-blue-700',
+  en_camino:  'bg-purple-100 text-purple-700',
+  entregado:  'bg-green-100 text-green-700',
+  cancelado:  'bg-red-100 text-red-700',
 }
-
+ 
 const ESTADO_LABEL: Record<string, string> = {
-  pendiente:   'Pendiente',
-  programado:  'Programado',
-  en_camino:   'En camino',
-  entregado:   'Entregado',
-  cancelado:   'Cancelado',
+  pendiente: 'Pendiente', programado: 'Programado', en_camino: 'En camino', entregado: 'Entregado', cancelado: 'Cancelado',
 }
-
+ 
 interface PedidoReciente {
-  id: string
-  nv: string
-  cliente: string
-  sucursal: string
-  estado: string
-  fecha_entrega: string
-  vuelta: number
+  id: string; nv: string; cliente: string; sucursal: string; estado: string; fecha_entrega: string; vuelta: number
 }
-
+ 
 export default function Dashboard() {
   const [usuario, setUsuario] = useState<any>(null)
   const [stats, setStats] = useState({ pendientes: 0, hoy: 0, enCamino: 0, entregadosHoy: 0 })
   const [recientes, setRecientes] = useState<PedidoReciente[]>([])
   const [cargando, setCargando] = useState(true)
   const router = useRouter()
-
+ 
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
+    supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUsuario(user)
-    }
-    getUser()
+    })
     cargarDatos()
   }, [])
-
+ 
   const cargarDatos = async () => {
     const hoy = new Date().toISOString().split('T')[0]
-
-    const [{ count: pendientes }, { count: hoyCount }, { count: enCamino }, { count: entregadosHoy }, { data: recientesData }] =
-      await Promise.all([
-        supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'pendiente'),
-        supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('fecha_entrega', hoy),
-        supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'en_camino'),
-        supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'entregado').eq('fecha_entrega', hoy),
-        supabase.from('pedidos').select('id, nv, cliente, sucursal, estado, fecha_entrega, vuelta').order('created_at', { ascending: false }).limit(8),
-      ])
-
-    setStats({
-      pendientes: pendientes || 0,
-      hoy: hoyCount || 0,
-      enCamino: enCamino || 0,
-      entregadosHoy: entregadosHoy || 0,
-    })
-    setRecientes(recientesData || [])
+    const [{ count: p }, { count: h }, { count: e }, { count: ed }, { data: r }] = await Promise.all([
+      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'pendiente'),
+      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('fecha_entrega', hoy),
+      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'en_camino'),
+      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'entregado').eq('fecha_entrega', hoy),
+      supabase.from('pedidos').select('id,nv,cliente,sucursal,estado,fecha_entrega,vuelta').order('created_at', { ascending: false }).limit(10),
+    ])
+    setStats({ pendientes: p || 0, hoy: h || 0, enCamino: e || 0, entregadosHoy: ed || 0 })
+    setRecientes(r || [])
     setCargando(false)
   }
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/')
-  }
-
+ 
   if (!usuario || cargando) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <p className="text-gray-400 text-sm">Cargando...</p>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
     </div>
   )
-
+ 
   const hora = new Date().getHours()
   const saludo = hora < 12 ? 'Buenos días' : hora < 18 ? 'Buenas tardes' : 'Buenas noches'
   const nombre = usuario.email?.split('@')[0] || 'usuario'
-
+ 
   return (
-    <div className="min-h-screen bg-gray-100">
-
-      {/* Nav */}
-      <nav className="bg-white shadow px-6 py-4 flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-600 text-white font-bold text-lg px-3 py-1 rounded-lg">CaC</div>
-          <div>
-            <h1 className="text-lg font-bold text-gray-800 leading-tight">Construyo al Costo</h1>
-            <p className="text-xs text-gray-400">Sistema de despachos</p>
+    <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
+ 
+      {/* Navbar */}
+      <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm shrink-0" style={{ background: '#254A96' }}>C</div>
+            <div className="hidden sm:block">
+              <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Construyo al Costo</span>
+              <span className="text-xs ml-2" style={{ color: '#B9BBB7' }}>Despachos</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs hidden md:block" style={{ color: '#B9BBB7' }}>{usuario.email}</span>
+            <button onClick={() => { supabase.auth.signOut(); router.push('/') }}
+              className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+              style={{ background: '#fde8e8', color: '#E52322' }}>
+              Salir
+            </button>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-gray-500 text-sm hidden md:block">{usuario.email}</span>
-          <button onClick={handleLogout} className="text-sm bg-red-50 text-red-500 hover:bg-red-100 px-3 py-1.5 rounded-lg transition">
-            Cerrar sesión
-          </button>
-        </div>
       </nav>
-
-      <main className="p-6 max-w-7xl mx-auto">
-
+ 
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
+ 
         {/* Saludo */}
         <div className="mb-6">
-          <h2 className="text-2xl font-bold text-gray-800">{saludo}, {nombre} 👋</h2>
-          <p className="text-gray-400 text-sm mt-1">
+          <h2 className="text-xl md:text-2xl font-semibold" style={{ color: '#254A96' }}>{saludo}, {nombre} 👋</h2>
+          <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>
             {new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
-
+ 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-4">
-            <div className="bg-yellow-100 text-2xl p-3 rounded-lg">⏳</div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{stats.pendientes}</p>
-              <p className="text-xs text-gray-400">Pendientes</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {[
+            { label: 'Pendientes', value: stats.pendientes, emoji: '⏳', bg: '#fff8e1', color: '#b45309' },
+            { label: 'Entregas hoy', value: stats.hoy, emoji: '📅', bg: '#e8edf8', color: '#254A96' },
+            { label: 'En camino', value: stats.enCamino, emoji: '🚚', bg: '#f3e8ff', color: '#7c3aed' },
+            { label: 'Entregados hoy', value: stats.entregadosHoy, emoji: '✅', bg: '#d1fae5', color: '#065f46' },
+          ].map(s => (
+            <div key={s.label} className="bg-white rounded-xl p-4 flex items-center gap-3 shadow-sm">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center text-xl shrink-0" style={{ background: s.bg }}>{s.emoji}</div>
+              <div>
+                <p className="text-2xl font-bold leading-none" style={{ color: s.color }}>{s.value}</p>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>{s.label}</p>
+              </div>
             </div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-4">
-            <div className="bg-blue-100 text-2xl p-3 rounded-lg">📅</div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{stats.hoy}</p>
-              <p className="text-xs text-gray-400">Entregas hoy</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-4">
-            <div className="bg-purple-100 text-2xl p-3 rounded-lg">🚚</div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{stats.enCamino}</p>
-              <p className="text-xs text-gray-400">En camino</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-4">
-            <div className="bg-green-100 text-2xl p-3 rounded-lg">✅</div>
-            <div>
-              <p className="text-2xl font-bold text-gray-800">{stats.entregadosHoy}</p>
-              <p className="text-xs text-gray-400">Entregados hoy</p>
-            </div>
-          </div>
+          ))}
         </div>
-
-        {/* Layout dos columnas */}
+ 
+        {/* Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-          {/* Columna izquierda — módulos */}
-          <div className="lg:col-span-1">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Módulos</h3>
-            <div className="space-y-3">
+ 
+          {/* Módulos */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#B9BBB7' }}>Módulos</p>
+            <div className="space-y-2">
               {CARDS.map(card => (
-                <div
-                  key={card.href}
-                  onClick={() => card.disponible && router.push(card.href)}
-                  className={`bg-white rounded-xl shadow p-4 border-l-4 ${card.color} flex items-center gap-4 transition
-                    ${card.disponible
-                      ? `cursor-pointer ${card.bg} hover:shadow-md`
-                      : 'opacity-50 cursor-not-allowed'
-                    }`}
+                <button key={card.href} onClick={() => card.disponible && router.push(card.href)}
+                  disabled={!card.disponible}
+                  className="w-full bg-white rounded-xl p-4 flex items-center gap-4 shadow-sm text-left transition-all disabled:opacity-50"
+                  style={{ borderLeft: `4px solid ${card.disponible ? '#254A96' : '#B9BBB7'}` }}
+                  onMouseEnter={e => { if (card.disponible) (e.currentTarget as HTMLElement).style.transform = 'translateX(2px)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'translateX(0)' }}
                 >
-                  <div className="text-2xl">{card.emoji}</div>
+                  <span className="text-2xl">{card.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-800 text-sm">{card.titulo}</h3>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm" style={{ color: '#254A96' }}>{card.titulo}</span>
                       {!card.disponible && (
-                        <span className="text-xs bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded-full">Próximamente</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100" style={{ color: '#B9BBB7' }}>Próximamente</span>
                       )}
                     </div>
-                    <p className="text-gray-400 text-xs mt-0.5">{card.descripcion}</p>
+                    <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>{card.descripcion}</p>
                   </div>
-                  {card.disponible && (
-                    <span className="text-gray-300 text-lg">›</span>
-                  )}
-                </div>
+                  {card.disponible && <span className="text-lg" style={{ color: '#B9BBB7' }}>›</span>}
+                </button>
               ))}
             </div>
           </div>
-
-          {/* Columna derecha — actividad reciente */}
+ 
+          {/* Actividad reciente */}
           <div className="lg:col-span-2">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Actividad reciente</h3>
-            <div className="bg-white rounded-xl shadow overflow-hidden">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#B9BBB7' }}>Actividad reciente</p>
+            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               {recientes.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">
+                <div className="p-12 text-center">
                   <div className="text-4xl mb-3">📭</div>
-                  <p className="text-sm">No hay pedidos cargados todavía</p>
+                  <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos cargados todavía</p>
                 </div>
               ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Cliente</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">NV</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Sucursal</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Entrega</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-wide">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recientes.map((p, i) => (
-                      <tr key={p.id} className={`border-b border-gray-50 hover:bg-gray-50 transition ${i % 2 === 0 ? '' : 'bg-gray-50/30'}`}>
-                        <td className="px-4 py-3 font-medium text-gray-800 truncate max-w-[160px]">{p.cliente}</td>
-                        <td className="px-4 py-3 text-gray-500">{p.nv}</td>
-                        <td className="px-4 py-3 text-gray-500">{p.sucursal}</td>
-                        <td className="px-4 py-3 text-gray-500">
-                          {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}
-                          <span className="ml-1 text-gray-400">V{p.vuelta}</span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
-                            {ESTADO_LABEL[p.estado] ?? p.estado}
-                          </span>
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
+                        {['Cliente', 'NV', 'Sucursal', 'Entrega', 'Estado'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {recientes.map((p, i) => (
+                        <tr key={p.id} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
+                          <td className="px-4 py-3 font-medium max-w-[140px] truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</td>
+                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.nv}</td>
+                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.sucursal}</td>
+                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                            {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}
+                            <span className="ml-1 text-xs">V{p.vuelta}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
+                              {ESTADO_LABEL[p.estado] ?? p.estado}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>
-
         </div>
       </main>
     </div>

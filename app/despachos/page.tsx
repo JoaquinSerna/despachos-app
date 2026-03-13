@@ -340,7 +340,7 @@ export default function NuevoDespacho() {
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Fecha de entrega</label>
                   <input type="date" name="fecha_entrega" value={form.fecha_entrega} onChange={handleChange} required
-                    className={inputClass} style={{ ...inputStyle, focusRingColor: '#254A96' }} />
+                    className={inputClass} style={inputStyle} />
                 </div>
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Vuelta</label>

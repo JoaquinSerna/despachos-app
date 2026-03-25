@@ -4,17 +4,24 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
-const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Fuera de servicio']
+const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar', 'Fuera de servicio']
+
 const SUCURSAL_LABELS: Record<string, string> = {
-  'LP520': 'La Plata 520', 'LP139': 'La Plata 139',
-  'Guernica': 'Guernica', 'Cañuelas': 'Cañuelas', 'Fuera de servicio': 'Fuera de servicio',
+  'LP520': 'La Plata 520',
+  'LP139': 'La Plata 139',
+  'Guernica': 'Guernica',
+  'Cañuelas': 'Cañuelas',
+  'Pinamar': 'Pinamar',
+  'Fuera de servicio': 'Fuera de servicio',
 }
+
 const SUCURSAL_COLORS: Record<string, { border: string; bg: string; header: string }> = {
-  'LP520':              { border: '#254A96', bg: '#e8edf8', header: '#254A96' },
-  'LP139':              { border: '#7c3aed', bg: '#f3e8ff', header: '#7c3aed' },
-  'Guernica':           { border: '#059669', bg: '#d1fae5', header: '#059669' },
-  'Cañuelas':           { border: '#d97706', bg: '#fef3c7', header: '#d97706' },
-  'Fuera de servicio':  { border: '#E52322', bg: '#fde8e8', header: '#E52322' },
+  'LP520':             { border: '#254A96', bg: '#e8edf8', header: '#254A96' },
+  'LP139':             { border: '#7c3aed', bg: '#f3e8ff', header: '#7c3aed' },
+  'Guernica':          { border: '#059669', bg: '#d1fae5', header: '#059669' },
+  'Cañuelas':          { border: '#d97706', bg: '#fef3c7', header: '#d97706' },
+  'Pinamar':           { border: '#0891b2', bg: '#e0f2fe', header: '#0891b2' },
+  'Fuera de servicio': { border: '#E52322', bg: '#fde8e8', header: '#E52322' },
 }
 
 export default function FlotaDia() {
@@ -47,9 +54,9 @@ export default function FlotaDia() {
       setCamiones(flotaBase?.map(c => {
         const diaConfig = flotaDia.find((d: any) => d.camion_codigo === c.codigo)
         return { ...c, sucursal_dia: diaConfig ? diaConfig.sucursal : c.sucursal, activo_dia: diaConfig ? diaConfig.activo : true }
-      }) || [])
+      }) ?? [])
     } else {
-      setCamiones(flotaBase?.map(c => ({ ...c, sucursal_dia: c.sucursal, activo_dia: true })) ??[])
+      setCamiones(flotaBase?.map(c => ({ ...c, sucursal_dia: c.sucursal, activo_dia: true })) ?? [])
     }
     setLoading(false)
   }
@@ -128,7 +135,7 @@ export default function FlotaDia() {
           Arrastrá los camiones entre sucursales o marcalos como fuera de servicio.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {SUCURSALES.map(sucursal => {
             const colors = SUCURSAL_COLORS[sucursal]
             const enSucursal = camionesEnSucursal(sucursal)

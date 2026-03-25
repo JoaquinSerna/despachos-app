@@ -10,20 +10,36 @@ const VUELTAS = [
   { vuelta: 3, label: 'Vuelta 3 — 13:00 a 15:00hs' },
   { vuelta: 4, label: 'Vuelta 4 — 15:00 a 17:00hs' },
 ]
-function detectarSucursal(texto: string): string {
-  const upper = texto.toUpperCase()
-  if (upper.includes('520')) return 'LP520'
-  if (upper.includes('139')) return 'LP139'
-  if (upper.includes('GUERNICA')) return 'Guernica'
-  if (upper.includes('CAÑUELAS') || upper.includes('CANUELAS')) return 'Cañuelas'
+
+function detectarSucursal(sucursalObra: string, deposito: string): string {
+  const obra = sucursalObra?.toUpperCase() || ''
+  if (obra.includes('520') || obra.includes('LA PLATA')) return 'LP520'
+  if (obra.includes('139')) return 'LP139'
+  if (obra.includes('GUERNICA')) return 'Guernica'
+  if (obra.includes('CAÑUELAS') || obra.includes('CANUELAS')) return 'Cañuelas'
+  if (obra.includes('PINAMAR') || obra.includes('COSTA')) return 'Pinamar'
+
+  const dep = deposito?.toUpperCase() || ''
+  if (dep.includes('520')) return 'LP520'
+  if (dep.includes('139')) return 'LP139'
+  if (dep.includes('GUERNICA')) return 'Guernica'
+  if (dep.includes('CAÑUELAS') || dep.includes('CANUELAS')) return 'Cañuelas'
+  if (dep.includes('COSTA') || dep.includes('PINAMAR')) return 'Pinamar'
   return ''
 }
 
-// Toast simple inline
 let _setToast: ((t: { msg: string; tipo: 'ok' | 'err' } | null) => void) | null = null
 function toast(msg: string, tipo: 'ok' | 'err' = 'ok') {
   _setToast?.({ msg, tipo })
   setTimeout(() => _setToast?.(null), 3500)
+}
+
+const FORM_INICIAL = {
+  nv: '', id_despacho: '', cliente: '', telefono: '',
+  direccion: '', sucursal: '', fecha_entrega: '', vuelta: '',
+  estado_pago: '', notas: '',
+  latitud: null as number | null,
+  longitud: null as number | null,
 }
 
 export default function NuevoDespacho() {
@@ -40,11 +56,7 @@ export default function NuevoDespacho() {
   const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [pdfListo, setPdfListo] = useState(false)
   const [toastState, setToastState] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
-
-  const [form, setForm] = useState({
-    nv: '', id_despacho: '', cliente: '', telefono: '',
-    direccion: '', sucursal: '', fecha_entrega: '', vuelta: '', estado_pago: '', notas: ''
-  })
+  const [form, setForm] = useState(FORM_INICIAL)
 
   useEffect(() => { _setToast = setToastState; return () => { _setToast = null } }, [])
 
@@ -120,15 +132,26 @@ export default function NuevoDespacho() {
       if (!data.success) { setError('No se pudo leer el PDF.'); setLeyendoPDF(false); return }
 
       const { datos } = data
-      const sucursal = detectarSucursal(datos.deposito || '')
-      setForm(prev => ({ ...prev, nv: datos.nv || '', id_despacho: datos.id_despacho || '', cliente: datos.cliente || '', telefono: datos.telefono || '', direccion: datos.direccion || '', sucursal }))
+      const sucursal = detectarSucursal(datos.sucursal_obra || '', datos.deposito || '')
+      setForm(prev => ({
+        ...prev,
+        nv: datos.nv || '',
+        id_despacho: datos.id_despacho || '',
+        cliente: datos.cliente || '',
+        telefono: datos.telefono || '',
+        direccion: datos.direccion || '',
+        sucursal,
+        latitud: datos.latitud ?? null,
+        longitud: datos.longitud ?? null,
+      }))
 
       if (datos.productos?.length > 0) {
         const ids = datos.productos.map((p: any) => p.id_producto)
         const { data: materiales } = await supabase.from('materiales').select('*').in('id', ids)
         const productosConDatos = datos.productos.map((p: any) => {
           const material = materiales?.find((m: any) => m.id === p.id_producto)
-          return { ...p, material,
+          return {
+            ...p, material,
             posiciones: material ? Math.ceil(p.cantidad / material.cant_x_unid_log) * material.posiciones_x_unid_log : 0,
             peso: material ? Math.ceil(p.cantidad / material.cant_x_unid_log) * material.peso_kg_x_posicion : 0,
           }
@@ -149,7 +172,6 @@ export default function NuevoDespacho() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('')
 
-    // Verificar duplicado
     const { data: existente } = await supabase.from('pedidos').select('id').eq('id_despacho', form.id_despacho).single()
     if (existente) { setError(`Ya existe un pedido para la solicitud ${form.id_despacho}`); setLoading(false); return }
 
@@ -159,10 +181,22 @@ export default function NuevoDespacho() {
     }
 
     const { data: pedidoInsertado, error } = await supabase.from('pedidos').insert({
-      nv: form.nv, id_despacho: form.id_despacho, cliente: form.cliente, telefono: form.telefono,
-      direccion: form.direccion, sucursal: form.sucursal, fecha_entrega: form.fecha_entrega,
-      vuelta: parseInt(form.vuelta), estado_pago: form.estado_pago, notas: form.notas,
-      vendedor_id: null, estado: 'pendiente', peso_total_kg: pesoTotal, volumen_total_m3: posicionesTotal,
+      nv: form.nv,
+      id_despacho: form.id_despacho,
+      cliente: form.cliente,
+      telefono: form.telefono,
+      direccion: form.direccion,
+      sucursal: form.sucursal,
+      fecha_entrega: form.fecha_entrega,
+      vuelta: parseInt(form.vuelta),
+      estado_pago: form.estado_pago,
+      notas: form.notas,
+      vendedor_id: null,
+      estado: 'pendiente',
+      peso_total_kg: pesoTotal,
+      volumen_total_m3: posicionesTotal,
+      latitud: form.latitud,
+      longitud: form.longitud,
     }).select('id').single()
 
     if (error) { setError(error.message); setLoading(false); return }
@@ -170,8 +204,11 @@ export default function NuevoDespacho() {
     if (pedidoInsertado && productosNV.length > 0) {
       await supabase.from('pedido_items').insert(
         productosNV.map((p: any) => ({
-          pedido_id: pedidoInsertado.id, codigo_material: String(p.id_producto),
-          nombre: p.descripcion, cantidad: p.cantidad, unidad: p.material?.unidad_base || 'u',
+          pedido_id: pedidoInsertado.id,
+          codigo_material: String(p.id_producto),
+          nombre: p.descripcion,
+          cantidad: p.cantidad,
+          unidad: p.material?.unidad_base || 'u',
         }))
       )
     }
@@ -182,8 +219,12 @@ export default function NuevoDespacho() {
 
   const resetForm = () => {
     setExito(false)
-    setForm({ nv: '', id_despacho: '', cliente: '', telefono: '', direccion: '', sucursal: '', fecha_entrega: '', vuelta: '', estado_pago: '', notas: '' })
-    setProductosNV([]); setPesoTotal(0); setPosicionesTotal(0); setPdfFile(null); setPdfListo(false)
+    setForm(FORM_INICIAL)
+    setProductosNV([])
+    setPesoTotal(0)
+    setPosicionesTotal(0)
+    setPdfFile(null)
+    setPdfListo(false)
   }
 
   const inputClass = "w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-colors"
@@ -196,10 +237,10 @@ export default function NuevoDespacho() {
         <h2 className="text-2xl font-semibold mb-2" style={{ color: '#254A96' }}>Pedido cargado</h2>
         <p className="text-sm mb-8" style={{ color: '#B9BBB7' }}>La solicitud de despacho fue registrada correctamente.</p>
         <div className="flex gap-3 justify-center">
-          <button onClick={resetForm} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white transition-colors" style={{ background: '#254A96' }}>
+          <button onClick={resetForm} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: '#254A96' }}>
             Nuevo pedido
           </button>
-          <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium transition-colors" style={{ background: '#f4f4f3', color: '#666' }}>
+          <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
             Ir al panel
           </button>
         </div>
@@ -222,14 +263,12 @@ export default function NuevoDespacho() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-3xl mx-auto px-4 md:px-6 h-14 flex items-center gap-4">
           <button onClick={() => router.push('/dashboard')}
-            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg"
             style={{ color: '#254A96', background: '#e8edf8' }}>
             ← Volver
           </button>
           <div className="w-px h-5 bg-gray-200" />
-          <div>
-            <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Nueva Solicitud de Despacho</span>
-          </div>
+          <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Nueva Solicitud de Despacho</span>
         </div>
       </nav>
 
@@ -315,6 +354,12 @@ export default function NuevoDespacho() {
                 <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Dirección de entrega</p>
                 <p className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{form.direccion || '—'}</p>
               </div>
+              {form.latitud && form.longitud && (
+                <div>
+                  <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Coordenadas</p>
+                  <p className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{form.latitud}, {form.longitud}</p>
+                </div>
+              )}
               <div>
                 <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Sucursal</p>
                 {form.sucursal ? (
@@ -327,6 +372,7 @@ export default function NuevoDespacho() {
                     <option value="LP139">LP139</option>
                     <option value="Guernica">Guernica</option>
                     <option value="Cañuelas">Cañuelas</option>
+                    <option value="Pinamar">Pinamar</option>
                   </select>
                 )}
               </div>

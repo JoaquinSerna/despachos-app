@@ -36,17 +36,20 @@ export async function POST(request: NextRequest) {
               type: 'text',
               text: `Extraé los datos de esta Solicitud de Despacho y devolvé SOLO un JSON válido sin texto adicional:
 {
-  "nv": "número del campo Presupuesto 2 asociado (ej: 33555)",
-  "id_despacho": "número del campo Solicitud de Despacho (ej: 28247)",
+  "nv": "número del Presupuesto 2 asociado sin el # (ej: 35390)",
+  "id_despacho": "número de la Solicitud de Despacho sin el # (ej: 29639)",
   "cliente": "nombre del cliente",
-  "telefono": "teléfono o string vacío",
-  "direccion": "dirección de entrega completa con ciudad y provincia",
-  "barrio_cerrado": false,
+  "telefono": "teléfono del contacto de obra o string vacío",
+  "direccion": "dirección de entrega completa",
+  "deposito": "nombre del depósito de salida (ej: CAC LA PLATA 520, CAC GUERNICA, CAC CAÑUELAS, CAC COSTA ATLANTICA)",
+  "sucursal_obra": "sucursal de la obra exactamente como figura en el PDF (ej: Pinamar, La Plata, Guernica, Cañuelas)",
+  "latitud": -37.254967,
+  "longitud": -56.984971,
   "productos": [
     {"id_producto": 1234, "descripcion": "nombre", "cantidad": 10}
   ]
 }
-No incluyas el producto 9024 Transporte ni el producto 312 Pallet. Solo el JSON, sin markdown.`
+No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo el JSON, sin markdown.`
             }
           ]
         }
@@ -62,4 +65,5 @@ No incluyas el producto 9024 Transporte ni el producto 312 Pallet. Solo el JSON,
     console.error('Error:', error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
 }

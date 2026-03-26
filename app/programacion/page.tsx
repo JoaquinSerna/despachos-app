@@ -234,44 +234,55 @@ export default function ProgramacionPage() {
   }
 
   async function handleConfirmar() {
-  setGuardando(true)
+    setGuardando(true)
 
-  const asignados = pedidos.filter(p => p.camion_id)
-  const sinCamion = pedidos.filter(p => !p.camion_id)
+    const asignados = pedidos.filter(p => p.camion_id)
+    const sinCamion = pedidos.filter(p => !p.camion_id)
 
-  const porCamion: Record<string, Pedido[]> = {}
-  asignados.forEach(p => {
-    if (!porCamion[p.camion_id!]) porCamion[p.camion_id!] = []
-    porCamion[p.camion_id!].push(p)
-  })
+    const porCamion: Record<string, Pedido[]> = {}
+    asignados.forEach(p => {
+      if (!porCamion[p.camion_id!]) porCamion[p.camion_id!] = []
+      porCamion[p.camion_id!].push(p)
+    })
 
-  const ordenes: Record<string, number> = {}
-  Object.entries(porCamion).forEach(([, pedidosCamion]) => {
-    const orden = calcularOrdenRuta(pedidosCamion, sucursal)
-    Object.assign(ordenes, orden)
-  })
+    const ordenes: Record<string, number> = {}
+    Object.entries(porCamion).forEach(([, pedidosCamion]) => {
+      const orden = calcularOrdenRuta(pedidosCamion, sucursal)
+      Object.assign(ordenes, orden)
+    })
 
-  await Promise.all([
-    ...asignados.map(p =>
-      supabase.from('pedidos').update({
-        camion_id: p.camion_id,
-        estado: 'programado',
-        orden_entrega: ordenes[p.id] ?? null,
-      }).eq('id', p.id)
-    ),
-    ...sinCamion.map(p =>
-      supabase.from('pedidos').update({
-        camion_id: null,
-        estado: 'pendiente',
-        orden_entrega: null,
-      }).eq('id', p.id)
-    ),
-  ])
+    try {
+      const resultados = await Promise.all([
+        ...asignados.map(p =>
+          supabase.from('pedidos').update({
+            camion_id: p.camion_id,
+            estado: 'programado',
+            orden_entrega: ordenes[p.id] ?? null,
+          }).eq('id', p.id)
+        ),
+        ...sinCamion.map(p =>
+          supabase.from('pedidos').update({
+            camion_id: null,
+            estado: 'pendiente',
+            orden_entrega: null,
+          }).eq('id', p.id)
+        ),
+      ])
 
-  setGuardando(false)
-  setConfirmado(true)
-  showToast('Programación confirmada')
-}
+      const errores = resultados.filter(r => r.error)
+      if (errores.length > 0) {
+        console.error('Errores al confirmar:', errores.map(r => r.error))
+        showToast(`Error al guardar: ${errores[0].error?.message ?? 'error desconocido'}`, 'err')
+      } else {
+        setConfirmado(true)
+        showToast('Programación confirmada')
+      }
+    } catch (e: any) {
+      showToast(`Error inesperado: ${e.message}`, 'err')
+    } finally {
+      setGuardando(false)
+    }
+  }
 
   const totalAsig = pedidos.filter(p => p.camion_id).length
   const totalSin = pedidos.length - totalAsig

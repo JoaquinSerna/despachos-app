@@ -65,6 +65,7 @@ export default function FlotaBasePage() {
   const guardarCamion = async (c: Camion) => {
     setGuardando(true)
     const { error } = await supabase.from('camiones_flota').update({
+      sucursal: c.sucursal,
       posiciones_total: c.posiciones_total,
       tonelaje_max_kg: c.tonelaje_max_kg,
       grua_hidraulica: c.grua_hidraulica,
@@ -200,7 +201,20 @@ export default function FlotaBasePage() {
                       {/* Formulario edición */}
                       {editando && (
                         <div className="px-4 py-4 space-y-4" style={{ borderTop: `1px solid ${colors.bg}` }}>
-                          <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>
+                              Sucursal base
+                            </label>
+                            <select
+                              value={c.sucursal}
+                              onChange={e => actualizar(c.codigo, 'sucursal', e.target.value)}
+                              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                              style={{ borderColor: '#e8edf8' }}>
+                              {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </div>
+
+                        <div className="grid grid-cols-2 gap-4">
                             <div>
                               <label className="block text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>
                                 Posiciones totales

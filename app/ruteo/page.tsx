@@ -80,12 +80,21 @@ export default function RuteoPage() {
         return
       }
 
-      // Chofer: camión asignado por admin_flota, no puede elegir
-      // Otros roles: pueden seleccionar para monitoreo
-      if (userData?.camion_codigo) {
-        setCamionSeleccionado(userData.camion_codigo)
-      }
       setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer', rol: userData?.rol ?? '' })
+
+      // Si es chofer, buscar el camión asignado para HOY en flota_dia
+      if (userData?.rol === 'chofer') {
+        const { data: asignacion } = await supabase
+          .from('flota_dia')
+          .select('camion_codigo')
+          .eq('fecha', hoy())
+          .eq('chofer_id', user.id)
+          .single()
+        if (asignacion?.camion_codigo) {
+          setCamionSeleccionado(asignacion.camion_codigo)
+        }
+      }
+
       setCargando(false)
     })
   }, [])

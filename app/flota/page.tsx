@@ -50,19 +50,19 @@ export default function FlotaDia() {
     const [{ data: flotaBase }, { data: flotaDia }, { data: choferesData }] = await Promise.all([
       supabase.from('camiones_flota').select('*').eq('activo', true).order('sucursal'),
       supabase.from('flota_dia').select('*').eq('fecha', fecha),
-      supabase.from('usuarios').select('id, nombre, camion_codigo').eq('rol', 'chofer').order('nombre'),
+      supabase.from('usuarios').select('id, nombre').eq('rol', 'chofer').order('nombre'),
     ])
 
     setChoferes(choferesData ?? [])
 
     setCamiones((flotaBase ?? []).map(c => {
       const diaConfig = flotaDia?.find((d: any) => d.camion_codigo === c.codigo)
-      const choferAsignado = choferesData?.find(ch => ch.camion_codigo === c.codigo)
       return {
         ...c,
         sucursal_dia: diaConfig ? diaConfig.sucursal : c.sucursal,
         activo_dia: diaConfig ? diaConfig.activo : true,
-        chofer_id: choferAsignado?.id ?? '',
+        // chofer_id viene de flota_dia (por fecha), no de usuarios (global)
+        chofer_id: diaConfig?.chofer_id ?? '',
       }
     }))
     setLoading(false)
@@ -89,23 +89,18 @@ export default function FlotaDia() {
   const guardarFlota = async () => {
     setGuardando(true)
     try {
-      // 1. Guardar flota del día
+      // Guardar flota del día con chofer incluido (todo en una sola operación)
       const { error } = await supabase.from('flota_dia').upsert(
-        camiones.map(c => ({ fecha, camion_codigo: c.codigo, sucursal: c.sucursal_dia, activo: c.activo_dia })),
+        camiones.map(c => ({
+          fecha,
+          camion_codigo: c.codigo,
+          sucursal: c.sucursal_dia,
+          activo: c.activo_dia,
+          chofer_id: c.chofer_id || null,
+        })),
         { onConflict: 'fecha,camion_codigo' }
       )
       if (error) throw error
-
-      // 2. Actualizar asignaciones de choferes
-      // Primero limpiar todos los que están en este set de camiones
-      const codigosCamiones = camiones.map(c => c.codigo)
-      await supabase.from('usuarios').update({ camion_codigo: null })
-        .eq('rol', 'chofer').in('camion_codigo', codigosCamiones)
-
-      // Luego asignar los nuevos
-      for (const c of camiones.filter(c => c.chofer_id)) {
-        await supabase.from('usuarios').update({ camion_codigo: c.codigo }).eq('id', c.chofer_id)
-      }
 
       showToast('Flota y choferes guardados correctamente')
     } catch (e: any) {

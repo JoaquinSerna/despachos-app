@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 
 const TODAS_LAS_CARDS = [
   { href: '/despachos',      icon: '📦', titulo: 'Nueva solicitud',    descripcion: 'Cargar solicitud de despacho',       disponible: true,  roles: ['gerencia','ruteador','comercial'] },
+  { href: '/flota-base',     icon: '⚙️', titulo: 'Flota base',         descripcion: 'Camiones, posiciones y choferes habituales', disponible: true, roles: ['gerencia','admin_flota'] },
   { href: '/flota',          icon: '🚛', titulo: 'Flota del día',      descripcion: 'Configurar camiones y choferes',     disponible: true,  roles: ['gerencia','admin_flota'] },
   { href: '/programacion',   icon: '📅', titulo: 'Programación',       descripcion: 'Asignar pedidos a camiones',         disponible: true,  roles: ['gerencia','ruteador'] },
   { href: '/ruteo',          icon: '🗺️', titulo: 'Ruteo',              descripcion: 'Ver recorridos del día',             disponible: true,  roles: ['gerencia','admin_flota','ruteador'] },

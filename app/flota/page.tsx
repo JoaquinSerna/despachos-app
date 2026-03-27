@@ -374,7 +374,8 @@ function VistaEditar({ fecha, onVolver, showToast }: {
         ...c,
         sucursal_dia: diaConfig ? diaConfig.sucursal : c.sucursal,
         activo_dia: diaConfig ? diaConfig.activo : true,
-        chofer_id: diaConfig?.chofer_id ?? '',
+        // Si ya hay config del día usarla; si no, pre-cargar chofer habitual de la flota base
+        chofer_id: diaConfig?.chofer_id ?? c.chofer_id_default ?? '',
       }
     }))
     setLoading(false)

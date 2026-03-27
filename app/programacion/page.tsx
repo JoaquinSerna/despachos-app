@@ -18,7 +18,7 @@ interface Camion {
   posiciones_total: number; tonelaje_max_kg: number
   grua_hidraulica: boolean; volcador: boolean
 }
-interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number }
+interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number; posicionesTotal: number }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
@@ -37,6 +37,14 @@ const PAGO_LABEL: Record<string, string> = {
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
+function posicionesColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.asin(Math.sqrt(a))
+}
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.min(100, Math.round(peso / max * 100)) }
 function colorBarra(p: number) { return p > 100 ? '#7c2d12' : p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
 
@@ -215,8 +223,9 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onCancelar: (id: string) => void
   onCambiarVuelta: (id: string, vuelta: number) => void
 }) {
-  const { camion, pedidos, pesoTotal } = columna
+  const { camion, pedidos, pesoTotal, posicionesTotal } = columna
   const p = sinAsignar ? 0 : pct(pesoTotal, camion.tonelaje_max_kg)
+  const pPos = sinAsignar ? 0 : pct(posicionesTotal, camion.posiciones_total)
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
       onDragOver={e => onDragOver(e, sinAsignar ? null : camion.codigo)}
@@ -243,16 +252,29 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
               </div>
             </div>
             <p className="text-xs mb-2" style={{ color: '#B9BBB7' }}>{camion.tipo_unidad}</p>
-            <div className="w-full rounded-full h-1.5 mb-1" style={{ background: '#f0f0f0' }}>
-              <div className="h-1.5 rounded-full transition-all" style={{ width: `${p}%`, background: colorBarra(p) }} />
+            {/* Barra kg */}
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-xs w-4 shrink-0" style={{ color: '#B9BBB7' }}>⚖️</span>
+              <div className="flex-1 rounded-full h-1.5" style={{ background: '#f0f0f0' }}>
+                <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min(p, 100)}%`, background: colorBarra(p) }} />
+              </div>
+              <span className="text-xs w-8 text-right shrink-0" style={{ color: p >= 90 ? '#E52322' : '#B9BBB7', fontWeight: p >= 90 ? 600 : 400 }}>{p}%</span>
+            </div>
+            {/* Barra posiciones */}
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="text-xs w-4 shrink-0" style={{ color: '#B9BBB7' }}>📦</span>
+              <div className="flex-1 rounded-full h-1.5" style={{ background: '#f0f0f0' }}>
+                <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min(pPos, 100)}%`, background: colorBarra(pPos) }} />
+              </div>
+              <span className="text-xs w-8 text-right shrink-0" style={{ color: pPos >= 90 ? '#E52322' : '#B9BBB7', fontWeight: pPos >= 90 ? 600 : 400 }}>{pPos}%</span>
             </div>
             <div className="flex justify-between text-xs" style={{ color: '#B9BBB7' }}>
-              <span>{Math.round(pesoTotal)} kg</span>
-              <span style={{ color: p > 100 ? '#7c2d12' : p >= 90 ? '#E52322' : '#B9BBB7', fontWeight: p >= 90 ? 600 : 400 }}>{p}% · {camion.tonelaje_max_kg} kg</span>
+              <span>{Math.round(pesoTotal)} kg · {Math.round(posicionesTotal)} pos</span>
+              <span>{camion.tonelaje_max_kg} kg · {camion.posiciones_total} pos</span>
             </div>
-            {p > 100 && p <= 105 && (
+            {(p > 100 || pPos > 100) && (
               <div className="text-xs mt-1 font-medium" style={{ color: '#7c2d12' }}>
-                ⚠️ +{Math.round(pesoTotal - camion.tonelaje_max_kg)} kg sobre límite
+                ⚠️ {p > 100 ? `+${Math.round(pesoTotal - camion.tonelaje_max_kg)} kg` : ''}{p > 100 && pPos > 100 ? ' · ' : ''}{pPos > 100 ? `+${Math.round(posicionesTotal - camion.posiciones_total)} pos` : ''} sobre límite
               </div>
             )}
           </>
@@ -346,7 +368,10 @@ export default function ProgramacionPage() {
   }
 
   function construirColumnas(todos: Pedido[], cams: Camion[]) {
-    setColumnas(cams.map(c => { const ps = todos.filter(p => p.camion_id === c.codigo); return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps) } }))
+    setColumnas(cams.map(c => {
+      const ps = todos.filter(p => p.camion_id === c.codigo)
+      return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps), posicionesTotal: posicionesColumna(ps) }
+    }))
     setSinAsignar(todos.filter(p => !p.camion_id))
   }
 
@@ -411,6 +436,19 @@ export default function ProgramacionPage() {
         console.error('Errores al confirmar:', errores.map(r => r.error))
         showToast(`Error al guardar: ${errores[0].error?.message ?? 'error desconocido'}`, 'err')
       } else {
+        // Calcular km_ruta por camión y guardar en flota_dia
+        const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
+        await Promise.all(Object.entries(porCamion).map(async ([camionCodigo, pedidosCamion]) => {
+          const paradas = pedidosCamion
+            .filter(p => p.latitud && p.longitud)
+            .sort((a, b) => (ordenes[a.id] ?? 999) - (ordenes[b.id] ?? 999))
+          let km = 0; let prev = deposito
+          for (const p of paradas) { km += haversineKm(prev.lat, prev.lng, p.latitud!, p.longitud!); prev = { lat: p.latitud!, lng: p.longitud! } }
+          if (paradas.length > 0) km += haversineKm(prev.lat, prev.lng, deposito.lat, deposito.lng)
+          await supabase.from('flota_dia').update({ km_ruta: Math.round(km * 10) / 10 })
+            .eq('fecha', fecha).eq('camion_codigo', camionCodigo)
+        }))
+
         setConfirmado(true)
         showToast('Programación confirmada')
         if (usuarioActual) {

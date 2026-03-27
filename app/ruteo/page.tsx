@@ -51,6 +51,10 @@ export default function RuteoPage() {
   const [cargando, setCargando] = useState(true)
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+  const [horaInicio, setHoraInicio] = useState<string | null>(null)
+  const [horaFin, setHoraFin] = useState<string | null>(null)
+  const [kmRuta, setKmRuta] = useState<number | null>(null)
+  const [guardandoRuta, setGuardandoRuta] = useState(false)
 
   // Modal de confirmación
   const [modalPedido, setModalPedido] = useState<Pedido | null>(null)
@@ -104,7 +108,7 @@ export default function RuteoPage() {
   }, [fecha])
 
   useEffect(() => {
-    if (camionSeleccionado) cargarPedidos()
+    if (camionSeleccionado) { cargarPedidos(); cargarInfoRuta() }
   }, [camionSeleccionado, fecha])
 
   const cargarCamionesDisponibles = async () => {
@@ -130,6 +134,61 @@ export default function RuteoPage() {
       .order('codigo')
 
     setCamionesDisponibles(camionesData ?? [])
+  }
+
+  const cargarInfoRuta = async () => {
+    if (!camionSeleccionado) return
+    const { data } = await supabase
+      .from('flota_dia')
+      .select('hora_inicio, hora_fin, km_ruta')
+      .eq('fecha', fecha)
+      .eq('camion_codigo', camionSeleccionado)
+      .single()
+    setHoraInicio(data?.hora_inicio ?? null)
+    setHoraFin(data?.hora_fin ?? null)
+    setKmRuta(data?.km_ruta ?? null)
+  }
+
+  const iniciarRuta = async () => {
+    if (!camionSeleccionado || horaInicio) return
+    setGuardandoRuta(true)
+    const ahora = new Date().toISOString()
+    const { error } = await supabase.from('flota_dia')
+      .update({ hora_inicio: ahora })
+      .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
+    if (!error) { setHoraInicio(ahora); showToast('Ruta iniciada') }
+    else showToast('Error al iniciar ruta', 'err')
+    setGuardandoRuta(false)
+  }
+
+  const finalizarRuta = async () => {
+    if (!camionSeleccionado || horaFin) return
+    setGuardandoRuta(true)
+    const ahora = new Date().toISOString()
+    const { error } = await supabase.from('flota_dia')
+      .update({ hora_fin: ahora })
+      .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
+    if (!error) { setHoraFin(ahora); showToast('Ruta finalizada') }
+    else showToast('Error al finalizar ruta', 'err')
+    setGuardandoRuta(false)
+  }
+
+  function formatHora(iso: string) {
+    return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  function duracionRuta(): string | null {
+    if (!horaInicio) return null
+    const fin = horaFin ? new Date(horaFin) : new Date()
+    const min = Math.round((fin.getTime() - new Date(horaInicio).getTime()) / 60000)
+    const hs = Math.floor(min / 60); const m = min % 60
+    return hs > 0 ? `${hs}h ${m}min` : `${m}min`
+  }
+
+  function minPorKm(): string | null {
+    if (!horaInicio || !horaFin || !kmRuta || kmRuta === 0) return null
+    const min = (new Date(horaFin).getTime() - new Date(horaInicio).getTime()) / 60000
+    return `${(min / kmRuta).toFixed(1)} min/km`
   }
 
   const cargarPedidos = async () => {
@@ -427,6 +486,51 @@ export default function RuteoPage() {
               </div>
             ) : (
               <>
+                {/* Panel inicio/fin ruta — solo para el chofer */}
+                {datosUsuario?.rol === 'chofer' && (
+                  <div className="bg-white rounded-xl shadow-sm p-4 mb-4" style={{ border: '2px solid #e8edf8' }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Estado de ruta</span>
+                      {kmRuta && <span className="text-xs px-2 py-1 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>🗺️ {kmRuta} km planificados</span>}
+                    </div>
+                    {!horaInicio ? (
+                      <button onClick={iniciarRuta} disabled={guardandoRuta}
+                        className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                        style={{ background: '#10b981' }}>
+                        {guardandoRuta ? 'Guardando...' : '▶ Iniciar ruta'}
+                      </button>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Inicio</p>
+                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{formatHora(horaInicio)}</p>
+                          </div>
+                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Duración</p>
+                            <p className="font-bold text-sm" style={{ color: horaFin ? '#065f46' : '#254A96' }}>{duracionRuta()}</p>
+                          </div>
+                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Velocidad</p>
+                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{minPorKm() ?? '—'}</p>
+                          </div>
+                        </div>
+                        {horaFin ? (
+                          <div className="text-center py-2 rounded-xl text-sm font-semibold" style={{ background: '#d1fae5', color: '#065f46' }}>
+                            ✓ Ruta finalizada a las {formatHora(horaFin)}
+                          </div>
+                        ) : (
+                          <button onClick={finalizarRuta} disabled={guardandoRuta}
+                            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                            style={{ background: '#E52322' }}>
+                            {guardandoRuta ? 'Guardando...' : '⏹ Finalizar ruta'}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Progreso */}
                 {totalVuelta > 0 && (
                   <div className="bg-white rounded-xl shadow-sm p-4 mb-4">

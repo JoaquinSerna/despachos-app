@@ -42,7 +42,7 @@ function hoy() { return new Date().toISOString().split('T')[0] }
 export default function RuteoPage() {
   const router = useRouter()
   const [usuario, setUsuario] = useState<any>(null)
-  const [datosUsuario, setDatosUsuario] = useState<{ nombre: string } | null>(null)
+  const [datosUsuario, setDatosUsuario] = useState<{ nombre: string; rol: string } | null>(null)
   const [camionSeleccionado, setCamionSeleccionado] = useState<string | null>(null)
   const [camionesDisponibles, setCamionesDisponibles] = useState<CamionDisponible[]>([])
   const [pedidos, setPedidos] = useState<Pedido[]>([])
@@ -85,7 +85,7 @@ export default function RuteoPage() {
       if (userData?.camion_codigo) {
         setCamionSeleccionado(userData.camion_codigo)
       }
-      setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer' })
+      setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer', rol: userData?.rol ?? '' })
       setCargando(false)
     })
   }, [])
@@ -147,15 +147,10 @@ export default function RuteoPage() {
     setCargandoPedidos(false)
   }
 
-  const seleccionarCamion = async (codigo: string) => {
+  const seleccionarCamion = (codigo: string) => {
+    // Solo los choferes tienen un camión fijo; gerencia/ruteador seleccionan para monitoreo
+    // sin modificar su perfil en la base de datos
     setCamionSeleccionado(codigo)
-    // Guardar preferencia del chofer
-    if (usuario) {
-      await supabase
-        .from('usuarios')
-        .update({ camion_codigo: codigo })
-        .eq('id', usuario.id)
-    }
   }
 
   const abrirRecorridoCompleto = () => {

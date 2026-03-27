@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  { auth: { autoRefreshToken: false, persistSession: false } }
-)
+function getAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
+}
 
 // GET - listar todos los usuarios (bypasa RLS)
 export async function GET() {
   try {
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await getAdmin()
       .from('usuarios')
       .select('*')
       .order('nombre')
@@ -28,12 +30,12 @@ export async function POST(req: NextRequest) {
     if (!nombre || !email || !password || !rol)
       return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 })
 
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    const { data: authData, error: authError } = await getAdmin().auth.admin.createUser({
       email, password, email_confirm: true,
     })
     if (authError) return NextResponse.json({ error: authError.message }, { status: 400 })
 
-    const { error: dbError } = await supabaseAdmin.from('usuarios').insert({
+    const { error: dbError } = await getAdmin().from('usuarios').insert({
       id: authData.user.id,
       nombre,
       email,
@@ -41,7 +43,7 @@ export async function POST(req: NextRequest) {
       sucursal: sucursal || 'LP520', // default LP520 si no se elige sucursal
     })
     if (dbError) {
-      await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
+      await getAdmin().auth.admin.deleteUser(authData.user.id)
       return NextResponse.json({ error: dbError.message }, { status: 400 })
     }
     return NextResponse.json({ success: true })
@@ -54,7 +56,7 @@ export async function POST(req: NextRequest) {
 export async function PUT(req: NextRequest) {
   try {
     const { id, nombre, rol, sucursal } = await req.json()
-    const { error } = await supabaseAdmin
+    const { error } = await getAdmin()
       .from('usuarios')
       .update({ nombre, rol, sucursal: sucursal || 'LP520' })
       .eq('id', id)
@@ -69,8 +71,8 @@ export async function PUT(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const { id } = await req.json()
-    await supabaseAdmin.from('usuarios').delete().eq('id', id)
-    await supabaseAdmin.auth.admin.deleteUser(id)
+    await getAdmin().from('usuarios').delete().eq('id', id)
+    await getAdmin().auth.admin.deleteUser(id)
     return NextResponse.json({ success: true })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

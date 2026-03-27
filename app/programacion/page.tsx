@@ -573,7 +573,7 @@ export default function ProgramacionPage() {
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-4">
             <ColumnaCamion sinAsignar
-              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0 }}
+              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posicionesTotal: 0 }}
               onDrop={handleDrop}
               onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
               onDragLeave={() => setDragOver(null)}

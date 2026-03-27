@@ -319,26 +319,41 @@ export default function RuteoPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
-              className="text-xs px-2 py-1.5 rounded-lg font-medium"
-              style={{ background: '#e8edf8', color: '#254A96' }}>
-              ← Volver
-            </button>
+            {datosUsuario?.rol !== 'chofer' && (
+              <button onClick={() => router.push('/dashboard')}
+                className="text-xs px-2 py-1.5 rounded-lg font-medium"
+                style={{ background: '#e8edf8', color: '#254A96' }}>
+                ← Volver
+              </button>
+            )}
             <div>
-              <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Mis entregas</span>
-              {camionSeleccionado && (
+              <span className="font-semibold text-sm" style={{ color: '#254A96' }}>
+                {datosUsuario?.rol === 'chofer' ? 'Mis entregas' : 'Ruteo'}
+              </span>
+              {/* Solo roles no-chofer pueden deseleccionar el camión */}
+              {camionSeleccionado && datosUsuario?.rol !== 'chofer' && (
                 <button onClick={() => setCamionSeleccionado(null)}
                   className="text-xs ml-2 px-2 py-0.5 rounded-full"
                   style={{ background: '#e8edf8', color: '#254A96' }}>
                   {camionSeleccionado} ✕
                 </button>
               )}
+              {/* Chofer: mostrar su camión sin opción de cambiar */}
+              {camionSeleccionado && datosUsuario?.rol === 'chofer' && (
+                <span className="text-xs ml-2 px-2 py-0.5 rounded-full font-medium"
+                  style={{ background: '#e8edf8', color: '#254A96' }}>
+                  🚛 {camionSeleccionado}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-              className="border rounded-lg px-2 py-1 text-xs focus:outline-none"
-              style={{ borderColor: '#e8edf8' }} />
+            {/* El chofer siempre ve el día de hoy, no puede cambiar fecha */}
+            {datosUsuario?.rol !== 'chofer' && (
+              <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+                className="border rounded-lg px-2 py-1 text-xs focus:outline-none"
+                style={{ borderColor: '#e8edf8' }} />
+            )}
             <button onClick={() => { supabase.auth.signOut(); router.push('/') }}
               className="text-xs px-2 py-1.5 rounded-lg" style={{ background: '#fde8e8', color: '#E52322' }}>
               Salir
@@ -349,43 +364,56 @@ export default function RuteoPage() {
 
       <main className="max-w-2xl mx-auto px-4 py-4">
 
-        {/* Selector de camión — solo para no-choferes (gerencia, admin_flota, ruteador) */}
+        {/* Sin camión seleccionado */}
         {!camionSeleccionado && (
           <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-base mb-1" style={{ color: '#254A96' }}>
-              {datosUsuario ? 'No tenés camión asignado para hoy' : '¿Qué camión querés ver?'}
-            </h2>
-            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>
-              {new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' })}
-            </p>
-            {camionesDisponibles.length === 0 ? (
-              <div className="text-center py-8" style={{ color: '#B9BBB7' }}>
-                <p className="text-3xl mb-3">🚛</p>
-                <p className="text-sm">No hay camiones con entregas programadas para esta fecha</p>
-                <p className="text-xs mt-2">Si sos chofer, contactá al administrador de flota para que te asigne un camión</p>
+            {datosUsuario?.rol === 'chofer' ? (
+              /* Chofer sin asignación: mensaje claro, sin lista */
+              <div className="text-center py-8">
+                <p className="text-5xl mb-4">🚛</p>
+                <h2 className="font-semibold text-base mb-2" style={{ color: '#254A96' }}>
+                  No tenés camión asignado para hoy
+                </h2>
+                <p className="text-sm" style={{ color: '#B9BBB7' }}>
+                  Contactá al administrador de flota para que te asigne un camión.
+                </p>
               </div>
             ) : (
-              <div className="space-y-2">
-                {camionesDisponibles.map(c => (
-                  <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
-                    className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
-                    style={{ borderColor: '#e8edf8' }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
-                        style={{ background: '#254A96' }}>
-                        🚛
-                      </div>
-                      <div>
-                        <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
-                        <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
-                      </div>
-                    </div>
-                    <span style={{ color: '#B9BBB7' }}>›</span>
-                  </button>
-                ))}
-              </div>
+              /* Otros roles: pueden elegir cualquier camión */
+              <>
+                <h2 className="font-semibold text-base mb-1" style={{ color: '#254A96' }}>¿Qué camión querés ver?</h2>
+                <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>
+                  {new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' })}
+                </p>
+                {camionesDisponibles.length === 0 ? (
+                  <div className="text-center py-8" style={{ color: '#B9BBB7' }}>
+                    <p className="text-3xl mb-3">🚛</p>
+                    <p className="text-sm">No hay camiones con entregas programadas para esta fecha</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {camionesDisponibles.map(c => (
+                      <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
+                        className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
+                        style={{ borderColor: '#e8edf8' }}
+                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
+                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
+                            style={{ background: '#254A96' }}>
+                            🚛
+                          </div>
+                          <div>
+                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
+                            <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
+                          </div>
+                        </div>
+                        <span style={{ color: '#B9BBB7' }}>›</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

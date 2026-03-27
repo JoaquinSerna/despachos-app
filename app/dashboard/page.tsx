@@ -5,12 +5,13 @@ import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
 const TODAS_LAS_CARDS = [
-  { href: '/despachos',    icon: '📦', titulo: 'Nueva solicitud',  descripcion: 'Cargar solicitud de despacho',    disponible: true,  roles: ['gerencia','ruteador','comercial'] },
-  { href: '/flota',        icon: '🚛', titulo: 'Flota del día',    descripcion: 'Configurar camiones y choferes',  disponible: true,  roles: ['gerencia','admin_flota'] },
-  { href: '/programacion', icon: '📅', titulo: 'Programación',     descripcion: 'Asignar pedidos a camiones',      disponible: true,  roles: ['gerencia','ruteador'] },
-  { href: '/ruteo',        icon: '🗺️', titulo: 'Ruteo',            descripcion: 'Ver recorridos del día',          disponible: true,  roles: ['gerencia','admin_flota','ruteador'] },
-  { href: '/usuarios',     icon: '👥', titulo: 'Usuarios',          descripcion: 'Gestión de usuarios y permisos', disponible: true,  roles: ['gerencia'] },
-  { href: '/metricas',     icon: '📊', titulo: 'Métricas',          descripcion: 'KPIs y estadísticas',             disponible: false, roles: ['gerencia','ruteador','admin_flota','comercial'] },
+  { href: '/despachos',      icon: '📦', titulo: 'Nueva solicitud',    descripcion: 'Cargar solicitud de despacho',       disponible: true,  roles: ['gerencia','ruteador','comercial'] },
+  { href: '/flota',          icon: '🚛', titulo: 'Flota del día',      descripcion: 'Configurar camiones y choferes',     disponible: true,  roles: ['gerencia','admin_flota'] },
+  { href: '/programacion',   icon: '📅', titulo: 'Programación',       descripcion: 'Asignar pedidos a camiones',         disponible: true,  roles: ['gerencia','ruteador'] },
+  { href: '/ruteo',          icon: '🗺️', titulo: 'Ruteo',              descripcion: 'Ver recorridos del día',             disponible: true,  roles: ['gerencia','admin_flota','ruteador'] },
+  { href: '/confirmaciones', icon: '📞', titulo: 'Confirmaciones',     descripcion: 'Confirmar horarios con clientes',    disponible: true,  roles: ['gerencia','confirmador'] },
+  { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',            descripcion: 'Gestión de usuarios y permisos',    disponible: true,  roles: ['gerencia'] },
+  { href: '/metricas',       icon: '📊', titulo: 'Métricas',            descripcion: 'KPIs y estadísticas',               disponible: false, roles: ['gerencia','ruteador','admin_flota','comercial'] },
 ]
  
 const ESTADO_COLOR: Record<string, string> = {
@@ -67,23 +68,27 @@ export default function Dashboard() {
         .single()
 
       if (userData?.rol === 'chofer') { router.push('/ruteo'); return }
+      if (userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')
       setNombreUsuario(userData?.nombre ?? user.email?.split('@')[0] ?? 'usuario')
       setVerificando(false)
-      cargarDatos()
+      cargarDatos(user.id, userData?.rol ?? '')
     })
   }, [])
- 
-  const cargarDatos = async () => {
+
+  const cargarDatos = async (userId: string, rol: string) => {
     const hoy = new Date().toISOString().split('T')[0]
+    // Comercial solo ve sus propios pedidos (filtrado por vendedor_id)
+    const filtrarPorVendedor = (q: any) => rol === 'comercial' ? q.eq('vendedor_id', userId) : q
+
     const [{ count: p }, { count: h }, { count: e }, { count: ed }, { data: r }] = await Promise.all([
-      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'pendiente'),
-      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('fecha_entrega', hoy),
-      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'en_camino'),
-      supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'entregado').eq('fecha_entrega', hoy),
-      supabase.from('pedidos').select('id,nv,cliente,sucursal,estado,fecha_entrega,vuelta').order('created_at', { ascending: false }).limit(10),
+      filtrarPorVendedor(supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'pendiente')),
+      filtrarPorVendedor(supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('fecha_entrega', hoy)),
+      filtrarPorVendedor(supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'en_camino')),
+      filtrarPorVendedor(supabase.from('pedidos').select('*', { count: 'exact', head: true }).eq('estado', 'entregado').eq('fecha_entrega', hoy)),
+      filtrarPorVendedor(supabase.from('pedidos').select('id,nv,cliente,sucursal,estado,fecha_entrega,vuelta').order('created_at', { ascending: false }).limit(10)),
     ])
     setStats({ pendientes: p || 0, hoy: h || 0, enCamino: e || 0, entregadosHoy: ed || 0 })
     setRecientes(r || [])

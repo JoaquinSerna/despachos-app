@@ -12,6 +12,7 @@ const TODAS_LAS_CARDS = [
   { href: '/ruteo',          icon: '🗺️', titulo: 'Ruteo',              descripcion: 'Ver recorridos del día',             disponible: true,  roles: ['gerencia','admin_flota','ruteador'] },
   { href: '/confirmaciones', icon: '📞', titulo: 'Confirmaciones',     descripcion: 'Confirmar horarios con clientes',    disponible: true,  roles: ['gerencia','confirmador'] },
   { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',            descripcion: 'Gestión de usuarios y permisos',    disponible: true,  roles: ['gerencia'] },
+  { href: '/fin-del-dia',    icon: '🌙', titulo: 'Fin del día',         descripcion: 'Reprogramar pedidos no entregados',  disponible: true,  roles: ['gerencia','ruteador','admin_flota'] },
   { href: '/metricas',       icon: '📊', titulo: 'Métricas',            descripcion: 'Ocupación de flota y tiempos de ruta', disponible: true, roles: ['gerencia','ruteador','admin_flota'] },
 ]
  

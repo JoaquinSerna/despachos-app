@@ -1,14 +1,14 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useEffect, useState, useRef } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
 
 interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
   fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
   notas: string | null; camion_id: string | null; orden_entrega: number | null
-  latitud: number | null; longitud: number | null; barrio_cerrado?: boolean
+  latitud: number | null; longitud: number | null; barrio_cerrado?: boolean; prioridad?: boolean
   items?: { nombre: string; cantidad: number; unidad: string }[]
 }
 interface Camion {
@@ -42,7 +42,13 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[]): Rec
   const acum: Record<string, number> = {}
   camiones.forEach(c => { acum[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) })
   const asigs: Record<string, string | null> = {}
-  for (const p of [...sin].sort((a, b) => (b.peso_total_kg ?? 0) - (a.peso_total_kg ?? 0))) {
+  // Prioridades primero, luego por peso descendente
+  const ordenados = [...sin].sort((a, b) => {
+    if (a.prioridad && !b.prioridad) return -1
+    if (!a.prioridad && b.prioridad) return 1
+    return (b.peso_total_kg ?? 0) - (a.peso_total_kg ?? 0)
+  })
+  for (const p of ordenados) {
     const peso = p.peso_total_kg ?? 0
     const c = camiones.filter(c => c.tonelaje_max_kg - acum[c.codigo] >= peso)
       .sort((a, b) => (a.tonelaje_max_kg - acum[a.codigo]) - (b.tonelaje_max_kg - acum[b.codigo]))[0]
@@ -186,9 +192,10 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           )}
         </div>
       )}
-      {pedido.barrio_cerrado && (
-        <span className="inline-block text-xs px-1.5 py-0.5 rounded mt-1.5 font-medium" style={{ background: '#e8edf8', color: '#254A96' }}>🔒 Barrio cerrado</span>
-      )}
+      <div className="flex gap-1 flex-wrap mt-1.5">
+        {pedido.prioridad && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>⭐ Prioridad</span>}
+        {pedido.barrio_cerrado && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#e8edf8', color: '#254A96' }}>🔒 Barrio cerrado</span>}
+      </div>
       {pedido.notas && <p className="text-xs rounded px-2 py-1 mt-1.5 leading-tight" style={{ background: esReprogramado ? '#fef3c7' : '#fff8e1', color: '#b45309' }}>{pedido.notas}</p>}
     </div>
   )
@@ -285,10 +292,11 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
   todos.forEach((p, i) => { resultado[p.id] = i + 1 })
   return resultado
 }
-export default function ProgramacionPage() {
+function ProgramacionInner() {
   const router = useRouter()
-  const [fecha, setFecha] = useState(hoy())
-  const [sucursal, setSucursal] = useState('LP520')
+  const params = useSearchParams()
+  const [fecha, setFecha] = useState(params.get('fecha') ?? hoy())
+  const [sucursal, setSucursal] = useState(params.get('sucursal') ?? 'LP520')
   const [vueltaActiva, setVueltaActiva] = useState(1)
   const [pedidos, setPedidos] = useState<Pedido[]>([])
   const [camiones, setCamiones] = useState<Camion[]>([])
@@ -311,7 +319,7 @@ export default function ProgramacionPage() {
   async function cargarDatos() {
     setCargando(true); setConfirmado(false)
     const { data: pd } = await supabase.from('pedidos')
-      .select('*, items:pedido_items(nombre, cantidad, unidad)')
+      .select('*, prioridad, barrio_cerrado, items:pedido_items(nombre, cantidad, unidad)')
       .eq('fecha_entrega', fecha).eq('sucursal', sucursal).eq('vuelta', vueltaActiva)
       .in('estado', ['pendiente', 'programado']).order('cliente')
     const { data: fd } = await supabase.from('flota_dia').select('camion_codigo').eq('fecha', fecha).eq('sucursal', sucursal).eq('activo', true)
@@ -609,5 +617,13 @@ export default function ProgramacionPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function ProgramacionPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} /></div>}>
+      <ProgramacionInner />
+    </Suspense>
   )
 }

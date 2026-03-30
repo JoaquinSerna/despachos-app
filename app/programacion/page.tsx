@@ -8,7 +8,7 @@ interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
   fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
   notas: string | null; camion_id: string | null; orden_entrega: number | null
-  latitud: number | null; longitud: number | null
+  latitud: number | null; longitud: number | null; barrio_cerrado?: boolean
   items?: { nombre: string; cantidad: number; unidad: string }[]
 }
 interface Camion {
@@ -186,6 +186,9 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           )}
         </div>
       )}
+      {pedido.barrio_cerrado && (
+        <span className="inline-block text-xs px-1.5 py-0.5 rounded mt-1.5 font-medium" style={{ background: '#e8edf8', color: '#254A96' }}>🔒 Barrio cerrado</span>
+      )}
       {pedido.notas && <p className="text-xs rounded px-2 py-1 mt-1.5 leading-tight" style={{ background: esReprogramado ? '#fef3c7' : '#fff8e1', color: '#b45309' }}>{pedido.notas}</p>}
     </div>
   )
@@ -297,6 +300,9 @@ export default function ProgramacionPage() {
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const dragPedido = useRef<Pedido | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
+  const [modalReprogVuelta, setModalReprogVuelta] = useState(false)
+  const [reprogVueltaFecha, setReprogVueltaFecha] = useState('')
+  const [reprogVueltaNueva, setReprogVueltaNueva] = useState(1)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
 
@@ -413,6 +419,24 @@ export default function ProgramacionPage() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
+  async function handleReprogramarVuelta() {
+    if (!reprogVueltaFecha || pedidos.length === 0) return
+    setGuardando(true)
+    try {
+      const nota = `⚡ Reprog. vuelta completa desde ${fecha} V${vueltaActiva}`
+      await Promise.all(pedidos.map(p =>
+        fetch('/api/pedidos', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: p.notas ? `${p.notas} | ${nota}` : nota })
+        })
+      ))
+      setModalReprogVuelta(false)
+      showToast(`Vuelta ${vueltaActiva} reprogramada — ${pedidos.length} pedidos movidos`)
+      cargarDatos()
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+    setGuardando(false)
+  }
+
   async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = pedidos.find(p => p.id === id)
     if (!pedido) return
@@ -435,6 +459,45 @@ export default function ProgramacionPage() {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
           {toast.tipo === 'ok' ? '✓' : '✕'} {toast.msg}
+        </div>
+      )}
+
+      {/* Modal reprogramar vuelta completa */}
+      {modalReprogVuelta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" style={{ fontFamily: 'Barlow, sans-serif' }}>
+            <h3 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📅 Reprogramar vuelta completa</h3>
+            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>
+              Se moverán los {pedidos.length} pedidos de V{vueltaActiva} del {fecha} a la nueva fecha y vuelta.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva fecha</label>
+                <input type="date" value={reprogVueltaFecha}
+                  min={(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()}
+                  onChange={e => setReprogVueltaFecha(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva vuelta</label>
+                <select value={reprogVueltaNueva} onChange={e => setReprogVueltaNueva(parseInt(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                  {[1, 2, 3, 4].map(v => <option key={v} value={v}>Vuelta {v}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button disabled={!reprogVueltaFecha || guardando}
+                onClick={handleReprogramarVuelta}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                style={{ background: '#254A96' }}>
+                {guardando ? 'Reprogramando…' : 'Confirmar'}
+              </button>
+              <button onClick={() => setModalReprogVuelta(false)}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>Cancelar</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -484,6 +547,10 @@ export default function ProgramacionPage() {
               disabled={cargando || guardando}
               className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
               style={{ borderColor: '#e8edf8', color: '#666' }}>Limpiar</button>
+            <button onClick={() => { setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
+              disabled={cargando || guardando || pedidos.length === 0}
+              className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
+              style={{ borderColor: '#fbbf24', color: '#b45309', background: '#fef3c7' }}>📅 Reprog. vuelta</button>
             <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
               className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
               style={{ background: '#7c3aed' }}>✦ Sugerir</button>

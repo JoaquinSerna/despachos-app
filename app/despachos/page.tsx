@@ -47,6 +47,7 @@ const FORM_INICIAL = {
   nv: '', id_despacho: '', cliente: '', telefono: '',
   direccion: '', sucursal: '', fecha_entrega: '', vuelta: '',
   estado_pago: '', notas: '',
+  barrio_cerrado: false,
   latitud: null as number | null,
   longitud: null as number | null,
 }
@@ -225,7 +226,8 @@ export default function NuevoDespacho() {
   }
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
+    const { name, value, type } = e.target
+    setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -249,6 +251,7 @@ export default function NuevoDespacho() {
       fecha_entrega: form.fecha_entrega,
       vuelta: parseInt(form.vuelta),
       estado_pago: form.estado_pago,
+      barrio_cerrado: form.barrio_cerrado,
       notas: form.notas,
       vendedor_id: userId,
       estado: 'pendiente',
@@ -569,6 +572,15 @@ export default function NuevoDespacho() {
                   <option value="provisorio">Provisorio</option>
                 </select>
               </div>
+
+              <label className="flex items-center gap-3 cursor-pointer py-2.5 px-4 rounded-lg border"
+                style={{ borderColor: form.barrio_cerrado ? '#254A96' : '#e8edf8', background: form.barrio_cerrado ? '#e8edf8' : 'white' }}>
+                <input type="checkbox" name="barrio_cerrado" checked={form.barrio_cerrado} onChange={handleChange} className="w-4 h-4 accent-blue-700" />
+                <div>
+                  <p className="text-sm font-medium" style={{ color: '#254A96' }}>🔒 Barrio cerrado</p>
+                  <p className="text-xs" style={{ color: '#B9BBB7' }}>El acceso requiere autorización o control de ingreso</p>
+                </div>
+              </label>
 
               <div>
                 <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Notas adicionales</label>

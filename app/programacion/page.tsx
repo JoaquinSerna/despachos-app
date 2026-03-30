@@ -3,13 +3,11 @@
 import { useRouter } from 'next/navigation'
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/app/supabase'
-import { logAuditoria } from '@/app/lib/auditoria'
 
 interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
-  vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
-  volumen_total_m3: number | null
-  notas: string | null; camion_id: string | null
+  fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
+  notas: string | null; camion_id: string | null; orden_entrega: number | null
   latitud: number | null; longitud: number | null
   items?: { nombre: string; cantidad: number; unidad: string }[]
 }
@@ -18,7 +16,7 @@ interface Camion {
   posiciones_total: number; tonelaje_max_kg: number
   grua_hidraulica: boolean; volcador: boolean
 }
-interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number; posicionesTotal: number }
+interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
@@ -37,118 +35,40 @@ const PAGO_LABEL: Record<string, string> = {
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
-function posicionesColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371
-  const dLat = (lat2 - lat1) * Math.PI / 180
-  const dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.asin(Math.sqrt(a))
-}
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.min(100, Math.round(peso / max * 100)) }
-function colorBarra(p: number) { return p > 100 ? '#7c2d12' : p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
+function colorBarra(p: number) { return p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
 
-const TOLERANCIA_PESO = 1.05
-
-function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucursal: string): Record<string, string | null> {
-  const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
-
-  const acumPeso: Record<string, number> = {}
-  const acumPos: Record<string, number> = {}
-  const centroRuta: Record<string, { lat: number; lng: number; count: number }> = {}
-
-  camiones.forEach(c => {
-    const asignados = ya.filter(p => p.camion_id === c.codigo)
-    acumPeso[c.codigo] = asignados.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0)
-    acumPos[c.codigo] = asignados.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
-    const conCoords = asignados.filter(p => p.latitud && p.longitud)
-    centroRuta[c.codigo] = conCoords.length > 0
-      ? { lat: conCoords.reduce((a, p) => a + p.latitud!, 0) / conCoords.length, lng: conCoords.reduce((a, p) => a + p.longitud!, 0) / conCoords.length, count: conCoords.length }
-      : { ...deposito, count: 0 }
-  })
-
-  // Ordenar pedidos con nearest-neighbor desde el más lejano al depósito.
-  // Esto agrupa geográficamente los pedidos cercanos de forma consecutiva.
-  const conCoords = [...sin].filter(p => p.latitud && p.longitud)
-  const sinCoords = [...sin].filter(p => !p.latitud || !p.longitud)
-  const ordenados: Pedido[] = []
-  const restantes = [...conCoords]
-
-  if (restantes.length > 0) {
-    let maxDist = -1; let startIdx = 0
-    restantes.forEach((p, i) => {
-      const d = Math.pow(p.latitud! - deposito.lat, 2) + Math.pow(p.longitud! - deposito.lng, 2)
-      if (d > maxDist) { maxDist = d; startIdx = i }
-    })
-    let latAct = restantes[startIdx].latitud!; let lngAct = restantes[startIdx].longitud!
-    ordenados.push(...restantes.splice(startIdx, 1))
-    while (restantes.length > 0) {
-      let minD = Infinity; let minI = 0
-      restantes.forEach((p, i) => {
-        const d = Math.pow(p.latitud! - latAct, 2) + Math.pow(p.longitud! - lngAct, 2)
-        if (d < minD) { minD = d; minI = i }
-      })
-      const next = restantes.splice(minI, 1)[0]
-      ordenados.push(next)
-      latAct = next.latitud!; lngAct = next.longitud!
-    }
-  }
-
+function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[]): Record<string, string | null> {
+  const acum: Record<string, number> = {}
+  camiones.forEach(c => { acum[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) })
   const asigs: Record<string, string | null> = {}
-
-  for (const p of [...ordenados, ...sinCoords]) {
+  for (const p of [...sin].sort((a, b) => (b.peso_total_kg ?? 0) - (a.peso_total_kg ?? 0))) {
     const peso = p.peso_total_kg ?? 0
-    const pos = p.volumen_total_m3 ?? 0
-
-    // Peso con 5% de tolerancia. Posiciones se controla visualmente en el Kanban.
-    const disponibles = camiones.filter(c =>
-      (c.tonelaje_max_kg * TOLERANCIA_PESO - acumPeso[c.codigo]) >= peso
-    )
-
-    if (disponibles.length === 0) { asigs[p.id] = null; continue }
-
-    let elegido: Camion
-    if (p.latitud && p.longitud) {
-      // Geográfico: camión más cercano. Desempate: camión con menos espacio disponible (tightest fit).
-      elegido = disponibles
-        .map(c => ({
-          c,
-          dist: Math.pow(centroRuta[c.codigo].lat - p.latitud!, 2) + Math.pow(centroRuta[c.codigo].lng - p.longitud!, 2),
-          espacio: c.tonelaje_max_kg * TOLERANCIA_PESO - acumPeso[c.codigo],
-        }))
-        .sort((a, b) => Math.abs(a.dist - b.dist) < 1e-10 ? a.espacio - b.espacio : a.dist - b.dist)[0].c
-    } else {
-      elegido = disponibles.sort((a, b) => (a.tonelaje_max_kg - acumPeso[a.codigo]) - (b.tonelaje_max_kg - acumPeso[b.codigo]))[0]
-    }
-
-    asigs[p.id] = elegido.codigo
-    acumPeso[elegido.codigo] += peso
-    acumPos[elegido.codigo] += pos
-    if (p.latitud && p.longitud) {
-      const c = centroRuta[elegido.codigo]
-      centroRuta[elegido.codigo] = {
-        lat: (c.lat * c.count + p.latitud) / (c.count + 1),
-        lng: (c.lng * c.count + p.longitud) / (c.count + 1),
-        count: c.count + 1,
-      }
-    }
+    const c = camiones.filter(c => c.tonelaje_max_kg - acum[c.codigo] >= peso)
+      .sort((a, b) => (a.tonelaje_max_kg - acum[a.codigo]) - (b.tonelaje_max_kg - acum[b.codigo]))[0]
+    if (c) { asigs[p.id] = c.codigo; acum[c.codigo] += peso } else asigs[p.id] = null
   }
-
   return asigs
 }
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
   onCambiarVuelta: (id: string, vuelta: number) => void
+  onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [cambiandoVuelta, setCambiandoVuelta] = useState(false)
+  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog'>('normal')
+  const [reprogFecha, setReprogFecha] = useState('')
+  const [reprogVuelta, setReprogVuelta] = useState(1)
+  const [reprogMotivo, setReprogMotivo] = useState('')
+  const mananaStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()
+  const esReprogramado = pedido.notas?.startsWith('⚡')
   return (
     <div draggable onDragStart={e => onDragStart(e, pedido)}
       className="bg-white rounded-lg p-3 mb-2 cursor-grab active:cursor-grabbing select-none hover:shadow-md transition-shadow"
-      style={{ border: '1px solid #f0f0f0' }}>
+      style={{ border: `1px solid ${esReprogramado ? '#fbbf24' : '#f0f0f0'}` }}>
       <div className="flex items-start justify-between gap-2 mb-1">
         <span className="font-semibold text-xs leading-tight" style={{ color: '#254A96' }}>{pedido.cliente}</span>
         <div className="flex items-center gap-1 shrink-0">
@@ -170,11 +90,45 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta }: {
         <span className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</span>
         {pedido.peso_total_kg != null && <span className="text-xs font-semibold" style={{ color: '#254A96' }}>{pedido.peso_total_kg} kg</span>}
       </div>
-      {cambiandoVuelta ? (
+      {modo === 'reprog' ? (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
+          <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>📅 Reprogramar entrega</p>
+          <div className="space-y-1.5">
+            <input type="date" value={reprogFecha} min={mananaStr}
+              onChange={e => setReprogFecha(e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
+              style={{ borderColor: '#e8edf8' }} />
+            <select value={reprogVuelta} onChange={e => setReprogVuelta(parseInt(e.target.value))}
+              onMouseDown={e => e.stopPropagation()}
+              className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
+              style={{ borderColor: '#e8edf8' }}>
+              {[1, 2, 3, 4].map(v => <option key={v} value={v}>Vuelta {v}</option>)}
+            </select>
+            <input type="text" value={reprogMotivo}
+              onChange={e => setReprogMotivo(e.target.value)}
+              onMouseDown={e => e.stopPropagation()}
+              placeholder="Motivo (ej: lluvia, cliente no disponible)"
+              className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
+              style={{ borderColor: '#e8edf8' }} />
+          </div>
+          <div className="flex gap-1.5 mt-2">
+            <button disabled={!reprogFecha}
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); onReprogramar(pedido.id, reprogFecha, reprogVuelta, reprogMotivo); setModo('normal') }}
+              className="flex-1 text-xs py-1.5 rounded font-medium text-white disabled:opacity-40"
+              style={{ background: '#254A96' }}>Confirmar</button>
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setModo('normal') }}
+              className="text-xs px-2 py-1.5 rounded"
+              style={{ background: '#e8edf8', color: '#666' }}>×</button>
+          </div>
+        </div>
+      ) : modo === 'vuelta' ? (
         <div className="mt-2 flex items-center gap-1.5">
           <select
             onMouseDown={e => e.stopPropagation()}
-            onChange={e => { onCambiarVuelta(pedido.id, parseInt(e.target.value)); setCambiandoVuelta(false) }}
+            onChange={e => { onCambiarVuelta(pedido.id, parseInt(e.target.value)); setModo('normal') }}
             defaultValue=""
             className="text-xs border rounded px-2 py-1 flex-1 focus:outline-none"
             style={{ borderColor: '#e8edf8' }}>
@@ -183,14 +137,22 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta }: {
               <option key={v} value={v}>Vuelta {v}</option>
             ))}
           </select>
-          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setCambiandoVuelta(false) }}
+          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('normal') }}
             className="text-xs" style={{ color: '#B9BBB7' }}>×</button>
         </div>
       ) : (
-        <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setCambiandoVuelta(true) }}
-          className="text-xs mt-1.5 hover:underline" style={{ color: '#B9BBB7' }}>
-          V{pedido.vuelta} — cambiar vuelta
-        </button>
+        <div className="flex items-center gap-2 mt-1.5">
+          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('vuelta') }}
+            className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
+            V{pedido.vuelta} · cambiar
+          </button>
+          <span style={{ color: '#e0e0e0' }}>|</span>
+          <button onMouseDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setModo('reprog'); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
+            className="text-xs hover:underline" style={{ color: '#f59e0b' }}>
+            📅 reprogramar
+          </button>
+        </div>
       )}
       {pedido.items && pedido.items.length > 0 && (
         <div className="mt-1.5">
@@ -210,22 +172,22 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta }: {
           )}
         </div>
       )}
-      {pedido.notas && <p className="text-xs rounded px-2 py-1 mt-1.5 leading-tight" style={{ background: '#fff8e1', color: '#b45309' }}>{pedido.notas}</p>}
+      {pedido.notas && <p className="text-xs rounded px-2 py-1 mt-1.5 leading-tight" style={{ background: esReprogramado ? '#fef3c7' : '#fff8e1', color: '#b45309' }}>{pedido.notas}</p>}
     </div>
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
   onDragLeave: () => void; onDragStart: (e: React.DragEvent, p: Pedido) => void; isDragOver: boolean
   onCancelar: (id: string) => void
   onCambiarVuelta: (id: string, vuelta: number) => void
+  onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
 }) {
-  const { camion, pedidos, pesoTotal, posicionesTotal } = columna
+  const { camion, pedidos, pesoTotal } = columna
   const p = sinAsignar ? 0 : pct(pesoTotal, camion.tonelaje_max_kg)
-  const pPos = sinAsignar ? 0 : pct(posicionesTotal, camion.posiciones_total)
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
       onDragOver={e => onDragOver(e, sinAsignar ? null : camion.codigo)}
@@ -252,38 +214,20 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
               </div>
             </div>
             <p className="text-xs mb-2" style={{ color: '#B9BBB7' }}>{camion.tipo_unidad}</p>
-            {/* Barra kg */}
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="text-xs w-4 shrink-0" style={{ color: '#B9BBB7' }}>⚖️</span>
-              <div className="flex-1 rounded-full h-1.5" style={{ background: '#f0f0f0' }}>
-                <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min(p, 100)}%`, background: colorBarra(p) }} />
-              </div>
-              <span className="text-xs w-8 text-right shrink-0" style={{ color: p >= 90 ? '#E52322' : '#B9BBB7', fontWeight: p >= 90 ? 600 : 400 }}>{p}%</span>
-            </div>
-            {/* Barra posiciones */}
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="text-xs w-4 shrink-0" style={{ color: '#B9BBB7' }}>📦</span>
-              <div className="flex-1 rounded-full h-1.5" style={{ background: '#f0f0f0' }}>
-                <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min(pPos, 100)}%`, background: colorBarra(pPos) }} />
-              </div>
-              <span className="text-xs w-8 text-right shrink-0" style={{ color: pPos >= 90 ? '#E52322' : '#B9BBB7', fontWeight: pPos >= 90 ? 600 : 400 }}>{pPos}%</span>
+            <div className="w-full rounded-full h-1.5 mb-1" style={{ background: '#f0f0f0' }}>
+              <div className="h-1.5 rounded-full transition-all" style={{ width: `${p}%`, background: colorBarra(p) }} />
             </div>
             <div className="flex justify-between text-xs" style={{ color: '#B9BBB7' }}>
-              <span>{Math.round(pesoTotal)} kg · {Math.round(posicionesTotal)} pos</span>
-              <span>{camion.tonelaje_max_kg} kg · {camion.posiciones_total} pos</span>
+              <span>{Math.round(pesoTotal)} kg</span>
+              <span style={{ color: p >= 90 ? '#E52322' : '#B9BBB7', fontWeight: p >= 90 ? 600 : 400 }}>{p}% · {camion.tonelaje_max_kg} kg</span>
             </div>
-            {(p > 100 || pPos > 100) && (
-              <div className="text-xs mt-1 font-medium" style={{ color: '#7c2d12' }}>
-                ⚠️ {p > 100 ? `+${Math.round(pesoTotal - camion.tonelaje_max_kg)} kg` : ''}{p > 100 && pPos > 100 ? ' · ' : ''}{pPos > 100 ? `+${Math.round(posicionesTotal - camion.posiciones_total)} pos` : ''} sobre límite
-              </div>
-            )}
           </>
         )}
       </div>
       <div className="p-2 flex-1 overflow-y-auto max-h-[420px]">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} />)}
       </div>
     </div>
   )
@@ -326,7 +270,6 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
 }
 export default function ProgramacionPage() {
   const router = useRouter()
-  const [usuarioActual, setUsuarioActual] = useState<{ id: string; nombre: string } | null>(null)
   const [fecha, setFecha] = useState(hoy())
   const [sucursal, setSucursal] = useState('LP520')
   const [vueltaActiva, setVueltaActiva] = useState(1)
@@ -342,15 +285,6 @@ export default function ProgramacionPage() {
   const [dragOver, setDragOver] = useState<string | null>(null)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
-
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('nombre, rol').eq('id', user.id).single()
-      if (!['gerencia', 'ruteador'].includes(data?.rol)) { router.push('/dashboard'); return }
-      setUsuarioActual({ id: user.id, nombre: data?.nombre ?? user.email ?? 'Desconocido' })
-    })
-  }, [])
 
   useEffect(() => { cargarDatos() }, [fecha, sucursal, vueltaActiva])
 
@@ -368,17 +302,14 @@ export default function ProgramacionPage() {
   }
 
   function construirColumnas(todos: Pedido[], cams: Camion[]) {
-    setColumnas(cams.map(c => {
-      const ps = todos.filter(p => p.camion_id === c.codigo)
-      return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps), posicionesTotal: posicionesColumna(ps) }
-    }))
+    setColumnas(cams.map(c => { const ps = todos.filter(p => p.camion_id === c.codigo); return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps) } }))
     setSinAsignar(todos.filter(p => !p.camion_id))
   }
 
   function handleSugerir() {
     const sin = pedidos.filter(p => !p.camion_id)
     if (!sin.length) return
-    const asigs = sugerirAsignacion(sin, camiones, pedidos.filter(p => p.camion_id), sucursal)
+    const asigs = sugerirAsignacion(sin, camiones, pedidos.filter(p => p.camion_id))
     const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))
     setPedidos(act); construirColumnas(act, camiones)
   }
@@ -392,10 +323,6 @@ export default function ProgramacionPage() {
   }
 
   async function handleConfirmar() {
-    if (fecha < hoy()) {
-      showToast('No podés programar para días pasados', 'err')
-      return
-    }
     setGuardando(true)
 
     const asignados = pedidos.filter(p => p.camion_id)
@@ -436,28 +363,8 @@ export default function ProgramacionPage() {
         console.error('Errores al confirmar:', errores.map(r => r.error))
         showToast(`Error al guardar: ${errores[0].error?.message ?? 'error desconocido'}`, 'err')
       } else {
-        // Calcular km_ruta por camión y guardar en flota_dia
-        const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
-        await Promise.all(Object.entries(porCamion).map(async ([camionCodigo, pedidosCamion]) => {
-          const paradas = pedidosCamion
-            .filter(p => p.latitud && p.longitud)
-            .sort((a, b) => (ordenes[a.id] ?? 999) - (ordenes[b.id] ?? 999))
-          let km = 0; let prev = deposito
-          for (const p of paradas) { km += haversineKm(prev.lat, prev.lng, p.latitud!, p.longitud!); prev = { lat: p.latitud!, lng: p.longitud! } }
-          if (paradas.length > 0) km += haversineKm(prev.lat, prev.lng, deposito.lat, deposito.lng)
-          await supabase.from('flota_dia').update({ km_ruta: Math.round(km * 10) / 10 })
-            .eq('fecha', fecha).eq('camion_codigo', camionCodigo)
-        }))
-
         setConfirmado(true)
         showToast('Programación confirmada')
-        if (usuarioActual) {
-          await logAuditoria(usuarioActual.id, usuarioActual.nombre, 'Confirmó programación', 'Programación', {
-            fecha, sucursal, vuelta: vueltaActiva,
-            pedidos_asignados: asignados.length,
-            camiones: [...new Set(asignados.map(p => p.camion_id))],
-          })
-        }
       }
     } catch (e: any) {
       showToast(`Error inesperado: ${e.message}`, 'err')
@@ -480,6 +387,20 @@ export default function ProgramacionPage() {
     const act = pedidos.filter(p => p.id !== id)
     setPedidos(act); construirColumnas(act, camiones)
     showToast(`Pedido movido a Vuelta ${nuevaVuelta}`)
+  }
+
+  async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
+    const pedido = pedidos.find(p => p.id === id)
+    if (!pedido) return
+    const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
+    const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
+    const { error } = await supabase.from('pedidos').update({
+      fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal
+    }).eq('id', id)
+    if (error) { showToast('Error al reprogramar', 'err'); return }
+    const act = pedidos.filter(p => p.id !== id)
+    setPedidos(act); construirColumnas(act, camiones)
+    showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
   }
 
   const totalAsig = pedidos.filter(p => p.camion_id).length
@@ -507,7 +428,7 @@ export default function ProgramacionPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <input type="date" value={fecha} min={hoy()} onChange={e => { if (e.target.value < hoy()) return; setFecha(e.target.value); setConfirmado(false) }}
+              <input type="date" value={fecha} onChange={e => { setFecha(e.target.value); setConfirmado(false) }}
                 className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
               <select value={sucursal} onChange={e => { setSucursal(e.target.value); setConfirmado(false) }}
                 className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
@@ -573,14 +494,15 @@ export default function ProgramacionPage() {
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-4">
             <ColumnaCamion sinAsignar
-              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posicionesTotal: 0 }}
+              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0 }}
               onDrop={handleDrop}
               onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
               onDragLeave={() => setDragOver(null)}
               onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
               isDragOver={dragOver === 'sin_asignar'}
               onCancelar={handleCancelar}
-              onCambiarVuelta={handleCambiarVuelta} />
+              onCambiarVuelta={handleCambiarVuelta}
+              onReprogramar={handleReprogramar} />
             <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
             {columnas.map(col => (
               <ColumnaCamion key={col.camion.codigo} columna={col}
@@ -590,7 +512,8 @@ export default function ProgramacionPage() {
                 onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
                 isDragOver={dragOver === col.camion.codigo}
                 onCancelar={handleCancelar}
-                onCambiarVuelta={handleCambiarVuelta} />
+                onCambiarVuelta={handleCambiarVuelta}
+                onReprogramar={handleReprogramar} />
             ))}
           </div>
         )}

@@ -387,20 +387,28 @@ export default function ProgramacionPage() {
     }
   }
 
+  async function patchPedido(id: string, updates: Record<string, any>) {
+    const res = await fetch('/api/pedidos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...updates }) })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? 'Error desconocido')
+  }
+
   async function handleCancelar(id: string) {
-    const { error } = await supabase.from('pedidos').update({ estado: 'cancelado' }).eq('id', id)
-    if (error) { showToast('Error al cancelar', 'err'); return }
-    const act = pedidos.filter(p => p.id !== id)
-    setPedidos(act); construirColumnas(act, camiones)
-    showToast('Pedido cancelado')
+    try {
+      await patchPedido(id, { estado: 'cancelado' })
+      const act = pedidos.filter(p => p.id !== id)
+      setPedidos(act); construirColumnas(act, camiones)
+      showToast('Pedido cancelado')
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
   async function handleCambiarVuelta(id: string, nuevaVuelta: number) {
-    const { error } = await supabase.from('pedidos').update({ vuelta: nuevaVuelta, camion_id: null, estado: 'pendiente' }).eq('id', id)
-    if (error) { showToast('Error al cambiar vuelta', 'err'); return }
-    const act = pedidos.filter(p => p.id !== id)
-    setPedidos(act); construirColumnas(act, camiones)
-    showToast(`Pedido movido a Vuelta ${nuevaVuelta}`)
+    try {
+      await patchPedido(id, { vuelta: nuevaVuelta, camion_id: null, estado: 'pendiente' })
+      const act = pedidos.filter(p => p.id !== id)
+      setPedidos(act); construirColumnas(act, camiones)
+      showToast(`Pedido movido a Vuelta ${nuevaVuelta}`)
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
   async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
@@ -408,13 +416,12 @@ export default function ProgramacionPage() {
     if (!pedido) return
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
-    const { error } = await supabase.from('pedidos').update({
-      fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal
-    }).eq('id', id)
-    if (error) { showToast('Error al reprogramar', 'err'); return }
-    const act = pedidos.filter(p => p.id !== id)
-    setPedidos(act); construirColumnas(act, camiones)
-    showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+    try {
+      await patchPedido(id, { fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal })
+      const act = pedidos.filter(p => p.id !== id)
+      setPedidos(act); construirColumnas(act, camiones)
+      showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
   const totalAsig = pedidos.filter(p => p.camion_id).length

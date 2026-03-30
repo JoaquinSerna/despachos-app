@@ -98,11 +98,18 @@ export default function NuevoDespacho() {
     setCargandoPedidos(false)
   }
 
+  async function patchPedido(id: string, updates: Record<string, any>) {
+    const res = await fetch('/api/pedidos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...updates }) })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error ?? 'Error desconocido')
+  }
+
   async function handleCancelarPedido(id: string, cliente: string) {
-    const { error } = await supabase.from('pedidos').update({ estado: 'cancelado' }).eq('id', id)
-    if (error) { toast('Error al cancelar', 'err'); return }
-    await cargarMisPedidos()
-    toast(`Pedido de ${cliente} cancelado`)
+    try {
+      await patchPedido(id, { estado: 'cancelado' })
+      await cargarMisPedidos()
+      toast(`Pedido de ${cliente} cancelado`)
+    } catch (e: any) { toast(`Error: ${e.message}`, 'err') }
   }
 
   async function handleReprogramarPedido(id: string, fecha: string, vuelta: number, motivo: string) {
@@ -110,13 +117,12 @@ export default function NuevoDespacho() {
     if (!pedido) return
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
-    const { error } = await supabase.from('pedidos').update({
-      fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal
-    }).eq('id', id)
-    if (error) { toast('Error al reprogramar', 'err'); return }
-    setPedidoReprog(null)
-    await cargarMisPedidos()
-    toast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+    try {
+      await patchPedido(id, { fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal })
+      setPedidoReprog(null)
+      await cargarMisPedidos()
+      toast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+    } catch (e: any) { toast(`Error: ${e.message}`, 'err') }
   }
 
   const verificarCupos = async () => {

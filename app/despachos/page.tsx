@@ -98,6 +98,13 @@ export default function NuevoDespacho() {
     setCargandoPedidos(false)
   }
 
+  async function handleCancelarPedido(id: string, cliente: string) {
+    const { error } = await supabase.from('pedidos').update({ estado: 'cancelado' }).eq('id', id)
+    if (error) { toast('Error al cancelar', 'err'); return }
+    await cargarMisPedidos()
+    toast(`Pedido de ${cliente} cancelado`)
+  }
+
   async function handleReprogramarPedido(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = misPedidos.find(p => p.id === id)
     if (!pedido) return
@@ -365,7 +372,7 @@ export default function NuevoDespacho() {
         {misPedidos.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm p-6">
             <h2 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📋 Pedidos activos</h2>
-            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>Podés reprogramar entregas si el cliente no puede recibirlas.</p>
+            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>Podés reprogramar o cancelar entregas si el cliente no puede recibirlas.</p>
             <div className="space-y-2">
               {misPedidos.map(p => (
                 <div key={p.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-0"
@@ -385,12 +392,20 @@ export default function NuevoDespacho() {
                       {ESTADO_LABEL[p.estado] ?? p.estado}
                     </span>
                     {['pendiente', 'programado'].includes(p.estado) && (
-                      <button
-                        onClick={() => { setPedidoReprog(p); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
-                        className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                        style={{ background: '#fef3c7', color: '#b45309' }}>
-                        📅 Reprog.
-                      </button>
+                      <>
+                        <button
+                          onClick={() => { setPedidoReprog(p); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                          style={{ background: '#fef3c7', color: '#b45309' }}>
+                          📅 Reprog.
+                        </button>
+                        <button
+                          onClick={() => handleCancelarPedido(p.id, p.cliente)}
+                          className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                          style={{ background: '#fde8e8', color: '#E52322' }}>
+                          Cancelar
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -467,13 +482,20 @@ export default function NuevoDespacho() {
                   { label: 'Presupuesto (NV)', value: form.nv },
                   { label: 'ID Despacho', value: form.id_despacho },
                   { label: 'Cliente', value: form.cliente },
-                  { label: 'Teléfono', value: form.telefono },
                 ].map(f => (
                   <div key={f.label}>
                     <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>{f.label}</p>
                     <p className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{f.value || '—'}</p>
                   </div>
                 ))}
+                <div>
+                  <label className="block text-xs mb-1" style={{ color: '#B9BBB7' }}>
+                    Teléfono <span style={{ color: '#E52322' }}>*</span>
+                  </label>
+                  <input type="tel" name="telefono" value={form.telefono} onChange={handleChange} required
+                    placeholder="Teléfono del cliente"
+                    className={inputClass} style={{ ...inputStyle, background: 'white' }} />
+                </div>
               </div>
               <div>
                 <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Dirección de entrega</p>

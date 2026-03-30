@@ -59,7 +59,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog'>('normal')
+  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar'>('normal')
   const [reprogFecha, setReprogFecha] = useState('')
   const [reprogVuelta, setReprogVuelta] = useState(1)
   const [reprogMotivo, setReprogMotivo] = useState('')
@@ -77,7 +77,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           </span>
           <button
             onMouseDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); if (confirm(`¿Cancelar pedido de ${pedido.cliente}?`)) onCancelar(pedido.id) }}
+            onClick={e => { e.stopPropagation(); setModo('cancelar') }}
             title="Cancelar pedido"
             className="w-4 h-4 flex items-center justify-center rounded hover:bg-red-50 transition-colors"
             style={{ color: '#E52322', fontSize: '10px', lineHeight: 1 }}>
@@ -90,7 +90,21 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
         <span className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</span>
         {pedido.peso_total_kg != null && <span className="text-xs font-semibold" style={{ color: '#254A96' }}>{pedido.peso_total_kg} kg</span>}
       </div>
-      {modo === 'reprog' ? (
+      {modo === 'cancelar' ? (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#fde8e8' }}>
+          <p className="text-xs font-medium mb-2" style={{ color: '#E52322' }}>¿Cancelar este pedido?</p>
+          <div className="flex gap-1.5">
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); onCancelar(pedido.id) }}
+              className="flex-1 text-xs py-1.5 rounded font-medium text-white"
+              style={{ background: '#E52322' }}>Sí, cancelar</button>
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setModo('normal') }}
+              className="text-xs px-3 py-1.5 rounded"
+              style={{ background: '#f4f4f3', color: '#666' }}>No</button>
+          </div>
+        </div>
+      ) : modo === 'reprog' ? (
         <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
           <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>📅 Reprogramar entrega</p>
           <div className="space-y-1.5">

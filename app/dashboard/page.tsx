@@ -43,7 +43,18 @@ export default function Dashboard() {
   const [nuevaPassword, setNuevaPassword] = useState('')
   const [cambiandoPass, setCambiandoPass] = useState(false)
   const [toastPass, setToastPass] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+  const [vistaActiva, setVistaActiva] = useState<'reciente' | 'misPedidos'>('reciente')
+  const [misPedidosPropio, setMisPedidosPropio] = useState<PedidoReciente[]>([])
+  const [pedidoReprogDash, setPedidoReprogDash] = useState<PedidoReciente | null>(null)
+  const [reprogFechaDash, setReprogFechaDash] = useState('')
+  const [reprogVueltaDash, setReprogVueltaDash] = useState(1)
+  const [reprogMotivoDash, setReprogMotivoDash] = useState('')
+  const [toastDash, setToastDash] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const router = useRouter()
+
+  const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
+    setToastDash({ msg, tipo }); setTimeout(() => setToastDash(null), 3000)
+  }
 
   const cambiarPassword = async () => {
     if (nuevaPassword.length < 6) { setToastPass({ msg: 'Mínimo 6 caracteres', tipo: 'err' }); return }
@@ -76,8 +87,42 @@ export default function Dashboard() {
       setNombreUsuario(userData?.nombre ?? user.email?.split('@')[0] ?? 'usuario')
       setVerificando(false)
       cargarDatos(user.id, userData?.rol ?? '')
+      cargarMisPedidosPropio(user.id)
     })
   }, [])
+
+  const cargarMisPedidosPropio = async (uid: string) => {
+    const { data } = await supabase.from('pedidos')
+      .select('id,nv,cliente,sucursal,estado,fecha_entrega,vuelta')
+      .eq('vendedor_id', uid)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    setMisPedidosPropio(data ?? [])
+  }
+
+  const handleReprogramarDashboard = async (p: PedidoReciente, fecha: string, vuelta: number, motivo: string) => {
+    const nota = `⚡ Reprogramado desde ${p.fecha_entrega} V${p.vuelta}${motivo ? ` — ${motivo}` : ''}`
+    const res = await fetch('/api/pedidos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: p.id, fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: nota })
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Error: ${data.error}`, 'err'); return }
+    setPedidoReprogDash(null)
+    cargarMisPedidosPropio(usuario.id)
+    showToast(`Pedido de ${p.cliente} reprogramado`)
+  }
+
+  const handleCancelarDashboard = async (p: PedidoReciente) => {
+    const res = await fetch('/api/pedidos', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: p.id })
+    })
+    const data = await res.json()
+    if (!res.ok) { showToast(`Error: ${data.error}`, 'err'); return }
+    cargarMisPedidosPropio(usuario.id)
+    showToast(`Pedido de ${p.cliente} eliminado`)
+  }
 
   const cargarDatos = async (userId: string, rol: string) => {
     const hoy = new Date().toISOString().split('T')[0]
@@ -108,6 +153,55 @@ export default function Dashboard() {
  
   return (
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
+
+      {/* Toast */}
+      {toastDash && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
+          style={{ background: toastDash.tipo === 'ok' ? '#254A96' : '#E52322' }}>
+          {toastDash.tipo === 'ok' ? '✓' : '✕'} {toastDash.msg}
+        </div>
+      )}
+
+      {/* Modal reprogramar */}
+      {pedidoReprogDash && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" style={{ fontFamily: 'Barlow, sans-serif' }}>
+            <h3 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📅 Reprogramar entrega</h3>
+            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>{pedidoReprogDash.cliente}</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva fecha</label>
+                <input type="date" value={reprogFechaDash}
+                  min={(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()}
+                  onChange={e => setReprogFechaDash(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Vuelta</label>
+                <select value={reprogVueltaDash} onChange={e => setReprogVueltaDash(parseInt(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                  {[1, 2, 3, 4].map(v => <option key={v} value={v}>Vuelta {v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Motivo</label>
+                <input type="text" value={reprogMotivoDash} onChange={e => setReprogMotivoDash(e.target.value)}
+                  placeholder="Ej: lluvia, cliente no disponible"
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button disabled={!reprogFechaDash}
+                onClick={() => handleReprogramarDashboard(pedidoReprogDash, reprogFechaDash, reprogVueltaDash, reprogMotivoDash)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                style={{ background: '#254A96' }}>Confirmar</button>
+              <button onClick={() => setPedidoReprogDash(null)}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal cambiar contraseña */}
       {modalPassword && (
@@ -225,47 +319,101 @@ export default function Dashboard() {
             </div>
           </div>
  
-          {/* Actividad reciente */}
+          {/* Actividad / Mis pedidos */}
           <div className="lg:col-span-2">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#B9BBB7' }}>Actividad reciente</p>
-            <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              {recientes.length === 0 ? (
-                <div className="p-12 text-center">
-                  <div className="text-4xl mb-3">📭</div>
-                  <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos cargados todavía</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
-                        {['Cliente', 'NV', 'Sucursal', 'Entrega', 'Estado'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {recientes.map((p, i) => (
-                        <tr key={p.id} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
-                          <td className="px-4 py-3 font-medium max-w-[140px] truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</td>
-                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.nv}</td>
-                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.sucursal}</td>
-                          <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>
-                            {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}
-                            <span className="ml-1 text-xs">V{p.vuelta}</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
-                              {ESTADO_LABEL[p.estado] ?? p.estado}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+            <div className="flex items-center gap-2 mb-3">
+              {(['reciente', 'misPedidos'] as const).map(v => (
+                <button key={v} onClick={() => setVistaActiva(v)}
+                  className="text-xs font-semibold uppercase tracking-widest px-3 py-1 rounded-lg transition-colors"
+                  style={{ background: vistaActiva === v ? '#254A96' : 'transparent', color: vistaActiva === v ? 'white' : '#B9BBB7' }}>
+                  {v === 'reciente' ? 'Actividad reciente' : 'Mis pedidos'}
+                </button>
+              ))}
             </div>
+
+            {vistaActiva === 'reciente' ? (
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                {recientes.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <div className="text-4xl mb-3">📭</div>
+                    <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos cargados todavía</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
+                          {['Cliente', 'NV', 'Sucursal', 'Entrega', 'Estado'].map(h => (
+                            <th key={h} className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recientes.map((p, i) => (
+                          <tr key={p.id} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
+                            <td className="px-4 py-3 font-medium max-w-[140px] truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</td>
+                            <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.nv}</td>
+                            <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.sucursal}</td>
+                            <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                              {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}
+                              <span className="ml-1 text-xs">V{p.vuelta}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
+                                {ESTADO_LABEL[p.estado] ?? p.estado}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                {misPedidosPropio.length === 0 ? (
+                  <div className="p-12 text-center">
+                    <div className="text-4xl mb-3">📭</div>
+                    <p className="text-sm" style={{ color: '#B9BBB7' }}>No cargaste pedidos todavía</p>
+                  </div>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: '#f9f9f9' }}>
+                    {misPedidosPropio.map(p => (
+                      <div key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                          <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                            {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} · V{p.vuelta} · {p.sucursal}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
+                            {ESTADO_LABEL[p.estado] ?? p.estado}
+                          </span>
+                          {['pendiente', 'programado'].includes(p.estado) && (
+                            <>
+                              <button
+                                onClick={() => { setPedidoReprogDash(p); setReprogFechaDash(''); setReprogVueltaDash(1); setReprogMotivoDash('') }}
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                style={{ background: '#fef3c7', color: '#b45309' }}>
+                                📅 Reprog.
+                              </button>
+                              <button
+                                onClick={() => handleCancelarDashboard(p)}
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                style={{ background: '#fde8e8', color: '#E52322' }}>
+                                Cancelar
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </main>

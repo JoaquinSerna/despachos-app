@@ -66,6 +66,7 @@ export default function NuevoDespacho() {
   const [pdfListo, setPdfListo] = useState(false)
   const [toastState, setToastState] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [form, setForm] = useState(FORM_INICIAL)
+  const [userId, setUserId] = useState<string | null>(null)
   const [misPedidos, setMisPedidos] = useState<any[]>([])
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
   const [pedidoReprog, setPedidoReprog] = useState<any | null>(null)
@@ -76,7 +77,7 @@ export default function NuevoDespacho() {
   useEffect(() => { _setToast = setToastState; return () => { _setToast = null } }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (!user) router.push('/') })
+    supabase.auth.getUser().then(({ data: { user } }) => { if (!user) router.push('/'); else setUserId(user.id) })
   }, [])
 
   useEffect(() => {
@@ -249,7 +250,7 @@ export default function NuevoDespacho() {
       vuelta: parseInt(form.vuelta),
       estado_pago: form.estado_pago,
       notas: form.notas,
-      vendedor_id: null,
+      vendedor_id: userId,
       estado: 'pendiente',
       peso_total_kg: pesoTotal,
       volumen_total_m3: posicionesTotal,

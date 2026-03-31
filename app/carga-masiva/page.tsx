@@ -54,6 +54,8 @@ interface SolicitudEdit {
   vuelta: number
   prioridad: boolean
   duplicada: boolean
+  peso_total_kg: number
+  volumen_total_m3: number  // posiciones logísticas
 }
 
 export default function CargaMasiva() {
@@ -89,18 +91,50 @@ export default function CargaMasiva() {
       if (!data.success) throw new Error(data.error || 'Error al procesar PDF')
 
       const ids = (data.solicitudes as SolicitudRaw[]).map(s => s.id_despacho)
-      const { data: existentes } = await supabase
-        .from('pedidos').select('id_despacho').in('id_despacho', ids)
-      const existentesSet = new Set((existentes ?? []).map((e: any) => String(e.id_despacho)))
 
-      const editables: SolicitudEdit[] = (data.solicitudes as SolicitudRaw[]).map(raw => ({
-        raw,
-        seleccionada: !existentesSet.has(String(raw.id_despacho)),
-        sucursal: detectarSucursal(raw.sucursal_obra, raw.deposito),
-        vuelta: horarioToVuelta(raw.horario),
-        prioridad: raw.prioridad_texto !== 'Normal',
-        duplicada: existentesSet.has(String(raw.id_despacho)),
-      }))
+      // Traer existentes y materiales en paralelo
+      const [{ data: existentes }, { data: todosMateriales }] = await Promise.all([
+        supabase.from('pedidos').select('id_despacho').in('id_despacho', ids),
+        supabase.from('materiales').select('nombre, cant_x_unid_log, posiciones_x_unid_log, peso_kg_x_posicion'),
+      ])
+      const existentesSet = new Set((existentes ?? []).map((e: any) => String(e.id_despacho)))
+      const materiales = todosMateriales ?? []
+
+      // Función de matching igual a la del formulario individual
+      const matchMaterial = (descripcion: string) => {
+        const nombre = descripcion.toLowerCase().replace(/\s+/g, ' ').trim()
+        return materiales.find((m: any) => {
+          const n = m.nombre.toLowerCase().replace(/\s+/g, ' ').trim()
+          return n === nombre || n.includes(nombre) || nombre.includes(n)
+        })
+      }
+
+      const calcularTotales = (productos: { descripcion: string; cantidad: number }[]) => {
+        let peso = 0, posiciones = 0
+        for (const p of productos) {
+          const mat = matchMaterial(p.descripcion)
+          if (mat) {
+            const unidades = Math.ceil(p.cantidad / mat.cant_x_unid_log)
+            posiciones += unidades * mat.posiciones_x_unid_log
+            peso += unidades * mat.peso_kg_x_posicion
+          }
+        }
+        return { peso, posiciones }
+      }
+
+      const editables: SolicitudEdit[] = (data.solicitudes as SolicitudRaw[]).map(raw => {
+        const { peso, posiciones } = calcularTotales(raw.productos)
+        return {
+          raw,
+          seleccionada: !existentesSet.has(String(raw.id_despacho)),
+          sucursal: detectarSucursal(raw.sucursal_obra, raw.deposito),
+          vuelta: horarioToVuelta(raw.horario),
+          prioridad: raw.prioridad_texto !== 'Normal',
+          duplicada: existentesSet.has(String(raw.id_despacho)),
+          peso_total_kg: Math.round(peso),
+          volumen_total_m3: Math.round(posiciones * 10) / 10,
+        }
+      })
 
       setSolicitudes(editables)
     } catch (err: any) {
@@ -148,6 +182,8 @@ export default function CargaMasiva() {
       longitud: s.raw.longitud,
       notas: `Carga masiva — ${s.raw.horario}`,
       vendedor_id: null,
+      peso_total_kg: s.peso_total_kg,
+      volumen_total_m3: s.volumen_total_m3,
       items: s.raw.productos,
     }))
 
@@ -348,6 +384,7 @@ export default function CargaMasiva() {
                     <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Sucursal</th>
                     <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Franja</th>
                     <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Prioridad</th>
+                    <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Peso / Pos.</th>
                     <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#6b7280' }}>Productos</th>
                   </tr>
                 </thead>
@@ -432,6 +469,14 @@ export default function CargaMasiva() {
                           }}>
                             {s.raw.prioridad_texto}
                           </span>
+                        </td>
+                        <td style={{ padding: '10px 14px' }}>
+                          <div style={{ fontSize: 12, color: '#374151' }}>
+                            {s.peso_total_kg > 0 ? `⚖️ ${(s.peso_total_kg / 1000).toFixed(2)}tn` : <span style={{ color: '#d1d5db' }}>—</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                            {s.volumen_total_m3 > 0 ? `📦 ${s.volumen_total_m3} pos.` : ''}
+                          </div>
                         </td>
                         <td style={{ padding: '10px 14px' }}>
                           <button

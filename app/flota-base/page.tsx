@@ -33,6 +33,13 @@ export default function FlotaBasePage() {
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [camionEditando, setCamionEditando] = useState<string | null>(null)
+  const [mostrarNuevo, setMostrarNuevo] = useState(false)
+  const [nuevoCamion, setNuevoCamion] = useState({
+    codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520',
+    posiciones_total: 10, tonelaje_max_kg: 5000,
+    grua_hidraulica: false, volcador: false, activo: true,
+    chofer_id_default: '',
+  })
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
@@ -86,6 +93,27 @@ export default function FlotaBasePage() {
   const choferAsignadoAOtro = (choferId: string, camionActual: string) =>
     camiones.some(c => c.codigo !== camionActual && c.chofer_id_default === choferId)
 
+  const crearCamion = async () => {
+    if (!nuevoCamion.codigo.trim()) { showToast('Ingresá un código para el camión', 'err'); return }
+    const ya = camiones.find(c => c.codigo.toLowerCase() === nuevoCamion.codigo.trim().toLowerCase())
+    if (ya) { showToast('Ya existe un camión con ese código', 'err'); return }
+    setGuardando(true)
+    const { error } = await supabase.from('camiones_flota').insert({
+      ...nuevoCamion,
+      codigo: nuevoCamion.codigo.trim().toUpperCase(),
+      chofer_id_default: nuevoCamion.chofer_id_default || null,
+    })
+    if (error) {
+      showToast('Error al crear camión: ' + error.message, 'err')
+    } else {
+      showToast(`Camión ${nuevoCamion.codigo.toUpperCase()} creado`)
+      setMostrarNuevo(false)
+      setNuevoCamion({ codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520', posiciones_total: 10, tonelaje_max_kg: 5000, grua_hidraulica: false, volcador: false, activo: true, chofer_id_default: '' })
+      cargar()
+    }
+    setGuardando(false)
+  }
+
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
@@ -119,10 +147,133 @@ export default function FlotaBasePage() {
               </span>
             </div>
           </div>
+          <button
+            onClick={() => setMostrarNuevo(true)}
+            className="text-sm font-semibold px-4 py-1.5 rounded-lg text-white"
+            style={{ background: '#254A96' }}>
+            + Nuevo camión
+          </button>
         </div>
       </nav>
 
       <main className="max-w-4xl mx-auto px-4 md:px-6 py-6">
+
+        {/* Modal nuevo camión */}
+        {mostrarNuevo && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: 'rgba(0,0,0,0.4)' }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-bold text-lg" style={{ color: '#254A96' }}>🚛 Nuevo camión</h2>
+                <button onClick={() => setMostrarNuevo(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Código / Patente *</label>
+                  <input
+                    type="text" placeholder="ej: ABC123"
+                    value={nuevoCamion.codigo}
+                    onChange={e => setNuevoCamion(p => ({ ...p, codigo: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm uppercase focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Tipo de unidad</label>
+                  <select
+                    value={nuevoCamion.tipo_unidad}
+                    onChange={e => setNuevoCamion(p => ({ ...p, tipo_unidad: e.target.value }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}>
+                    <option>Camión</option>
+                    <option>Camioneta</option>
+                    <option>Semi</option>
+                    <option>Utilitario</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Sucursal base</label>
+                <select
+                  value={nuevoCamion.sucursal}
+                  onChange={e => setNuevoCamion(p => ({ ...p, sucursal: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }}>
+                  {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Posiciones totales</label>
+                  <input
+                    type="number" min="1" max="100"
+                    value={nuevoCamion.posiciones_total}
+                    onChange={e => setNuevoCamion(p => ({ ...p, posiciones_total: parseInt(e.target.value) || 0 }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Tonelaje máx (kg)</label>
+                  <input
+                    type="number" min="0"
+                    value={nuevoCamion.tonelaje_max_kg}
+                    onChange={e => setNuevoCamion(p => ({ ...p, tonelaje_max_kg: parseInt(e.target.value) || 0 }))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}
+                  />
+                  <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>= {(nuevoCamion.tonelaje_max_kg / 1000).toFixed(2)} tn</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: '#254A96' }}>Chofer habitual</label>
+                <select
+                  value={nuevoCamion.chofer_id_default}
+                  onChange={e => setNuevoCamion(p => ({ ...p, chofer_id_default: e.target.value }))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }}>
+                  <option value="">— Sin chofer habitual —</option>
+                  {choferes.map(ch => <option key={ch.id} value={ch.id}>{ch.nombre}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-6 py-1">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={nuevoCamion.grua_hidraulica}
+                    onChange={e => setNuevoCamion(p => ({ ...p, grua_hidraulica: e.target.checked }))}
+                    className="w-4 h-4 rounded" />
+                  <span className="text-sm">🏗️ Grúa hidráulica</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={nuevoCamion.volcador}
+                    onChange={e => setNuevoCamion(p => ({ ...p, volcador: e.target.checked }))}
+                    className="w-4 h-4 rounded" />
+                  <span className="text-sm">🔄 Volcador</span>
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={crearCamion}
+                  disabled={guardando}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                  style={{ background: '#254A96' }}>
+                  {guardando ? 'Creando...' : '+ Crear camión'}
+                </button>
+                <button
+                  onClick={() => setMostrarNuevo(false)}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                  style={{ background: '#f4f4f3', color: '#666' }}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white rounded-xl p-4 mb-6 flex items-start gap-3 shadow-sm"
           style={{ border: '1px solid #e8edf8' }}>

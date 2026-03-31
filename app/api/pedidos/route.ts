@@ -55,14 +55,18 @@ export async function POST(req: NextRequest) {
       }
 
       if (items?.length > 0 && data) {
-        await admin.from('pedido_items').insert(
+        const { error: itemsError } = await admin.from('pedido_items').insert(
           items.map((item: any) => ({
             pedido_id: data.id,
-            nombre: item.descripcion,
-            cantidad: item.cantidad,
-            unidad: 'u',
+            codigo_material: null,
+            nombre: item.descripcion ?? item.nombre ?? '',
+            cantidad: item.cantidad ?? 1,
+            unidad: item.unidad ?? 'u',
           }))
         )
+        if (itemsError) {
+          errores.push({ id_despacho: pedidoData.id_despacho, error: `items: ${itemsError.message}` })
+        }
       }
 
       resultados.push({ id_despacho: pedidoData.id_despacho, id: data.id })

@@ -14,6 +14,7 @@ const TODAS_LAS_CARDS = [
   { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',            descripcion: 'Gestión de usuarios y permisos',    disponible: true,  roles: ['gerencia'] },
   { href: '/fin-del-dia',    icon: '🌙', titulo: 'Fin del día',         descripcion: 'Reprogramar pedidos no entregados',  disponible: true,  roles: ['gerencia','ruteador','admin_flota'] },
   { href: '/metricas',       icon: '📊', titulo: 'Métricas',            descripcion: 'Ocupación de flota y tiempos de ruta', disponible: true, roles: ['gerencia','ruteador','admin_flota'] },
+  { href: '/carga-masiva',   icon: '📥', titulo: 'Carga masiva',        descripcion: 'Importar solicitudes desde PDF',       disponible: true,  roles: ['gerencia'] },
 ]
  
 const ESTADO_COLOR: Record<string, string> = {

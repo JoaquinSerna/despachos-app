@@ -101,7 +101,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   return asigs
 }
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -109,11 +109,13 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
+  onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso'>('normal')
+  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar'>('normal')
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
+  const [itemsParaNuevo, setItemsParaNuevo] = useState<Set<number>>(new Set())
   const [reprogFecha, setReprogFecha] = useState('')
   const [reprogVuelta, setReprogVuelta] = useState(1)
   const [reprogMotivo, setReprogMotivo] = useState('')
@@ -259,8 +261,45 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
               style={{ background: '#e8edf8', color: '#666' }}>×</button>
           </div>
         </div>
+      ) : modo === 'separar' ? (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
+          <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>✂ Seleccioná los productos para el nuevo pedido</p>
+          <div className="space-y-1 mb-2">
+            {(pedido.items ?? []).map((item, i) => (
+              <label key={i} onMouseDown={e => e.stopPropagation()}
+                className="flex items-center gap-2 text-xs rounded px-2 py-1 cursor-pointer"
+                style={{ background: itemsParaNuevo.has(i) ? '#e8edf8' : '#fff', border: '1px solid #e8edf8' }}>
+                <input type="checkbox" checked={itemsParaNuevo.has(i)}
+                  onChange={() => {
+                    const s = new Set(itemsParaNuevo)
+                    if (s.has(i)) s.delete(i); else s.add(i)
+                    setItemsParaNuevo(s)
+                  }} className="w-3 h-3" />
+                <span className="flex-1">{item.nombre}</span>
+                <span className="font-medium shrink-0">{item.cantidad} {item.unidad}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-1.5">
+            <button onMouseDown={e => e.stopPropagation()}
+              disabled={itemsParaNuevo.size === 0 || itemsParaNuevo.size === (pedido.items?.length ?? 0)}
+              onClick={e => {
+                e.stopPropagation()
+                const items = pedido.items ?? []
+                const nuevo = items.filter((_, i) => itemsParaNuevo.has(i))
+                const mantener = items.filter((_, i) => !itemsParaNuevo.has(i))
+                onSepararPedido(pedido.id, nuevo, mantener)
+                setModo('normal')
+              }}
+              className="flex-1 text-xs py-1.5 rounded font-medium text-white disabled:opacity-40"
+              style={{ background: '#254A96' }}>Crear pedido separado</button>
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setModo('normal'); setItemsParaNuevo(new Set()) }}
+              className="text-xs px-2 py-1.5 rounded" style={{ background: '#e8edf8', color: '#666' }}>×</button>
+          </div>
+        </div>
       ) : (
-        <div className="flex items-center gap-2 mt-1.5">
+        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('vuelta') }}
             className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
             V{pedido.vuelta} · cambiar
@@ -271,9 +310,25 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             className="text-xs hover:underline" style={{ color: '#f59e0b' }}>
             📅 reprogramar
           </button>
+          {(pedido.items?.length ?? 0) > 1 && (
+            <>
+              <span style={{ color: '#e0e0e0' }}>|</span>
+              <button onMouseDown={e => e.stopPropagation()}
+                onClick={e => {
+                  e.stopPropagation()
+                  // Pre-seleccionar items con granel para el nuevo pedido
+                  const granel = new Set((pedido.items ?? []).map((item, i) => item.nombre.toLowerCase().includes('granel') ? i : -1).filter(i => i >= 0))
+                  setItemsParaNuevo(granel)
+                  setModo('separar')
+                }}
+                className="text-xs hover:underline" style={{ color: '#254A96' }}>
+                ✂ separar
+              </button>
+            </>
+          )}
         </div>
       )}
-      {pedido.items && pedido.items.length > 0 && (
+      {pedido.items && pedido.items.length > 0 && modo !== 'separar' && (
         <div className="mt-1.5">
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setExpandido(!expandido) }}
             className="text-xs font-medium" style={{ color: '#254A96' }}>
@@ -309,7 +364,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, deposito }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, deposito }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -320,6 +375,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onReprogramarCamion?: (codigo: string) => void
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
+  onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   deposito?: { lat: number; lng: number }
 }) {
   const { camion, pedidos, pesoTotal } = columna
@@ -383,7 +439,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto max-h-[420px]">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} />)}
       </div>
     </div>
   )
@@ -485,7 +541,15 @@ function ProgramacionInner() {
             if (!itemsMap[it.pedido_id]) itemsMap[it.pedido_id] = []
             itemsMap[it.pedido_id].push({ nombre: it.nombre, cantidad: it.cantidad, unidad: it.unidad })
           }
-          todosConItems = pedidosBase.map((p: any) => ({ ...p, items: itemsMap[p.id] ?? [] }))
+          todosConItems = pedidosBase.map((p: any) => {
+            const items = itemsMap[p.id] ?? []
+            // Auto-detectar volcador si tiene items con "granel" y aún no está marcado
+            const tieneGranel = items.some((i: any) => i.nombre.toLowerCase().includes('granel'))
+            if (tieneGranel && !p.requiere_volcador) {
+              fetch('/api/pedidos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, requiere_volcador: true }) })
+            }
+            return { ...p, items, requiere_volcador: tieneGranel || p.requiere_volcador }
+          })
         }
       } catch { /* si falla, mostrar pedidos sin items */ }
     }
@@ -604,6 +668,20 @@ function ProgramacionInner() {
       const act = pedidos.map(p => p.id === id ? { ...p, requiere_volcador: valor } : p)
       setPedidos(act); construirColumnas(act, camiones)
     } catch { showToast('Error al actualizar tipo de camión', 'err') }
+  }
+
+  async function handleSepararPedido(id: string, itemsNuevo: any[], itemsMantener: any[]) {
+    try {
+      const res = await fetch('/api/separar-pedido', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedido_id: id, items_nuevo: itemsNuevo, items_mantener: itemsMantener }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      showToast('Pedido separado correctamente')
+      cargarDatos() // recargar para ver ambos pedidos
+    } catch (e: any) { showToast(`Error al separar: ${e.message}`, 'err') }
   }
 
   async function handleCancelar(id: string) {
@@ -836,7 +914,8 @@ function ProgramacionInner() {
               onCambiarVuelta={handleCambiarVuelta}
               onReprogramar={handleReprogramar}
               onEditarPeso={handleEditarPeso}
-              onToggleVolcador={handleToggleVolcador} />
+              onToggleVolcador={handleToggleVolcador}
+              onSepararPedido={handleSepararPedido} />
             <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
             {columnas.map(col => (
               <ColumnaCamion key={col.camion.codigo} columna={col}
@@ -850,6 +929,7 @@ function ProgramacionInner() {
                 onReprogramar={handleReprogramar}
                 onEditarPeso={handleEditarPeso}
                 onToggleVolcador={handleToggleVolcador}
+                onSepararPedido={handleSepararPedido}
                 onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                 deposito={DEPOSITOS[sucursal]} />
             ))}

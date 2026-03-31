@@ -56,6 +56,7 @@ interface SolicitudEdit {
   duplicada: boolean
   peso_total_kg: number
   volumen_total_m3: number  // posiciones logísticas
+  requiere_volcador: boolean
 }
 
 export default function CargaMasiva() {
@@ -111,7 +112,9 @@ export default function CargaMasiva() {
 
       const calcularTotales = (productos: { descripcion: string; cantidad: number }[]) => {
         let peso = 0, posiciones = 0
+        let requiere_volcador = false
         for (const p of productos) {
+          if (p.descripcion.toLowerCase().includes('granel')) requiere_volcador = true
           const mat = matchMaterial(p.descripcion)
           if (mat) {
             const unidades = Math.ceil(p.cantidad / mat.cant_x_unid_log)
@@ -119,17 +122,18 @@ export default function CargaMasiva() {
             peso += unidades * mat.peso_kg_x_posicion
           }
         }
-        return { peso, posiciones }
+        return { peso, posiciones, requiere_volcador }
       }
 
       const editables: SolicitudEdit[] = (data.solicitudes as SolicitudRaw[]).map(raw => {
-        const { peso, posiciones } = calcularTotales(raw.productos)
+        const { peso, posiciones, requiere_volcador } = calcularTotales(raw.productos)
         return {
           raw,
           seleccionada: !existentesSet.has(String(raw.id_despacho)),
           sucursal: detectarSucursal(raw.sucursal_obra, raw.deposito),
           vuelta: horarioToVuelta(raw.horario),
           prioridad: raw.prioridad_texto !== 'Normal',
+          requiere_volcador,
           duplicada: existentesSet.has(String(raw.id_despacho)),
           peso_total_kg: Math.round(peso),
           volumen_total_m3: Math.round(posiciones * 10) / 10,
@@ -184,6 +188,7 @@ export default function CargaMasiva() {
       vendedor_id: null,
       peso_total_kg: s.peso_total_kg,
       volumen_total_m3: s.volumen_total_m3,
+      requiere_volcador: s.requiere_volcador,
       items: s.raw.productos,
     }))
 

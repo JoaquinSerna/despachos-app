@@ -18,7 +18,7 @@ interface Camion {
   posiciones_total: number; tonelaje_max_kg: number
   grua_hidraulica: boolean; volcador: boolean
 }
-interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number }
+interface ColumnaKanban { camion: Camion; pedidos: Pedido[]; pesoTotal: number; posTotal: number }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
@@ -37,13 +37,18 @@ const PAGO_LABEL: Record<string, string> = {
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
+function posColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.min(100, Math.round(peso / max * 100)) }
 function colorBarra(p: number) { return p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
 
 function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucursal: string): Record<string, string | null> {
   const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
   const acum: Record<string, number> = {}
-  camiones.forEach(c => { acum[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) })
+  const acumPos: Record<string, number> = {}
+  camiones.forEach(c => {
+    acum[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0)
+    acumPos[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
+  })
   const asigs: Record<string, string | null> = {}
 
   // Ordenar: prioridades primero, luego por distancia al depósito (cercanos primero → se agrupan geográficamente)
@@ -57,11 +62,13 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
 
   for (const p of ordenados) {
     const peso = p.peso_total_kg ?? 0
+    const pos = p.volumen_total_m3 ?? 0
     const esVolcador = p.requiere_volcador === true
 
-    // Filtrar por capacidad y tipo de camión requerido
+    // Filtrar por capacidad de peso Y posiciones, y tipo de camión requerido
     const elegibles = camiones.filter(c => {
       if (acum[c.codigo] + peso > c.tonelaje_max_kg) return false
+      if (c.posiciones_total > 0 && pos > 0 && acumPos[c.codigo] + pos > c.posiciones_total) return false
       if (esVolcador && !c.volcador) return false
       return true
     })
@@ -95,7 +102,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
       if (score < mejorScore) { mejorScore = score; mejor = c }
     }
 
-    if (mejor) { asigs[p.id] = mejor.codigo; acum[mejor.codigo] += peso }
+    if (mejor) { asigs[p.id] = mejor.codigo; acum[mejor.codigo] += peso; acumPos[mejor.codigo] += pos }
     else asigs[p.id] = null
   }
   return asigs
@@ -378,8 +385,9 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   deposito?: { lat: number; lng: number }
 }) {
-  const { camion, pedidos, pesoTotal } = columna
+  const { camion, pedidos, pesoTotal, posTotal } = columna
   const p = sinAsignar ? 0 : pct(pesoTotal, camion.tonelaje_max_kg)
+  const pPos = (!sinAsignar && camion.posiciones_total > 0) ? pct(posTotal, camion.posiciones_total) : 0
   const maxDistKm = !sinAsignar && deposito
     ? Math.max(0, ...pedidos.filter(p => p.latitud && p.longitud).map(p => distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!)))
     : 0
@@ -418,13 +426,20 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                 </span>
               )}
             </div>
-            <div className="w-full rounded-full h-1.5 mb-1" style={{ background: '#f0f0f0' }}>
+            <div className="w-full rounded-full h-1.5 mb-0.5" style={{ background: '#f0f0f0' }}>
               <div className="h-1.5 rounded-full transition-all" style={{ width: `${p}%`, background: colorBarra(p) }} />
             </div>
+            {camion.posiciones_total > 0 && (
+              <div className="w-full rounded-full h-1 mb-1" style={{ background: '#f0f0f0' }}>
+                <div className="h-1 rounded-full transition-all" style={{ width: `${pPos}%`, background: colorBarra(pPos) }} />
+              </div>
+            )}
             <div className="flex justify-between items-center text-xs" style={{ color: '#B9BBB7' }}>
-              <span>{Math.round(pesoTotal)} kg</span>
+              <span>{Math.round(pesoTotal)} kg{camion.posiciones_total > 0 ? ` · ${Math.round(posTotal)} pos.` : ''}</span>
               <div className="flex items-center gap-2">
-                <span style={{ color: p >= 90 ? '#E52322' : '#B9BBB7', fontWeight: p >= 90 ? 600 : 400 }}>{p}% · {camion.tonelaje_max_kg} kg</span>
+                <span style={{ color: (p >= 90 || pPos >= 90) ? '#E52322' : '#B9BBB7', fontWeight: (p >= 90 || pPos >= 90) ? 600 : 400 }}>
+                  {p}%{camion.posiciones_total > 0 ? ` · ${pPos}%pos` : ''} · {camion.tonelaje_max_kg} kg
+                </span>
                 {onReprogramarCamion && pedidos.length > 0 && (
                   <button onClick={() => onReprogramarCamion(camion.codigo)}
                     title="Reprogramar pedidos de este camión"
@@ -561,7 +576,7 @@ function ProgramacionInner() {
   }
 
   function construirColumnas(todos: Pedido[], cams: Camion[]) {
-    setColumnas(cams.map(c => { const ps = todos.filter(p => p.camion_id === c.codigo); return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps) } }))
+    setColumnas(cams.map(c => { const ps = todos.filter(p => p.camion_id === c.codigo); return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps), posTotal: posColumna(ps) } }))
     setSinAsignar(todos.filter(p => !p.camion_id))
   }
 
@@ -904,7 +919,7 @@ function ProgramacionInner() {
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-4">
             <ColumnaCamion sinAsignar
-              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0 }}
+              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posTotal: 0 }}
               onDrop={handleDrop}
               onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
               onDragLeave={() => setDragOver(null)}

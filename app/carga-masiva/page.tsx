@@ -142,7 +142,7 @@ export default function CargaMasiva() {
       fecha_entrega: fechaEntrega,
       vuelta: s.vuelta,
       estado: 'pendiente',
-      estado_pago: '',
+      estado_pago: 'cuenta_corriente',
       prioridad: s.prioridad,
       latitud: s.raw.latitud,
       longitud: s.raw.longitud,

@@ -32,17 +32,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { error } = await supabase
+    // Solo actualizar notas si el chofer escribió algo (no sobreescribir con null)
+    const updates: Record<string, any> = { estado: 'entregado' }
+    if (nota) updates.notas = nota
+
+    const { data: updated, error } = await supabase
       .from('pedidos')
-      .update({
-        estado: 'entregado',
-        notas: nota || null,
-        // foto_url se puede agregar a la tabla después
-      })
+      .update(updates)
       .eq('id', pedidoId)
+      .select('id')
 
     if (error) {
+      console.error('confirmar-entrega error:', error)
       return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    if (!updated || updated.length === 0) {
+      return NextResponse.json({ error: `Pedido ${pedidoId} no encontrado o sin permiso` }, { status: 404 })
     }
 
     return NextResponse.json({ success: true, foto_url })

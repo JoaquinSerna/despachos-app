@@ -304,7 +304,7 @@ export default function RuteoPage() {
       setFoto(null)
       setFotoPreview(null)
     } else {
-      showToast('Error al confirmar', 'err')
+      showToast(`Error: ${data.error ?? 'No se pudo confirmar'}`, 'err')
     }
     setConfirmando(false)
   }

@@ -37,8 +37,13 @@ async function llamarClaude(anthropic: Anthropic, base64: string, intento: numbe
     })
   } catch (err: any) {
     const esOverloaded = err?.status === 529 || err?.error?.type === 'overloaded_error' || err?.message?.includes('overloaded')
-    if (esOverloaded && intento < 4) {
-      const espera = Math.pow(2, intento) * 3000 // 3s, 6s, 12s, 24s
+    const esRateLimit = err?.status === 429 || err?.error?.type === 'rate_limit_error' || err?.message?.includes('rate_limit')
+    if ((esOverloaded || esRateLimit) && intento < 5) {
+      // rate limit: esperar más tiempo (60s base), overloaded: backoff normal
+      const espera = esRateLimit
+        ? Math.min(60000, Math.pow(2, intento) * 15000) // 15s, 30s, 60s, 60s, 60s
+        : Math.pow(2, intento) * 3000                   // 3s, 6s, 12s, 24s, 48s
+      console.log(`leer-masivo: intento ${intento + 1} fallido (${esRateLimit ? 'rate_limit' : 'overloaded'}), esperando ${espera / 1000}s...`)
       await new Promise(r => setTimeout(r, espera))
       return llamarClaude(anthropic, base64, intento + 1)
     }
@@ -66,10 +71,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, solicitudes })
   } catch (error: any) {
     const esOverloaded = error?.status === 529 || error?.error?.type === 'overloaded_error' || error?.message?.includes('overloaded')
-    const mensaje = esOverloaded
-      ? 'Los servidores de IA están sobrecargados en este momento. Esperá unos segundos y volvé a intentar.'
-      : error.message
+    const esRateLimit = error?.status === 429 || error?.error?.type === 'rate_limit_error' || error?.message?.includes('rate_limit')
+    const mensaje = esRateLimit
+      ? 'Límite de uso de IA alcanzado. Esperá 1 minuto y volvé a intentar.'
+      : esOverloaded
+        ? 'Los servidores de IA están sobrecargados. Esperá unos segundos y volvé a intentar.'
+        : error.message
     console.error('leer-masivo error:', error.message)
-    return NextResponse.json({ error: mensaje }, { status: esOverloaded ? 503 : 500 })
+    return NextResponse.json({ error: mensaje }, { status: (esOverloaded || esRateLimit) ? 503 : 500 })
   }
 }

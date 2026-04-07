@@ -599,7 +599,7 @@ export default function RuteoPage() {
                         <div className="grid grid-cols-3 gap-2 text-center">
                           <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
                             <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Inicio</p>
-                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{formatHora(horaInicio)}</p>
+                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{formatHora(horaInicio!)}</p>
                           </div>
                           <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
                             <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Duración</p>

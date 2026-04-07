@@ -158,13 +158,15 @@ export default function RuteoPage() {
       .update({ hora_inicio: ahora })
       .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
     if (!error) {
-      // Marcar todos los pedidos de este camión como "en_camino"
+      // Marcar solo los pedidos de esta vuelta como "en_camino"
       await fetch('/api/pedidos', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ camion_id: camionSeleccionado, fecha_entrega: fecha, estado: 'en_camino', _bulk_camion: true }),
+        body: JSON.stringify({ camion_id: camionSeleccionado, fecha_entrega: fecha, estado: 'en_camino', vuelta: vueltaActiva, _bulk_camion: true }),
       })
-      setPedidos(prev => prev.map(p => p.estado === 'programado' ? { ...p, estado: 'en_camino' } : p))
+      setPedidos(prev => prev.map(p =>
+        p.estado === 'programado' && p.vuelta === vueltaActiva ? { ...p, estado: 'en_camino' } : p
+      ))
       setHoraInicio(ahora)
       showToast('Ruta iniciada')
     } else showToast('Error al iniciar ruta', 'err')
@@ -284,41 +286,67 @@ export default function RuteoPage() {
   const cambiarLabel = (idx: number, label: string) =>
     setFotos(prev => prev.map((f, i) => i === idx ? { ...f, label } : f))
 
+  // Comprime una imagen a JPEG con calidad reducida para no trabar el upload móvil
+  const comprimirFoto = (file: File): Promise<Blob> =>
+    new Promise(resolve => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        const MAX = 1200
+        const ratio = Math.min(MAX / img.width, MAX / img.height, 1)
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(img.width * ratio)
+        canvas.height = Math.round(img.height * ratio)
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+        URL.revokeObjectURL(url)
+        canvas.toBlob(blob => resolve(blob ?? file), 'image/jpeg', 0.82)
+      }
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+      img.src = url
+    })
+
   const confirmarEntrega = async () => {
     if (!modalPedido) return
     setConfirmando(true)
 
-    const formData = new FormData()
-    formData.append('pedido_id', modalPedido.id)
-    if (nota) formData.append('nota', nota)
-    fotos.forEach((f, i) => {
-      formData.append(`foto_${i}`, f.file)
-      formData.append(`label_${i}`, f.label)
-    })
+    try {
+      const formData = new FormData()
+      formData.append('pedido_id', modalPedido.id)
+      if (nota) formData.append('nota', nota)
 
-    const res = await fetch('/api/confirmar-entrega', { method: 'POST', body: formData })
-    const data = await res.json()
-
-    if (data.success) {
-      showToast('Entrega confirmada')
-      if (usuario && datosUsuario) {
-        await logAuditoria(usuario.id, datosUsuario.nombre, 'Confirmó entrega', 'Ruteo', {
-          pedido_id: modalPedido.id,
-          nv: modalPedido.nv,
-          cliente: modalPedido.cliente,
-          camion: camionSeleccionado,
-          con_nota: !!nota,
-          cant_fotos: fotos.length,
-        })
+      // Comprimir cada foto antes de subir
+      for (let i = 0; i < fotos.length; i++) {
+        const blob = await comprimirFoto(fotos[i].file)
+        formData.append(`foto_${i}`, blob, `foto_${i}.jpg`)
+        formData.append(`label_${i}`, fotos[i].label)
       }
-      setPedidos(prev => prev.map(p =>
-        p.id === modalPedido.id ? { ...p, estado: 'entregado' } : p
-      ))
-      setModalPedido(null)
-      setNota('')
-      setFotos([])
-    } else {
-      showToast(`Error: ${data.error ?? 'No se pudo confirmar'}`, 'err')
+
+      const res = await fetch('/api/confirmar-entrega', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (data.success) {
+        showToast('Entrega confirmada')
+        if (usuario && datosUsuario) {
+          await logAuditoria(usuario.id, datosUsuario.nombre, 'Confirmó entrega', 'Ruteo', {
+            pedido_id: modalPedido.id,
+            nv: modalPedido.nv,
+            cliente: modalPedido.cliente,
+            camion: camionSeleccionado,
+            con_nota: !!nota,
+            cant_fotos: fotos.length,
+          })
+        }
+        setPedidos(prev => prev.map(p =>
+          p.id === modalPedido.id ? { ...p, estado: 'entregado' } : p
+        ))
+        setModalPedido(null)
+        setNota('')
+        setFotos([])
+      } else {
+        showToast(`Error: ${data.error ?? 'No se pudo confirmar'}`, 'err')
+      }
+    } catch (e: any) {
+      showToast(`Error: ${e.message ?? 'No se pudo confirmar'}`, 'err')
     }
     setConfirmando(false)
   }

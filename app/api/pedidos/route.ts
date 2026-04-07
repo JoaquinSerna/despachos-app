@@ -17,10 +17,13 @@ export async function PATCH(req: NextRequest) {
     const { id, _bulk_camion, camion_id, fecha_entrega, ...updates } = body
 
     if (_bulk_camion) {
-      // Actualizar todos los pedidos programados de un camión en una fecha
+      // Actualizar pedidos programados de un camión en una fecha, opcionalmente filtrado por vuelta
       if (!camion_id || !fecha_entrega) return NextResponse.json({ error: 'Falta camion_id o fecha_entrega' }, { status: 400 })
-      const { error } = await getAdmin().from('pedidos').update(updates)
+      const { vuelta, ...restUpdates } = updates
+      let q = getAdmin().from('pedidos').update(restUpdates)
         .eq('camion_id', camion_id).eq('fecha_entrega', fecha_entrega).eq('estado', 'programado')
+      if (vuelta) q = q.eq('vuelta', vuelta)
+      const { error } = await q
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
       return NextResponse.json({ success: true })
     }

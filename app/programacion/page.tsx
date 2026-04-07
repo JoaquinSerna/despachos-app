@@ -66,7 +66,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     const esVolcador = p.requiere_volcador === true
 
     // ¿El pedido necesita grúa? (tiene items que no son hierro/malla/vigueta/pretensado)
-    const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura']
+    const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
     const itemsDelPedido = p.items ?? []
     const soloHierro = itemsDelPedido.length > 0 &&
       itemsDelPedido.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))

@@ -73,7 +73,14 @@ export default function UsuariosPage() {
         const res = await fetch('/api/crear-usuario', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: modal.usuario.id, nombre: form.nombre, rol: form.rol, sucursal: form.sucursal }),
+          body: JSON.stringify({
+            id: modal.usuario.id,
+            nombre: form.nombre,
+            email: form.email,
+            password: form.password || undefined,
+            rol: form.rol,
+            sucursal: form.sucursal,
+          }),
         })
         const data = await res.json()
         if (data.error) throw new Error(data.error)
@@ -154,24 +161,23 @@ export default function UsuariosPage() {
                   style={{ borderColor: '#e8edf8' }} placeholder="Ej: Juan Pérez" />
               </div>
 
-              {modal.tipo === 'crear' && (
-                <>
-                  <div>
-                    <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Email</label>
-                    <input type="email" value={form.email}
-                      onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                      className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
-                      style={{ borderColor: '#e8edf8' }} placeholder="correo@construyoalcosto.com" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Contraseña inicial</label>
-                    <input type="password" value={form.password}
-                      onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                      className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
-                      style={{ borderColor: '#e8edf8' }} placeholder="Mínimo 6 caracteres" />
-                  </div>
-                </>
-              )}
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Email</label>
+                <input type="email" value={form.email}
+                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }} placeholder="correo@construyoalcosto.com"
+                  readOnly={modal.tipo === 'editar' ? false : false} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                  {modal.tipo === 'editar' ? 'Nueva contraseña (dejar vacío para no cambiar)' : 'Contraseña inicial'}
+                </label>
+                <input type="password" value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }} placeholder={modal.tipo === 'editar' ? 'Nueva contraseña...' : 'Mínimo 6 caracteres'} />
+              </div>
 
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Rol</label>

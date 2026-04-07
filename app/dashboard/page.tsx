@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
@@ -53,6 +53,10 @@ export default function Dashboard() {
   const [reprogVueltaDash, setReprogVueltaDash] = useState(1)
   const [reprogMotivoDash, setReprogMotivoDash] = useState('')
   const [toastDash, setToastDash] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+  const [refrescando, setRefrescando] = useState(false)
+  const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const usuarioRef = useRef<{ id: string; rol: string } | null>(null)
   const router = useRouter()
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
@@ -89,9 +93,17 @@ export default function Dashboard() {
       setRolUsuario(userData?.rol ?? '')
       setNombreUsuario(userData?.nombre ?? user.email?.split('@')[0] ?? 'usuario')
       setVerificando(false)
-      cargarDatos(user.id, userData?.rol ?? '')
+      const rol = userData?.rol ?? ''
+      usuarioRef.current = { id: user.id, rol }
+      cargarDatos(user.id, rol)
       cargarMisPedidosPropio(user.id)
+      // Auto-refresh cada 10 minutos
+      intervalRef.current = setInterval(() => {
+        cargarDatos(user.id, rol)
+        cargarMisPedidosPropio(user.id)
+      }, 10 * 60 * 1000)
     })
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [])
 
   const cargarMisPedidosPropio = async (uid: string) => {
@@ -129,7 +141,6 @@ export default function Dashboard() {
 
   const cargarDatos = async (userId: string, rol: string) => {
     const hoy = new Date().toISOString().split('T')[0]
-    // Comercial solo ve sus propios pedidos (filtrado por vendedor_id)
     const filtrarPorVendedor = (q: any) => rol === 'comercial' ? q.eq('vendedor_id', userId) : q
 
     const [{ count: p }, { count: h }, { count: e }, { count: ed }, { data: r }] = await Promise.all([
@@ -142,6 +153,15 @@ export default function Dashboard() {
     setStats({ pendientes: p || 0, hoy: h || 0, enCamino: e || 0, entregadosHoy: ed || 0 })
     setRecientes(r || [])
     setCargando(false)
+    setUltimaActualizacion(new Date())
+  }
+
+  const refrescar = async () => {
+    if (!usuarioRef.current) return
+    setRefrescando(true)
+    await cargarDatos(usuarioRef.current.id, usuarioRef.current.rol)
+    await cargarMisPedidosPropio(usuarioRef.current.id)
+    setRefrescando(false)
   }
  
   if (!usuario || cargando || verificando) return (
@@ -274,6 +294,17 @@ export default function Dashboard() {
         </div>
  
         {/* Stats */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs" style={{ color: '#B9BBB7' }}>
+            {ultimaActualizacion ? `Actualizado ${ultimaActualizacion.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+          </span>
+          <button onClick={refrescar} disabled={refrescando}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium border flex items-center gap-1.5 disabled:opacity-50"
+            style={{ borderColor: '#e8edf8', color: '#254A96', background: '#fff' }}>
+            <span className={refrescando ? 'animate-spin inline-block' : ''}>↻</span>
+            {refrescando ? 'Actualizando...' : 'Actualizar'}
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {[
             { label: 'Pendientes', value: stats.pendientes, emoji: '⏳', bg: '#fff8e1', color: '#b45309' },

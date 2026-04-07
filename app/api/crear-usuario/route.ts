@@ -55,12 +55,23 @@ export async function POST(req: NextRequest) {
 // PUT - editar usuario
 export async function PUT(req: NextRequest) {
   try {
-    const { id, nombre, rol, sucursal } = await req.json()
-    const { error } = await getAdmin()
-      .from('usuarios')
-      .update({ nombre, rol, sucursal: sucursal || 'LP520' })
-      .eq('id', id)
+    const { id, nombre, email, password, rol, sucursal } = await req.json()
+
+    // Actualizar auth (email y/o password) si se enviaron
+    const authUpdates: Record<string, string> = {}
+    if (email) authUpdates.email = email
+    if (password) authUpdates.password = password
+    if (Object.keys(authUpdates).length > 0) {
+      const { error: authError } = await getAdmin().auth.admin.updateUserById(id, authUpdates)
+      if (authError) return NextResponse.json({ error: authError.message }, { status: 400 })
+    }
+
+    // Actualizar tabla usuarios
+    const dbUpdates: Record<string, string> = { nombre, rol, sucursal: sucursal || 'LP520' }
+    if (email) dbUpdates.email = email
+    const { error } = await getAdmin().from('usuarios').update(dbUpdates).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+
     return NextResponse.json({ success: true })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

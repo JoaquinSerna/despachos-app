@@ -16,7 +16,6 @@ const ESTADO_LABEL: Record<string, string> = {
   entregado: 'Entregado', cancelado: 'Cancelado',
 }
 
-// Colores por tipo de carga
 const TIPO_COLOR: Record<string, { bg: string; text: string }> = {
   hierro:  { bg: '#e8edf8', text: '#254A96' },
   chapa:   { bg: '#dbeafe', text: '#1d4ed8' },
@@ -42,12 +41,12 @@ interface Pedido {
   notas: string | null; camion_id: string | null
 }
 
-// Estado de edición de una fila
+interface Item {
+  nombre: string; cantidad: number; unidad: string; tipo_carga?: string
+}
+
 interface EditState {
-  id: string
-  sucursal: string
-  peso: string
-  posiciones: string
+  id: string; sucursal: string; peso: string; posiciones: string
 }
 
 export default function PedidosPage() {
@@ -56,8 +55,12 @@ export default function PedidosPage() {
   const [cargando, setCargando] = useState(false)
   const [total, setTotal] = useState(0)
 
-  // Categorías por pedido: pedido_id → string[]
+  // Categorías y items por pedido
   const [categoriasMap, setCategoriasMap] = useState<Record<string, string[]>>({})
+  const [itemsMap, setItemsMap] = useState<Record<string, Item[]>>({})
+
+  // Fila expandida
+  const [expandidoId, setExpandidoId] = useState<string | null>(null)
 
   // Filtros
   const [filtroFecha, setFiltroFecha] = useState('')
@@ -65,7 +68,7 @@ export default function PedidosPage() {
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroTexto, setFiltroTexto] = useState('')
 
-  // Edición inline
+  // Edición
   const [editando, setEditando] = useState<EditState | null>(null)
   const [guardando, setGuardando] = useState(false)
 
@@ -88,6 +91,8 @@ export default function PedidosPage() {
   async function buscar() {
     setCargando(true)
     setCategoriasMap({})
+    setItemsMap({})
+    setExpandidoId(null)
     let q = supabase
       .from('pedidos')
       .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
@@ -111,33 +116,43 @@ export default function PedidosPage() {
     setTotal(count ?? 0)
     setCargando(false)
 
-    // Cargar categorías en segundo plano
-    if (pedidosList.length > 0) {
-      cargarCategorias(pedidosList.map(p => p.id))
-    }
+    if (pedidosList.length > 0) cargarDetalle(pedidosList.map(p => p.id))
   }
 
-  async function cargarCategorias(ids: string[]) {
-    const [{ data: items }, { data: mats }] = await Promise.all([
-      supabase.from('pedido_items').select('pedido_id, nombre').in('pedido_id', ids),
+  async function cargarDetalle(ids: string[]) {
+    const [{ data: rawItems }, { data: mats }] = await Promise.all([
+      supabase.from('pedido_items').select('pedido_id, nombre, cantidad, unidad').in('pedido_id', ids),
       supabase.from('materiales').select('nombre, tipo_carga'),
     ])
-    if (!items || !mats) return
+    if (!rawItems || !mats) return
 
-    const map: Record<string, Set<string>> = {}
-    for (const item of items) {
+    const newItemsMap: Record<string, Item[]> = {}
+    const newCatMap: Record<string, Set<string>> = {}
+
+    for (const item of rawItems) {
       const nItem = normalizar(item.nombre)
       const mat = mats.find((m: any) => {
         const nMat = normalizar(m.nombre)
         return nMat === nItem || nMat.includes(nItem) || nItem.includes(nMat)
       })
       const tipo = mat?.tipo_carga ?? 'otros'
-      if (!map[item.pedido_id]) map[item.pedido_id] = new Set()
-      map[item.pedido_id].add(tipo)
+
+      if (!newItemsMap[item.pedido_id]) newItemsMap[item.pedido_id] = []
+      newItemsMap[item.pedido_id].push({ nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, tipo_carga: tipo })
+
+      if (!newCatMap[item.pedido_id]) newCatMap[item.pedido_id] = new Set()
+      newCatMap[item.pedido_id].add(tipo)
     }
-    const result: Record<string, string[]> = {}
-    for (const [k, v] of Object.entries(map)) result[k] = Array.from(v)
-    setCategoriasMap(result)
+
+    const newCatResult: Record<string, string[]> = {}
+    for (const [k, v] of Object.entries(newCatMap)) newCatResult[k] = Array.from(v)
+
+    setItemsMap(newItemsMap)
+    setCategoriasMap(newCatResult)
+  }
+
+  function toggleExpandir(id: string) {
+    setExpandidoId(prev => prev === id ? null : id)
   }
 
   function iniciarEdicion(p: Pedido) {
@@ -177,6 +192,8 @@ export default function PedidosPage() {
     setGuardando(false)
   }
 
+  const COLS = 11 // número de columnas de la tabla para el colspan del detalle
+
   return (
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
 
@@ -196,7 +213,8 @@ export default function PedidosPage() {
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Sucursal</label>
-                <select value={editando.sucursal} onChange={e => setEditando(prev => prev ? { ...prev, sucursal: e.target.value } : prev)}
+                <select value={editando.sucursal}
+                  onChange={e => setEditando(prev => prev ? { ...prev, sucursal: e.target.value } : prev)}
                   className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: '#e8edf8' }}>
                   {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -235,7 +253,7 @@ export default function PedidosPage() {
 
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => router.push('/dashboard')}
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
@@ -300,6 +318,7 @@ export default function PedidosPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: '#f4f4f3', borderBottom: '1px solid #e8edf8' }}>
+                  <th className="w-8 px-3 py-3"></th>
                   <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>NV</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Cliente</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Dirección</th>
@@ -309,65 +328,126 @@ export default function PedidosPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Estado</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>Kg / Pos</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Productos</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Camión</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {pedidos.map((p, i) => {
                   const cats = categoriasMap[p.id]
+                  const items = itemsMap[p.id]
+                  const expandido = expandidoId === p.id
+                  const borderColor = i < pedidos.length - 1 || expandido ? '1px solid #f4f4f3' : 'none'
                   return (
-                    <tr key={p.id} style={{ borderBottom: i < pedidos.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
-                      <td className="px-4 py-2.5 font-medium whitespace-nowrap" style={{ color: '#1a1a1a' }}>{p.nv}</td>
-                      <td className="px-4 py-2.5 max-w-[160px] truncate" style={{ color: '#1a1a1a' }} title={p.cliente}>{p.cliente}</td>
-                      <td className="px-4 py-2.5 max-w-[180px] truncate text-xs" style={{ color: '#666' }} title={p.direccion}>{p.direccion}</td>
-                      <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#666' }}>
-                        {p.fecha_entrega ? new Date(p.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) : '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: '#666' }}>V{p.vuelta}</td>
-                      <td className="px-4 py-2.5">
-                        <span className="text-xs px-2 py-0.5 rounded-lg font-medium"
-                          style={{ background: '#e8edf8', color: '#254A96' }}>
-                          {p.sucursal}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white"
-                          style={{ background: ESTADO_COLOR[p.estado] ?? '#999' }}>
-                          {ESTADO_LABEL[p.estado] ?? p.estado}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#555' }}>
-                        <div>{p.peso_total_kg != null ? `${p.peso_total_kg.toLocaleString('es-AR')} kg` : <span style={{ color: '#ccc' }}>—</span>}</div>
-                        <div style={{ color: '#888' }}>{p.volumen_total_m3 != null ? `${p.volumen_total_m3} pos` : <span style={{ color: '#ccc' }}>—</span>}</div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <div className="flex flex-wrap gap-1">
-                          {cats === undefined
-                            ? <span className="text-xs" style={{ color: '#ddd' }}>·</span>
-                            : cats.length === 0
-                              ? <span className="text-xs" style={{ color: '#ccc' }}>sin items</span>
-                              : cats.map(t => {
-                                  const c = TIPO_COLOR[t] ?? TIPO_COLOR.otros
-                                  return (
-                                    <span key={t} className="text-xs px-1.5 py-0.5 rounded font-medium"
-                                      style={{ background: c.bg, color: c.text }}>
-                                      {TIPO_LABEL[t] ?? t}
-                                    </span>
-                                  )
-                                })
-                          }
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>{p.camion_id ?? '—'}</td>
-                      <td className="px-4 py-2.5">
-                        <button onClick={() => iniciarEdicion(p)}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                          style={{ background: '#f4f4f3', color: '#254A96' }}>
-                          ✏️
-                        </button>
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={p.id} style={{ borderBottom: expandido ? 'none' : borderColor }}
+                        className={expandido ? 'bg-blue-50/30' : ''}>
+                        {/* Flecha desplegable */}
+                        <td className="px-3 py-2.5">
+                          <button onClick={() => toggleExpandir(p.id)}
+                            className="w-6 h-6 flex items-center justify-center rounded text-xs transition-transform"
+                            style={{ color: '#254A96', transform: expandido ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+                            ▶
+                          </button>
+                        </td>
+                        <td className="px-4 py-2.5 font-medium whitespace-nowrap" style={{ color: '#1a1a1a' }}>{p.nv}</td>
+                        <td className="px-4 py-2.5 max-w-[150px] truncate" style={{ color: '#1a1a1a' }} title={p.cliente}>{p.cliente}</td>
+                        <td className="px-4 py-2.5 max-w-[160px] truncate text-xs" style={{ color: '#666' }} title={p.direccion}>{p.direccion}</td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#666' }}>
+                          {p.fecha_entrega ? new Date(p.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) : '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-xs" style={{ color: '#666' }}>V{p.vuelta}</td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-xs px-2 py-0.5 rounded-lg font-medium"
+                            style={{ background: '#e8edf8', color: '#254A96' }}>
+                            {p.sucursal}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white"
+                            style={{ background: ESTADO_COLOR[p.estado] ?? '#999' }}>
+                            {ESTADO_LABEL[p.estado] ?? p.estado}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#555' }}>
+                          <div>{p.peso_total_kg != null ? `${p.peso_total_kg.toLocaleString('es-AR')} kg` : <span style={{ color: '#ccc' }}>—</span>}</div>
+                          <div style={{ color: '#888' }}>{p.volumen_total_m3 != null ? `${p.volumen_total_m3} pos` : <span style={{ color: '#ccc' }}>—</span>}</div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <div className="flex flex-wrap gap-1">
+                            {cats === undefined
+                              ? <span className="text-xs animate-pulse" style={{ color: '#ddd' }}>·</span>
+                              : cats.length === 0
+                                ? <span className="text-xs" style={{ color: '#ccc' }}>sin items</span>
+                                : cats.map(t => {
+                                    const c = TIPO_COLOR[t] ?? TIPO_COLOR.otros
+                                    return (
+                                      <span key={t} className="text-xs px-1.5 py-0.5 rounded font-medium"
+                                        style={{ background: c.bg, color: c.text }}>
+                                        {TIPO_LABEL[t] ?? t}
+                                      </span>
+                                    )
+                                  })
+                            }
+                          </div>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <button onClick={() => iniciarEdicion(p)}
+                            className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                            style={{ background: '#f4f4f3', color: '#254A96' }}>
+                            ✏️
+                          </button>
+                        </td>
+                      </tr>
+
+                      {/* Fila de detalle expandible */}
+                      {expandido && (
+                        <tr key={`${p.id}-detalle`} style={{ borderBottom: borderColor }}>
+                          <td colSpan={COLS} className="px-8 pb-4 pt-1" style={{ background: '#f8faff' }}>
+                            <div className="rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>
+                              {/* Cabecera detalle */}
+                              <div className="px-4 py-2 flex flex-wrap gap-4 text-xs font-medium border-b" style={{ background: '#e8edf8', borderColor: '#dde4f4', color: '#254A96' }}>
+                                <span>📍 {p.direccion}</span>
+                                {p.notas && <span>📝 {p.notas}</span>}
+                                {p.camion_id && <span>🚛 {p.camion_id}</span>}
+                              </div>
+                              {/* Items */}
+                              {!items || items.length === 0 ? (
+                                <p className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>Sin productos registrados</p>
+                              ) : (
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr style={{ background: '#f4f4f3', borderBottom: '1px solid #e8edf8' }}>
+                                      <th className="text-left px-4 py-2 font-semibold" style={{ color: '#254A96' }}>Producto</th>
+                                      <th className="text-right px-4 py-2 font-semibold" style={{ color: '#254A96' }}>Cantidad</th>
+                                      <th className="text-left px-4 py-2 font-semibold" style={{ color: '#254A96' }}>Unidad</th>
+                                      <th className="text-left px-4 py-2 font-semibold" style={{ color: '#254A96' }}>Categoría</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {items.map((it, j) => {
+                                      const c = TIPO_COLOR[it.tipo_carga ?? 'otros'] ?? TIPO_COLOR.otros
+                                      return (
+                                        <tr key={j} style={{ borderBottom: j < items.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
+                                          <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}</td>
+                                          <td className="px-4 py-2 text-right font-medium" style={{ color: '#254A96' }}>{it.cantidad.toLocaleString('es-AR')}</td>
+                                          <td className="px-4 py-2" style={{ color: '#666' }}>{it.unidad}</td>
+                                          <td className="px-4 py-2">
+                                            <span className="px-1.5 py-0.5 rounded font-medium"
+                                              style={{ background: c.bg, color: c.text }}>
+                                              {TIPO_LABEL[it.tipo_carga ?? 'otros'] ?? it.tipo_carga}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
                   )
                 })}
               </tbody>

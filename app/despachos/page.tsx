@@ -212,6 +212,7 @@ export default function NuevoDespacho() {
   const normalizar = (s: string) =>
     s.toLowerCase()
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/(\d),(\d)/g, '$1.$2')
       .replace(/\s*x\s*/g, 'x')
       .replace(/(\d)\s*(mt|kg|cm|mm|m)\b/g, '$1$2')
       .replace(/\s+/g, ' ').trim()

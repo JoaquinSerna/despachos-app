@@ -105,6 +105,7 @@ export default function CargaMasiva() {
       const normalizar = (s: string) =>
         s.toLowerCase()
           .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar tildes
+          .replace(/(\d),(\d)/g, '$1.$2')      // 2,4 → 2.4
           .replace(/\s*x\s*/g, 'x')           // "X 25" → "x25", "4.0 x" → "4.0x"
           .replace(/(\d)\s*(mt|kg|cm|mm|m)\b/g, '$1$2') // "4.0 MT" → "4.0mt"
           .replace(/\s+/g, ' ').trim()

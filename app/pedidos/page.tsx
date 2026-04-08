@@ -404,21 +404,37 @@ export default function PedidosPage() {
                           <div style={{ color: '#888' }}>{p.volumen_total_m3 != null ? `${p.volumen_total_m3} pos` : <span style={{ color: '#ccc' }}>—</span>}</div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <div className="flex flex-wrap gap-1">
-                            {cats === undefined
-                              ? <span className="text-xs animate-pulse" style={{ color: '#ddd' }}>·</span>
-                              : cats.length === 0
-                                ? <span className="text-xs" style={{ color: '#ccc' }}>sin items</span>
-                                : cats.map(t => {
-                                    const c = tipoColor(t)
-                                    return (
-                                      <span key={t} className="text-xs px-1.5 py-0.5 rounded font-medium"
-                                        style={{ background: c.bg, color: c.text }}>
-                                        {tipoLabel(t)}
-                                      </span>
-                                    )
-                                  })
-                            }
+                          <div className="space-y-1">
+                            {/* Badges de categoría */}
+                            <div className="flex flex-wrap gap-1">
+                              {cats === undefined
+                                ? <span className="text-xs animate-pulse" style={{ color: '#ddd' }}>·</span>
+                                : cats.length === 0
+                                  ? <span className="text-xs" style={{ color: '#ccc' }}>sin items</span>
+                                  : cats.map(t => {
+                                      const c = tipoColor(t)
+                                      return (
+                                        <span key={t} className="text-xs px-1.5 py-0.5 rounded font-medium"
+                                          style={{ background: c.bg, color: c.text }}>
+                                          {tipoLabel(t)}
+                                        </span>
+                                      )
+                                    })
+                              }
+                            </div>
+                            {/* Nombres de productos */}
+                            {items && items.length > 0 && (
+                              <div className="text-xs leading-snug" style={{ color: '#666' }}>
+                                {items.slice(0, 3).map((it, j) => (
+                                  <div key={j} className="truncate max-w-[220px]">
+                                    <span className="font-medium">{it.cantidad} {it.unidad}</span> {it.nombre}
+                                  </div>
+                                ))}
+                                {items.length > 3 && (
+                                  <div style={{ color: '#B9BBB7' }}>+{items.length - 3} más…</div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-2.5">

@@ -146,7 +146,10 @@ export default function ConfirmacionesPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-3xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style={{ background: '#254A96' }}>C</div>
+            <button onClick={() => router.push('/dashboard')}
+              className="text-xs px-2 py-1.5 rounded-lg font-medium shrink-0"
+              style={{ background: '#e8edf8', color: '#254A96' }}>← Volver</button>
+            <div className="w-px h-5 bg-gray-200 hidden sm:block" />
             <div>
               <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Confirmaciones</span>
               <span className="text-xs ml-2 hidden sm:inline" style={{ color: '#B9BBB7' }}>{nombreUsuario}</span>

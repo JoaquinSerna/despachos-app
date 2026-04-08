@@ -14,10 +14,11 @@ function getAdmin() {
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { id, _bulk_camion, camion_id, fecha_entrega, ...updates } = body
+    const { id, _bulk_camion, ...rest } = body
 
     if (_bulk_camion) {
       // Actualizar pedidos programados de un camión en una fecha, filtrado por vuelta
+      const { camion_id, fecha_entrega, ...updates } = rest
       if (!camion_id || !fecha_entrega) return NextResponse.json({ error: 'Falta camion_id o fecha_entrega' }, { status: 400 })
       const { vuelta, ...restUpdates } = updates
       const admin = getAdmin()
@@ -43,7 +44,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (!id) return NextResponse.json({ error: 'Falta el id del pedido' }, { status: 400 })
-    const { error } = await getAdmin().from('pedidos').update(updates).eq('id', id)
+    const { error } = await getAdmin().from('pedidos').update(rest).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     return NextResponse.json({ success: true })
   } catch (e: any) {

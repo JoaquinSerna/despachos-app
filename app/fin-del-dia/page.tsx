@@ -7,7 +7,6 @@ import { useRouter } from 'next/navigation'
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 
 function hoy() { return new Date().toISOString().split('T')[0] }
-function manana() { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] }
 
 export default function FinDelDiaPage() {
   const router = useRouter()
@@ -16,7 +15,7 @@ export default function FinDelDiaPage() {
   const [pedidos, setPedidos] = useState<any[]>([])
   const [cargando, setCargando] = useState(false)
   const [procesando, setProcesando] = useState(false)
-  const [fechaDestino, setFechaDestino] = useState(manana())
+  const [fechaDestino, setFechaDestino] = useState(hoy())
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
   const [prioridades, setPrioridades] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
@@ -70,9 +69,7 @@ export default function FinDelDiaPage() {
           body: JSON.stringify({
             id: p.id,
             fecha_entrega: fechaDestino,
-            camion_id: null,
-            orden_entrega: null,
-            estado: 'pendiente',
+            estado: 'programado',
             notas: notaFinal,
             prioridad: esPrioridad,
           })
@@ -173,7 +170,6 @@ export default function FinDelDiaPage() {
                 <div className="flex-1">
                   <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Reprogramar para</label>
                   <input type="date" value={fechaDestino}
-                    min={manana()}
                     onChange={e => setFechaDestino(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />

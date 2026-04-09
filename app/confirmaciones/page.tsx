@@ -40,6 +40,7 @@ export default function ConfirmacionesPage() {
   const [confirmando, setConfirmando] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [soloSinConfirmar, setSoloSinConfirmar] = useState(false)
+  const [editDirecciones, setEditDirecciones] = useState<Record<string, string>>({})
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000)
@@ -97,6 +98,19 @@ export default function ConfirmacionesPage() {
       showToast('Cliente confirmado ✓')
     }
     setConfirmando(null)
+  }
+
+  const guardarDireccion = async (pedidoId: string, valor: string) => {
+    const original = pedidos.find(p => p.id === pedidoId)?.direccion ?? ''
+    if (valor.trim() === original.trim()) return
+    const { error } = await supabase.from('pedidos').update({ direccion: valor.trim() }).eq('id', pedidoId)
+    if (error) {
+      showToast('Error al guardar dirección', 'err')
+    } else {
+      setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, direccion: valor.trim() } : p))
+      setEditDirecciones(prev => { const n = { ...prev }; delete n[pedidoId]; return n })
+      showToast('Dirección actualizada ✓')
+    }
   }
 
   const desconfirmarCliente = async (pedidoId: string) => {
@@ -258,8 +272,15 @@ export default function ConfirmacionesPage() {
 
                       <div className="px-4 py-3 space-y-2" style={{ borderTop: '1px solid #f4f4f3' }}>
                         <div className="flex items-start gap-2">
-                          <span className="text-xs mt-0.5">📍</span>
-                          <p className="text-sm" style={{ color: '#1a1a1a' }}>{pedido.direccion}</p>
+                          <span className="text-xs mt-1.5">📍</span>
+                          <input
+                            type="text"
+                            value={editDirecciones[pedido.id] ?? pedido.direccion}
+                            onChange={e => setEditDirecciones(prev => ({ ...prev, [pedido.id]: e.target.value }))}
+                            onBlur={e => guardarDireccion(pedido.id, e.target.value)}
+                            className="flex-1 text-sm rounded-lg px-2 py-1 focus:outline-none focus:ring-2"
+                            style={{ color: '#1a1a1a', background: '#f9fafb', border: '1px solid #e8edf8', focusRingColor: '#254A96' } as any}
+                          />
                         </div>
                         {pedido.telefono && (
                           <div className="flex items-center gap-2">

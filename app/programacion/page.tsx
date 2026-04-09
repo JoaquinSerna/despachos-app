@@ -116,7 +116,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   return asigs
 }
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -126,12 +126,14 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   onMoverSucursal: (id: string, sucursal: string) => void
+  onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal'>('normal')
+  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal' | 'stock'>('normal')
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
   const [cantNuevo, setCantNuevo] = useState<Record<number, number>>({})
+  const [stockDisp, setStockDisp] = useState<Record<number, number>>({})
   const [reprogFecha, setReprogFecha] = useState('')
   const [reprogVuelta, setReprogVuelta] = useState(1)
   const [reprogMotivo, setReprogMotivo] = useState('')
@@ -261,6 +263,65 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('normal') }}
             className="text-xs" style={{ color: '#B9BBB7' }}>×</button>
         </div>
+      ) : modo === 'stock' ? (
+        <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#fff8e1', border: '1px solid #fcd34d' }}>
+          <p className="text-xs font-medium mb-1" style={{ color: '#b45309' }}>⚠ Incidencia de stock</p>
+          <p className="text-xs mb-2" style={{ color: '#b45309' }}>Indicá cuánto hay disponible. Los ítems sin stock quedan como pendiente para reprogramar.</p>
+          <div className="space-y-1.5 mb-2">
+            {(pedido.items ?? []).map((item, i) => {
+              const disp = stockDisp[i] ?? item.cantidad
+              const sinStock = disp === 0
+              const parcial = disp > 0 && disp < item.cantidad
+              return (
+                <div key={i} onMouseDown={e => e.stopPropagation()}
+                  className="rounded px-2 py-1.5"
+                  style={{ background: sinStock ? '#fde8e8' : parcial ? '#fef3c7' : '#f0fdf4', border: `1px solid ${sinStock ? '#fca5a5' : parcial ? '#fcd34d' : '#bbf7d0'}` }}>
+                  <p className="text-xs mb-1 leading-tight font-medium" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs" style={{ color: '#666' }}>Stock disponible:</span>
+                    <input type="number" min={0} max={item.cantidad} step={1}
+                      value={disp}
+                      onMouseDown={e => e.stopPropagation()}
+                      onChange={e => {
+                        const n = Math.min(Math.max(0, parseInt(e.target.value) || 0), item.cantidad)
+                        setStockDisp(prev => ({ ...prev, [i]: n }))
+                      }}
+                      className="w-16 text-xs border rounded px-1.5 py-1 focus:outline-none text-center font-bold"
+                      style={{ borderColor: sinStock ? '#fca5a5' : '#e8edf8' }} />
+                    <span className="text-xs" style={{ color: '#666' }}>/ {item.cantidad} {item.unidad}</span>
+                    <span className="text-xs ml-auto font-medium"
+                      style={{ color: sinStock ? '#E52322' : parcial ? '#b45309' : '#065f46' }}>
+                      {sinStock ? 'Sin stock' : parcial ? `Falta ${item.cantidad - disp}` : 'OK'}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="flex gap-1.5">
+            <button onMouseDown={e => e.stopPropagation()}
+              disabled={(pedido.items ?? []).every((item, i) => (stockDisp[i] ?? item.cantidad) === item.cantidad)}
+              onClick={e => {
+                e.stopPropagation()
+                const items = pedido.items ?? []
+                const conStock = items
+                  .map((item, i) => ({ ...item, cantidad: stockDisp[i] ?? item.cantidad }))
+                  .filter(item => item.cantidad > 0)
+                const sinStock = items
+                  .map((item, i) => ({ ...item, cantidad: item.cantidad - (stockDisp[i] ?? item.cantidad) }))
+                  .filter(item => item.cantidad > 0)
+                onIncidenciaStock(pedido.id, sinStock, conStock)
+                setModo('normal'); setStockDisp({})
+              }}
+              className="flex-1 text-xs py-1.5 rounded font-medium text-white disabled:opacity-40"
+              style={{ background: '#b45309' }}>
+              Confirmar incidencia
+            </button>
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setModo('normal'); setStockDisp({}) }}
+              className="text-xs px-2 py-1.5 rounded" style={{ background: '#e8edf8', color: '#666' }}>×</button>
+          </div>
+        </div>
       ) : modo === 'editar_peso' ? (
         <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
           <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>✎ Editar peso y posiciones</p>
@@ -357,6 +418,12 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             V{pedido.vuelta} · cambiar
           </button>
           <span style={{ color: '#e0e0e0' }}>|</span>
+          <button onMouseDown={e => e.stopPropagation()}
+            onClick={e => { e.stopPropagation(); setStockDisp({}); setModo('stock') }}
+            className="text-xs hover:underline font-medium" style={{ color: '#b45309' }}>
+            ⚠ stock
+          </button>
+          <span style={{ color: '#e0e0e0' }}>|</span>
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('mover_sucursal') }}
             className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
             🏭 {pedido.sucursal}
@@ -419,7 +486,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, deposito }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -432,6 +499,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   onMoverSucursal: (id: string, sucursal: string) => void
+  onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   deposito?: { lat: number; lng: number }
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
@@ -503,7 +571,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto max-h-[420px]">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} />)}
       </div>
     </div>
   )
@@ -732,6 +800,26 @@ function ProgramacionInner() {
       const act = pedidos.map(p => p.id === id ? { ...p, requiere_volcador: valor } : p)
       setPedidos(act); construirColumnas(act, camiones)
     } catch { showToast('Error al actualizar tipo de camión', 'err') }
+  }
+
+  async function handleIncidenciaStock(id: string, itemsSinStock: any[], itemsConStock: any[]) {
+    try {
+      const res = await fetch('/api/separar-pedido', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedido_id: id, items_nuevo: itemsSinStock, items_mantener: itemsConStock, motivo: 'stock' }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      if (data.tipo === 'reprogramado_completo') {
+        showToast('Pedido sin stock — movido a pendiente para reprogramar')
+        const act = pedidos.filter(p => p.id !== id)
+        setPedidos(act); construirColumnas(act, camiones)
+      } else {
+        showToast('Incidencia registrada — ítems sin stock separados como pendiente')
+        cargarDatos()
+      }
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
   async function handleMoverSucursal(id: string, nuevaSucursal: string) {
@@ -991,7 +1079,8 @@ function ProgramacionInner() {
               onEditarPeso={handleEditarPeso}
               onToggleVolcador={handleToggleVolcador}
               onSepararPedido={handleSepararPedido}
-              onMoverSucursal={handleMoverSucursal} />
+              onMoverSucursal={handleMoverSucursal}
+              onIncidenciaStock={handleIncidenciaStock} />
             <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
             {columnas.map(col => (
               <ColumnaCamion key={col.camion.codigo} columna={col}
@@ -1007,6 +1096,7 @@ function ProgramacionInner() {
                 onToggleVolcador={handleToggleVolcador}
                 onSepararPedido={handleSepararPedido}
                 onMoverSucursal={handleMoverSucursal}
+                onIncidenciaStock={handleIncidenciaStock}
                 onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                 deposito={DEPOSITOS[sucursal]} />
             ))}

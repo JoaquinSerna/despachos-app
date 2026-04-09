@@ -41,30 +41,52 @@ async function calcularPesoItems(admin: ReturnType<typeof getAdmin>, items: { no
 }
 
 // POST - separar un pedido en dos
+// motivo: 'separar' (default) | 'stock'
+// Si items_mantener está vacío (todo sin stock) → el pedido entero vuelve a pendiente sin crear uno nuevo
 export async function POST(req: NextRequest) {
   try {
-    const { pedido_id, items_nuevo, items_mantener } = await req.json()
-    if (!pedido_id || !items_nuevo?.length || !items_mantener?.length) {
-      return NextResponse.json({ error: 'Faltan datos: pedido_id, items_nuevo, items_mantener' }, { status: 400 })
+    const { pedido_id, items_nuevo, items_mantener, motivo } = await req.json()
+    if (!pedido_id || !items_nuevo?.length) {
+      return NextResponse.json({ error: 'Faltan datos: pedido_id, items_nuevo' }, { status: 400 })
     }
 
+    const esStock = motivo === 'stock'
     const admin = getAdmin()
 
     // Obtener pedido original
     const { data: original, error: errOrig } = await admin.from('pedidos').select('*').eq('id', pedido_id).single()
     if (errOrig || !original) return NextResponse.json({ error: 'Pedido no encontrado' }, { status: 404 })
 
-    // Calcular peso para cada grupo
+    // Caso: todo sin stock → el pedido entero vuelve a pendiente
+    if (!items_mantener?.length) {
+      const nota = (original.notas ? original.notas + ' · ' : '') + '⚠ Sin stock — reprogramar'
+      await admin.from('pedidos').update({
+        estado: 'pendiente',
+        camion_id: null,
+        orden_entrega: null,
+        notas: nota,
+      }).eq('id', pedido_id)
+      return NextResponse.json({ success: true, tipo: 'reprogramado_completo' })
+    }
+
+    // Caso normal: separar en dos pedidos
     const [totalesNuevo, totalesMantener] = await Promise.all([
       calcularPesoItems(admin, items_nuevo),
       calcularPesoItems(admin, items_mantener),
     ])
 
-    // Detectar si el nuevo pedido requiere volcador
     const nuevoRequiereVolcador = items_nuevo.some((i: any) => esGranel(i.nombre))
     const mantenerRequiereVolcador = items_mantener.some((i: any) => esGranel(i.nombre))
 
-    // Crear nuevo pedido (copia sin camion_id, con id_despacho + 'B')
+    const notaNuevo = esStock
+      ? (original.notas ? original.notas + ' · ' : '') + '⚠ Sin stock — reprogramar'
+      : (original.notas ? original.notas + ' · ' : '') + 'Separado de solicitud original'
+
+    const notaMantener = esStock
+      ? (original.notas ? original.notas + ' · ' : '') + '⚠ Entrega parcial — falta stock en ítems separados'
+      : original.notas
+
+    // Crear nuevo pedido (los ítems sin stock / separados)
     const { id: _id, created_at: _ca, updated_at: _ua, camion_id: _cam, orden_entrega: _oe, ...baseData } = original
     const { data: nuevoPedido, error: errNuevo } = await admin.from('pedidos').insert({
       ...baseData,
@@ -75,29 +97,27 @@ export async function POST(req: NextRequest) {
       peso_total_kg: totalesNuevo.peso || null,
       volumen_total_m3: totalesNuevo.posiciones || null,
       requiere_volcador: nuevoRequiereVolcador,
-      notas: (original.notas ? original.notas + ' · ' : '') + 'Separado de solicitud original',
+      notas: notaNuevo,
     }).select('id').single()
     if (errNuevo) return NextResponse.json({ error: errNuevo.message }, { status: 400 })
 
-    // Insertar items del nuevo pedido
     await admin.from('pedido_items').insert(
       items_nuevo.map((i: any) => ({ pedido_id: nuevoPedido.id, nombre: i.nombre, cantidad: i.cantidad, unidad: i.unidad ?? 'u' }))
     )
 
-    // Reemplazar items del pedido original: borrar todos y reinsertar los que quedan
+    // Actualizar pedido original con los ítems que sí van hoy
     await admin.from('pedido_items').delete().eq('pedido_id', pedido_id)
     await admin.from('pedido_items').insert(
       items_mantener.map((i: any) => ({ pedido_id, nombre: i.nombre, cantidad: i.cantidad, unidad: i.unidad ?? 'u' }))
     )
-
-    // Actualizar peso del pedido original
     await admin.from('pedidos').update({
       peso_total_kg: totalesMantener.peso || null,
       volumen_total_m3: totalesMantener.posiciones || null,
       requiere_volcador: mantenerRequiereVolcador,
+      notas: notaMantener,
     }).eq('id', pedido_id)
 
-    return NextResponse.json({ success: true, nuevo_id: nuevoPedido.id })
+    return NextResponse.json({ success: true, tipo: 'separado', nuevo_id: nuevoPedido.id })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }

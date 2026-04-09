@@ -486,8 +486,8 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
-  columna: ColumnaKanban; sinAsignar?: boolean
+function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggleExpand, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
+  columna: ColumnaKanban; sinAsignar?: boolean; expanded?: boolean; onToggleExpand?: () => void
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
   onDragLeave: () => void; onDragStart: (e: React.DragEvent, p: Pedido) => void; isDragOver: boolean
@@ -509,29 +509,43 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
     ? Math.max(0, ...pedidos.filter(p => p.latitud && p.longitud).map(p => distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!)))
     : 0
   const maxVueltas = maxDistKm > 0 ? maxVueltasPorDistancia(maxDistKm) : null
+  const w = expanded ? 360 : 220
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
       onDragOver={e => onDragOver(e, sinAsignar ? null : camion.codigo)}
       onDragLeave={onDragLeave}
-      className="flex flex-col rounded-xl min-w-[210px] w-[210px] shrink-0 transition-all"
+      className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
+        width: w, minWidth: w,
         border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : '#f0f0f0'}`,
         background: isDragOver ? '#e8edf8' : '#f9f9f9',
         boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : 'none',
       }}>
-      <div className="p-3 rounded-t-xl" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
+      <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
-          <div className="text-center py-1">
-            <p className="text-sm font-semibold" style={{ color: '#B9BBB7' }}>Sin asignar</p>
-            <p className="text-xs" style={{ color: '#B9BBB7' }}>{pedidos.length} pedidos</p>
+          <div className="flex items-center justify-between py-1">
+            <div>
+              <p className="text-sm font-semibold" style={{ color: '#B9BBB7' }}>Sin asignar</p>
+              <p className="text-xs" style={{ color: '#B9BBB7' }}>{pedidos.length} pedidos</p>
+            </div>
+            {onToggleExpand && (
+              <button onClick={onToggleExpand} className="text-xs px-1.5 py-0.5 rounded" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={expanded ? 'Contraer' : 'Expandir'}>
+                {expanded ? '◀' : '▶'}
+              </button>
+            )}
           </div>
         ) : (
           <>
             <div className="flex justify-between items-center mb-1">
               <span className="font-bold text-sm" style={{ color: '#254A96' }}>{camion.codigo}</span>
-              <div className="flex gap-1">
+              <div className="flex gap-1 items-center">
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
                 {camion.volcador && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#fef3c7', color: '#d97706' }}>Volc.</span>}
+                {onToggleExpand && (
+                  <button onClick={onToggleExpand} className="text-xs px-1.5 py-0.5 rounded ml-1" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={expanded ? 'Contraer' : 'Expandir'}>
+                    {expanded ? '◀' : '▶'}
+                  </button>
+                )}
               </div>
             </div>
             <div className="flex items-center justify-between mb-2">
@@ -568,7 +582,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
           </>
         )}
       </div>
-      <div className="p-2 flex-1 overflow-y-auto max-h-[420px]">
+      <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
           : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} />)}
@@ -640,6 +654,10 @@ function ProgramacionInner() {
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [confirmado, setConfirmado] = useState(false)
+  const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set())
+  const toggleExpand = (cod: string) => setExpandedCols(prev => {
+    const s = new Set(prev); s.has(cod) ? s.delete(cod) : s.add(cod); return s
+  })
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const dragPedido = useRef<Pedido | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -905,7 +923,7 @@ function ProgramacionInner() {
   const totalSin = pedidos.length - totalAsig
 
   return (
-    <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
@@ -957,8 +975,8 @@ function ProgramacionInner() {
       )}
 
       {/* Navbar */}
-      <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
-        <div className="max-w-screen-2xl mx-auto px-4 md:px-6">
+      <nav className="bg-white border-b shrink-0 z-40" style={{ borderColor: '#e8edf8' }}>
+        <div className="px-4 md:px-6">
           <div className="h-14 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
               <button onClick={() => router.push('/dashboard')} className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg shrink-0"
@@ -991,8 +1009,8 @@ function ProgramacionInner() {
       </nav>
 
       {/* Barra acciones */}
-      <div className="bg-white border-b px-4 md:px-6 py-2.5" style={{ borderColor: '#f0f0f0' }}>
-        <div className="max-w-screen-2xl mx-auto flex items-center justify-between flex-wrap gap-3">
+      <div className="bg-white border-b shrink-0 px-4 md:px-6 py-2.5" style={{ borderColor: '#f0f0f0' }}>
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-5 text-sm" style={{ color: '#B9BBB7' }}>
             <span>Total: <strong style={{ color: '#254A96' }}>{pedidos.length}</strong></span>
             <span>Asignados: <strong style={{ color: '#10b981' }}>{totalAsig}</strong></span>
@@ -1019,8 +1037,8 @@ function ProgramacionInner() {
         </div>
       </div>
 
-      {/* Kanban */}
-      <div className="p-4 md:p-6 max-w-screen-2xl mx-auto">
+      {/* Kanban — ocupa todo el alto restante */}
+      <div className="flex-1 overflow-hidden flex flex-col px-3 pt-2 pb-3">
         {/* Banner overflow */}
         {overflowPedidos.length > 0 && (
           <div className="mb-4 rounded-xl p-4 flex items-center justify-between gap-4 flex-wrap"
@@ -1065,30 +1083,18 @@ function ProgramacionInner() {
             <button onClick={() => router.push('/flota')} className="mt-3 text-sm font-medium" style={{ color: '#254A96' }}>Ir a Flota del día →</button>
           </div>
         ) : (
-          <div className="flex gap-3 overflow-x-auto pb-4">
-            <ColumnaCamion sinAsignar
-              columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posTotal: 0 }}
-              onDrop={handleDrop}
-              onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
-              onDragLeave={() => setDragOver(null)}
-              onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
-              isDragOver={dragOver === 'sin_asignar'}
-              onCancelar={handleCancelar}
-              onCambiarVuelta={handleCambiarVuelta}
-              onReprogramar={handleReprogramar}
-              onEditarPeso={handleEditarPeso}
-              onToggleVolcador={handleToggleVolcador}
-              onSepararPedido={handleSepararPedido}
-              onMoverSucursal={handleMoverSucursal}
-              onIncidenciaStock={handleIncidenciaStock} />
-            <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
-            {columnas.map(col => (
-              <ColumnaCamion key={col.camion.codigo} columna={col}
+          <div className="flex-1 overflow-hidden flex gap-2">
+            {/* Sin asignar — fija a la izquierda */}
+            <div className="shrink-0 h-full" style={{ zIndex: 10 }}>
+              <ColumnaCamion sinAsignar
+                expanded={expandedCols.has('sin_asignar')}
+                onToggleExpand={() => toggleExpand('sin_asignar')}
+                columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posTotal: 0 }}
                 onDrop={handleDrop}
                 onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
                 onDragLeave={() => setDragOver(null)}
                 onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
-                isDragOver={dragOver === col.camion.codigo}
+                isDragOver={dragOver === 'sin_asignar'}
                 onCancelar={handleCancelar}
                 onCambiarVuelta={handleCambiarVuelta}
                 onReprogramar={handleReprogramar}
@@ -1096,10 +1102,34 @@ function ProgramacionInner() {
                 onToggleVolcador={handleToggleVolcador}
                 onSepararPedido={handleSepararPedido}
                 onMoverSucursal={handleMoverSucursal}
-                onIncidenciaStock={handleIncidenciaStock}
-                onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
-                deposito={DEPOSITOS[sucursal]} />
-            ))}
+                onIncidenciaStock={handleIncidenciaStock} />
+            </div>
+            <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
+            {/* Camiones — scroll horizontal */}
+            <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
+              <div className="flex gap-2 h-full pr-2">
+                {columnas.map(col => (
+                  <ColumnaCamion key={col.camion.codigo} columna={col}
+                    expanded={expandedCols.has(col.camion.codigo)}
+                    onToggleExpand={() => toggleExpand(col.camion.codigo)}
+                    onDrop={handleDrop}
+                    onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
+                    onDragLeave={() => setDragOver(null)}
+                    onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
+                    isDragOver={dragOver === col.camion.codigo}
+                    onCancelar={handleCancelar}
+                    onCambiarVuelta={handleCambiarVuelta}
+                    onReprogramar={handleReprogramar}
+                    onEditarPeso={handleEditarPeso}
+                    onToggleVolcador={handleToggleVolcador}
+                    onSepararPedido={handleSepararPedido}
+                    onMoverSucursal={handleMoverSucursal}
+                    onIncidenciaStock={handleIncidenciaStock}
+                    onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
+                    deposito={DEPOSITOS[sucursal]} />
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>

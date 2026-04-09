@@ -116,7 +116,9 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   return asigs
 }
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock }: {
+const BIG_MODES = ['stock', 'separar', 'reprog']
+
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -127,9 +129,17 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   onMoverSucursal: (id: string, sucursal: string) => void
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
+  onNeedsExpand?: (id: string, needs: boolean) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal' | 'stock'>('normal')
+  const [modo, _setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal' | 'stock'>('normal')
+  const setModo = (m: typeof modo) => {
+    _setModo(m)
+    onNeedsExpand?.(pedido.id, BIG_MODES.includes(m))
+  }
+  useEffect(() => {
+    return () => { onNeedsExpand?.(pedido.id, false) }
+  }, [])
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
   const [cantNuevo, setCantNuevo] = useState<Record<number, number>>({})
@@ -486,8 +496,8 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggleExpand, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
-  columna: ColumnaKanban; sinAsignar?: boolean; expanded?: boolean; onToggleExpand?: () => void
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
+  columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
   onDragLeave: () => void; onDragStart: (e: React.DragEvent, p: Pedido) => void; isDragOver: boolean
@@ -503,13 +513,19 @@ function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggle
   deposito?: { lat: number; lng: number }
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
+  const [manualExpanded, setManualExpanded] = useState(false)
+  const [needingIds, setNeedingIds] = useState<Set<string>>(new Set())
+  const isExpanded = manualExpanded || needingIds.size > 0
+  const handleNeedsExpand = (pedidoId: string, needs: boolean) => {
+    setNeedingIds(prev => { const s = new Set(prev); needs ? s.add(pedidoId) : s.delete(pedidoId); return s })
+  }
   const p = sinAsignar ? 0 : pct(pesoTotal, camion.tonelaje_max_kg)
   const pPos = (!sinAsignar && camion.posiciones_total > 0) ? pct(posTotal, camion.posiciones_total) : 0
   const maxDistKm = !sinAsignar && deposito
     ? Math.max(0, ...pedidos.filter(p => p.latitud && p.longitud).map(p => distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!)))
     : 0
   const maxVueltas = maxDistKm > 0 ? maxVueltasPorDistancia(maxDistKm) : null
-  const w = expanded ? 360 : 220
+  const w = isExpanded ? 360 : 220
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
       onDragOver={e => onDragOver(e, sinAsignar ? null : camion.codigo)}
@@ -528,11 +544,9 @@ function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggle
               <p className="text-sm font-semibold" style={{ color: '#B9BBB7' }}>Sin asignar</p>
               <p className="text-xs" style={{ color: '#B9BBB7' }}>{pedidos.length} pedidos</p>
             </div>
-            {onToggleExpand && (
-              <button onClick={onToggleExpand} className="text-xs px-1.5 py-0.5 rounded" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={expanded ? 'Contraer' : 'Expandir'}>
-                {expanded ? '◀' : '▶'}
+            <button onClick={() => setManualExpanded(e => !e)} className="text-xs px-1.5 py-0.5 rounded" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={isExpanded ? 'Contraer' : 'Expandir'}>
+                {isExpanded ? '◀' : '▶'}
               </button>
-            )}
           </div>
         ) : (
           <>
@@ -541,11 +555,9 @@ function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggle
               <div className="flex gap-1 items-center">
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
                 {camion.volcador && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#fef3c7', color: '#d97706' }}>Volc.</span>}
-                {onToggleExpand && (
-                  <button onClick={onToggleExpand} className="text-xs px-1.5 py-0.5 rounded ml-1" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={expanded ? 'Contraer' : 'Expandir'}>
-                    {expanded ? '◀' : '▶'}
-                  </button>
-                )}
+                <button onClick={() => setManualExpanded(e => !e)} className="text-xs px-1.5 py-0.5 rounded ml-1" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={isExpanded ? 'Contraer' : 'Expandir'}>
+                  {isExpanded ? '◀' : '▶'}
+                </button>
               </div>
             </div>
             <div className="flex items-center justify-between mb-2">
@@ -585,7 +597,7 @@ function ColumnaCamion({ columna, sinAsignar = false, expanded = false, onToggle
       <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} />)}
       </div>
     </div>
   )
@@ -654,10 +666,6 @@ function ProgramacionInner() {
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [confirmado, setConfirmado] = useState(false)
-  const [expandedCols, setExpandedCols] = useState<Set<string>>(new Set())
-  const toggleExpand = (cod: string) => setExpandedCols(prev => {
-    const s = new Set(prev); s.has(cod) ? s.delete(cod) : s.add(cod); return s
-  })
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const dragPedido = useRef<Pedido | null>(null)
   const [dragOver, setDragOver] = useState<string | null>(null)
@@ -1087,8 +1095,6 @@ function ProgramacionInner() {
             {/* Sin asignar — fija a la izquierda */}
             <div className="shrink-0 h-full" style={{ zIndex: 10 }}>
               <ColumnaCamion sinAsignar
-                expanded={expandedCols.has('sin_asignar')}
-                onToggleExpand={() => toggleExpand('sin_asignar')}
                 columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: sinAsignar, pesoTotal: 0, posTotal: 0 }}
                 onDrop={handleDrop}
                 onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
@@ -1110,8 +1116,6 @@ function ProgramacionInner() {
               <div className="flex gap-2 h-full pr-2">
                 {columnas.map(col => (
                   <ColumnaCamion key={col.camion.codigo} columna={col}
-                    expanded={expandedCols.has(col.camion.codigo)}
-                    onToggleExpand={() => toggleExpand(col.camion.codigo)}
                     onDrop={handleDrop}
                     onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
                     onDragLeave={() => setDragOver(null)}

@@ -546,20 +546,16 @@ export default function NuevoDespacho() {
                 </div>
               )}
               <div>
-                <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Sucursal</p>
-                {form.sucursal ? (
-                  <p className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{form.sucursal}</p>
-                ) : (
-                  <select name="sucursal" value={form.sucursal} onChange={handleChange} required
-                    className={inputClass} style={inputStyle}>
-                    <option value="">Seleccionar sucursal...</option>
-                    <option value="LP520">LP520</option>
-                    <option value="LP139">LP139</option>
-                    <option value="Guernica">Guernica</option>
-                    <option value="Cañuelas">Cañuelas</option>
-                    <option value="Pinamar">Pinamar</option>
-                  </select>
-                )}
+                <label className="block text-xs mb-1" style={{ color: '#B9BBB7' }}>Sucursal</label>
+                <select name="sucursal" value={form.sucursal} onChange={handleChange} required
+                  className={inputClass} style={inputStyle}>
+                  <option value="">Seleccionar sucursal...</option>
+                  <option value="LP520">LP520</option>
+                  <option value="LP139">LP139</option>
+                  <option value="Guernica">Guernica</option>
+                  <option value="Cañuelas">Cañuelas</option>
+                  <option value="Pinamar">Pinamar</option>
+                </select>
               </div>
             </div>
 

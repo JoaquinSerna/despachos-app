@@ -116,7 +116,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   return asigs
 }
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -125,9 +125,10 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
+  onMoverSucursal: (id: string, sucursal: string) => void
 }) {
   const [expandido, setExpandido] = useState(false)
-  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar'>('normal')
+  const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal'>('normal')
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
   const [itemsParaNuevo, setItemsParaNuevo] = useState<Set<number>>(new Set())
@@ -244,6 +245,22 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('normal') }}
             className="text-xs" style={{ color: '#B9BBB7' }}>×</button>
         </div>
+      ) : modo === 'mover_sucursal' ? (
+        <div className="mt-2 flex items-center gap-1.5">
+          <select
+            onMouseDown={e => e.stopPropagation()}
+            onChange={e => { onMoverSucursal(pedido.id, e.target.value); setModo('normal') }}
+            defaultValue=""
+            className="text-xs border rounded px-2 py-1 flex-1 focus:outline-none"
+            style={{ borderColor: '#e8edf8' }}>
+            <option value="" disabled>Mover a sucursal...</option>
+            {SUCURSALES.filter(s => s !== pedido.sucursal).map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('normal') }}
+            className="text-xs" style={{ color: '#B9BBB7' }}>×</button>
+        </div>
       ) : modo === 'editar_peso' ? (
         <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
           <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>✎ Editar peso y posiciones</p>
@@ -320,6 +337,11 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             V{pedido.vuelta} · cambiar
           </button>
           <span style={{ color: '#e0e0e0' }}>|</span>
+          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('mover_sucursal') }}
+            className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
+            🏭 {pedido.sucursal}
+          </button>
+          <span style={{ color: '#e0e0e0' }}>|</span>
           <button onMouseDown={e => e.stopPropagation()}
             onClick={e => { e.stopPropagation(); setModo('reprog'); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
             className="text-xs hover:underline" style={{ color: '#f59e0b' }}>
@@ -379,7 +401,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, deposito }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, deposito }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -391,6 +413,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
+  onMoverSucursal: (id: string, sucursal: string) => void
   deposito?: { lat: number; lng: number }
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
@@ -462,7 +485,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto max-h-[420px]">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} />)}
       </div>
     </div>
   )
@@ -691,6 +714,16 @@ function ProgramacionInner() {
       const act = pedidos.map(p => p.id === id ? { ...p, requiere_volcador: valor } : p)
       setPedidos(act); construirColumnas(act, camiones)
     } catch { showToast('Error al actualizar tipo de camión', 'err') }
+  }
+
+  async function handleMoverSucursal(id: string, nuevaSucursal: string) {
+    try {
+      await patchPedido(id, { sucursal: nuevaSucursal, camion_id: null, orden_entrega: null })
+      // El pedido desaparece de esta vista (era de otra sucursal)
+      const act = pedidos.filter(p => p.id !== id)
+      setPedidos(act); construirColumnas(act, camiones)
+      showToast(`Pedido movido a ${nuevaSucursal}`)
+    } catch { showToast('Error al mover sucursal', 'err') }
   }
 
   async function handleSepararPedido(id: string, itemsNuevo: any[], itemsMantener: any[]) {
@@ -939,7 +972,8 @@ function ProgramacionInner() {
               onReprogramar={handleReprogramar}
               onEditarPeso={handleEditarPeso}
               onToggleVolcador={handleToggleVolcador}
-              onSepararPedido={handleSepararPedido} />
+              onSepararPedido={handleSepararPedido}
+              onMoverSucursal={handleMoverSucursal} />
             <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
             {columnas.map(col => (
               <ColumnaCamion key={col.camion.codigo} columna={col}
@@ -954,6 +988,7 @@ function ProgramacionInner() {
                 onEditarPeso={handleEditarPeso}
                 onToggleVolcador={handleToggleVolcador}
                 onSepararPedido={handleSepararPedido}
+                onMoverSucursal={handleMoverSucursal}
                 onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                 deposito={DEPOSITOS[sucursal]} />
             ))}

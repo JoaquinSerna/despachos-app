@@ -131,7 +131,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   const [modo, setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal'>('normal')
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
-  const [itemsParaNuevo, setItemsParaNuevo] = useState<Set<number>>(new Set())
+  const [cantNuevo, setCantNuevo] = useState<Record<number, number>>({})
   const [reprogFecha, setReprogFecha] = useState('')
   const [reprogVuelta, setReprogVuelta] = useState(1)
   const [reprogMotivo, setReprogMotivo] = useState('')
@@ -295,38 +295,58 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
         </div>
       ) : modo === 'separar' ? (
         <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
-          <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>✂ Seleccioná los productos para el nuevo pedido</p>
-          <div className="space-y-1 mb-2">
-            {(pedido.items ?? []).map((item, i) => (
-              <label key={i} onMouseDown={e => e.stopPropagation()}
-                className="flex items-center gap-2 text-xs rounded px-2 py-1 cursor-pointer"
-                style={{ background: itemsParaNuevo.has(i) ? '#e8edf8' : '#fff', border: '1px solid #e8edf8' }}>
-                <input type="checkbox" checked={itemsParaNuevo.has(i)}
-                  onChange={() => {
-                    const s = new Set(itemsParaNuevo)
-                    if (s.has(i)) s.delete(i); else s.add(i)
-                    setItemsParaNuevo(s)
-                  }} className="w-3 h-3" />
-                <span className="flex-1">{item.nombre}</span>
-                <span className="font-medium shrink-0">{item.cantidad} {item.unidad}</span>
-              </label>
-            ))}
+          <p className="text-xs font-medium mb-1" style={{ color: '#254A96' }}>✂ Nuevo pedido — indicá cuánto va</p>
+          <p className="text-xs mb-2" style={{ color: '#B9BBB7' }}>Dejá en 0 lo que queda en el pedido original</p>
+          <div className="space-y-1.5 mb-2">
+            {(pedido.items ?? []).map((item, i) => {
+              const val = cantNuevo[i] ?? 0
+              const activo = val > 0
+              return (
+                <div key={i} onMouseDown={e => e.stopPropagation()}
+                  className="rounded px-2 py-1.5"
+                  style={{ background: activo ? '#e8edf8' : '#fff', border: '1px solid #e8edf8' }}>
+                  <p className="text-xs mb-1 leading-tight" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs" style={{ color: '#B9BBB7' }}>Nuevo:</span>
+                    <input type="number" min={0} max={item.cantidad} step={1}
+                      value={val === 0 ? '' : val}
+                      placeholder="0"
+                      onMouseDown={e => e.stopPropagation()}
+                      onChange={e => {
+                        const n = Math.min(Math.max(0, parseInt(e.target.value) || 0), item.cantidad)
+                        setCantNuevo(prev => ({ ...prev, [i]: n }))
+                      }}
+                      className="w-16 text-xs border rounded px-1.5 py-1 focus:outline-none text-center font-medium"
+                      style={{ borderColor: '#e8edf8' }} />
+                    <span className="text-xs font-medium" style={{ color: '#254A96' }}>{item.unidad}</span>
+                    <span className="text-xs ml-auto" style={{ color: '#B9BBB7' }}>
+                      orig: {item.cantidad - val} {item.unidad}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
           </div>
           <div className="flex gap-1.5">
             <button onMouseDown={e => e.stopPropagation()}
-              disabled={itemsParaNuevo.size === 0 || itemsParaNuevo.size === (pedido.items?.length ?? 0)}
+              disabled={!Object.values(cantNuevo).some(v => v > 0) ||
+                (pedido.items ?? []).every((item, i) => (cantNuevo[i] ?? 0) >= item.cantidad)}
               onClick={e => {
                 e.stopPropagation()
                 const items = pedido.items ?? []
-                const nuevo = items.filter((_, i) => itemsParaNuevo.has(i))
-                const mantener = items.filter((_, i) => !itemsParaNuevo.has(i))
-                onSepararPedido(pedido.id, nuevo, mantener)
+                const itemsNuevo = items
+                  .map((item, i) => ({ ...item, cantidad: cantNuevo[i] ?? 0 }))
+                  .filter(item => item.cantidad > 0)
+                const itemsMantener = items
+                  .map((item, i) => ({ ...item, cantidad: item.cantidad - (cantNuevo[i] ?? 0) }))
+                  .filter(item => item.cantidad > 0)
+                onSepararPedido(pedido.id, itemsNuevo, itemsMantener)
                 setModo('normal')
               }}
               className="flex-1 text-xs py-1.5 rounded font-medium text-white disabled:opacity-40"
               style={{ background: '#254A96' }}>Crear pedido separado</button>
             <button onMouseDown={e => e.stopPropagation()}
-              onClick={e => { e.stopPropagation(); setModo('normal'); setItemsParaNuevo(new Set()) }}
+              onClick={e => { e.stopPropagation(); setModo('normal'); setCantNuevo({}) }}
               className="text-xs px-2 py-1.5 rounded" style={{ background: '#e8edf8', color: '#666' }}>×</button>
           </div>
         </div>
@@ -353,9 +373,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
               <button onMouseDown={e => e.stopPropagation()}
                 onClick={e => {
                   e.stopPropagation()
-                  // Pre-seleccionar items con granel para el nuevo pedido
-                  const granel = new Set((pedido.items ?? []).map((item, i) => item.nombre.toLowerCase().includes('granel') ? i : -1).filter(i => i >= 0))
-                  setItemsParaNuevo(granel)
+                  setCantNuevo({})
                   setModo('separar')
                 }}
                 className="text-xs hover:underline" style={{ color: '#254A96' }}>

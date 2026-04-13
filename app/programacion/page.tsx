@@ -50,25 +50,26 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     acumPos[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
   })
   const asigs: Record<string, string | null> = {}
-  // Tracking hierro type per truck: true = solo hierro, false = tiene no-hierro, undefined = vacío
-  const camionEsHierro: Record<string, boolean | undefined> = {}
+  // Tracking por camión: true = tiene pedidos "largo" (chapa/perfil/tubo/caño), false = tiene pedidos no-largo, undefined = vacío
+  // Hierro normal (barra/malla/vigueta) NO es "largo" y puede mezclarse libremente con pallets/bolsones
+  const camionTieneLargo: Record<string, boolean | undefined> = {}
 
   const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
+  // Materiales largos que NO se pueden mezclar con pallets/bolsones
+  const LARGO_KEYWORDS = ['chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
 
-  // Pre-clasificar camiones que ya tienen pedidos asignados (ya array)
+  function esLargoPedido(items: { nombre: string }[]) {
+    return items.length > 0 && items.some(it => LARGO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+  }
+
+  // Pre-clasificar camiones que ya tienen pedidos asignados
   camiones.forEach(c => {
     const yaEnCamion = ya.filter(p => p.camion_id === c.codigo)
-    if (yaEnCamion.length === 0) { camionEsHierro[c.codigo] = undefined; return }
-    const todosHierro = yaEnCamion.every(p => {
-      const items = p.items ?? []
-      return items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
-    })
-    const algunoHierro = yaEnCamion.some(p => {
-      const items = p.items ?? []
-      return items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
-    })
-    // Si mezcla, marcar como no-hierro (mezcla ya existente, respetar)
-    camionEsHierro[c.codigo] = todosHierro ? true : (algunoHierro ? undefined : false)
+    if (yaEnCamion.length === 0) { camionTieneLargo[c.codigo] = undefined; return }
+    const tieneLargo = yaEnCamion.some(p => esLargoPedido(p.items ?? []))
+    const tieneNoLargo = yaEnCamion.some(p => !esLargoPedido(p.items ?? []))
+    // Si tiene ambos (mezcla ya existente), lo dejamos como undefined para no bloquear más
+    camionTieneLargo[c.codigo] = tieneLargo && !tieneNoLargo ? true : (!tieneLargo && tieneNoLargo ? false : undefined)
   })
 
   // Ordenar: prioridades primero, luego por distancia al depósito (cercanos primero → se agrupan geográficamente)
@@ -85,23 +86,26 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     const pos = p.volumen_total_m3 ?? 0
     const esVolcador = p.requiere_volcador === true
 
-    // ¿El pedido es solo hierro (tubos/perfiles/chapas)?
+    // ¿El pedido es solo hierro (para determinar si necesita grúa)?
     const itemsDelPedido = p.items ?? []
     const soloHierro = itemsDelPedido.length > 0 &&
       itemsDelPedido.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
     const requiereGrua = !esVolcador && !soloHierro
 
-    // Filtrar por capacidad, tipo de camión y anti-mezcla hierro/no-hierro
+    // ¿El pedido tiene materiales largos (chapas/perfiles/tubos) que no pueden mezclarse?
+    const pedidoEsLargo = esLargoPedido(itemsDelPedido)
+
+    // Filtrar por capacidad, tipo de camión y anti-mezcla largo/no-largo
     const elegibles = camiones.filter(c => {
       if (acum[c.codigo] + peso > c.tonelaje_max_kg) return false
       if (c.posiciones_total > 0 && pos > 0 && acumPos[c.codigo] + pos > c.posiciones_total) return false
       if (esVolcador && !c.volcador) return false
       if (requiereGrua && !c.grua_hidraulica) return false
-      // Anti-mezcla: no poner hierro en camión con no-hierro, ni no-hierro en camión con hierro
-      const tipoActual = camionEsHierro[c.codigo]
+      // Anti-mezcla: chapas/perfiles/tubos no van con pallets/bolsones
+      const tipoActual = camionTieneLargo[c.codigo]
       if (tipoActual !== undefined) {
-        if (soloHierro && tipoActual === false) return false  // camión tiene no-hierro
-        if (!soloHierro && tipoActual === true) return false  // camión tiene solo hierro
+        if (pedidoEsLargo && tipoActual === false) return false   // camión tiene no-largos
+        if (!pedidoEsLargo && tipoActual === true) return false   // camión tiene largos
       }
       return true
     })
@@ -140,12 +144,11 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
       acum[mejor.codigo] += peso
       acumPos[mejor.codigo] += pos
       // Actualizar tipo de camión para anti-mezcla en próximos pedidos
-      const tipoAnterior = camionEsHierro[mejor.codigo]
+      const tipoAnterior = camionTieneLargo[mejor.codigo]
       if (tipoAnterior === undefined) {
-        camionEsHierro[mejor.codigo] = soloHierro
-      } else if (tipoAnterior !== soloHierro) {
-        // Mezcla forzada (no debería pasar, pero si ocurre lo marcamos como mixto)
-        camionEsHierro[mejor.codigo] = undefined
+        camionTieneLargo[mejor.codigo] = pedidoEsLargo
+      } else if (tipoAnterior !== pedidoEsLargo) {
+        camionTieneLargo[mejor.codigo] = undefined // mixto (no debería pasar)
       }
     } else {
       asigs[p.id] = null

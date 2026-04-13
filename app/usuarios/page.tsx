@@ -33,6 +33,7 @@ export default function UsuariosPage() {
   const [form, setForm] = useState({ nombre: '', email: '', password: '', rol: 'comercial', sucursal: '' })
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+  const [busqueda, setBusqueda] = useState('')
 
   // Soporte técnico
   const [contactosSoporte, setContactosSoporte] = useState<SoporteContacto[]>([])
@@ -290,6 +291,14 @@ export default function UsuariosPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar por nombre, email o rol…"
+              className="text-xs px-3 py-1.5 rounded-lg border focus:outline-none w-52"
+              style={{ borderColor: '#e8edf8', color: '#1a1a1a' }}
+            />
             <button onClick={exportarExcel}
               className="text-xs px-3 py-1.5 rounded-lg font-medium border"
               style={{ borderColor: '#e8edf8', color: '#254A96' }}>
@@ -318,36 +327,47 @@ export default function UsuariosPage() {
               </tr>
             </thead>
             <tbody>
-              {usuarios.map((u, i) => (
-                <tr key={u.id} style={{ borderBottom: i < usuarios.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
-                  <td className="px-4 py-3 font-medium" style={{ color: '#1a1a1a' }}>{u.nombre}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.email}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-xs px-2 py-1 rounded-full font-medium"
-                      style={{ background: ROL_BG[u.rol] ?? '#f4f4f3', color: ROL_COLOR[u.rol] ?? '#666' }}>
-                      {ROL_LABEL[u.rol] ?? u.rol}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.sucursal ?? 'Todas'}</td>
-                  <td className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>
-                    {new Date(u.created_at).toLocaleDateString('es-AR')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button onClick={() => abrirEditar(u)}
-                        className="text-xs px-2 py-1 rounded-lg"
-                        style={{ background: '#e8edf8', color: '#254A96' }}>
-                        Editar
-                      </button>
-                      <button onClick={() => eliminar(u)}
-                        className="text-xs px-2 py-1 rounded-lg"
-                        style={{ background: '#fde8e8', color: '#E52322' }}>
-                        Eliminar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {usuarios
+                .filter(u => {
+                  if (!busqueda.trim()) return true
+                  const q = busqueda.toLowerCase()
+                  return (
+                    u.nombre?.toLowerCase().includes(q) ||
+                    u.email?.toLowerCase().includes(q) ||
+                    (ROL_LABEL[u.rol] ?? u.rol)?.toLowerCase().includes(q) ||
+                    u.sucursal?.toLowerCase().includes(q)
+                  )
+                })
+                .map((u, i, arr) => (
+                  <tr key={u.id} style={{ borderBottom: i < arr.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
+                    <td className="px-4 py-3 font-medium" style={{ color: '#1a1a1a' }}>{u.nombre}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.email}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs px-2 py-1 rounded-full font-medium"
+                        style={{ background: ROL_BG[u.rol] ?? '#f4f4f3', color: ROL_COLOR[u.rol] ?? '#666' }}>
+                        {ROL_LABEL[u.rol] ?? u.rol}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.sucursal ?? 'Todas'}</td>
+                    <td className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>
+                      {new Date(u.created_at).toLocaleDateString('es-AR')}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => abrirEditar(u)}
+                          className="text-xs px-2 py-1 rounded-lg"
+                          style={{ background: '#e8edf8', color: '#254A96' }}>
+                          Editar
+                        </button>
+                        <button onClick={() => eliminar(u)}
+                          className="text-xs px-2 py-1 rounded-lg"
+                          style={{ background: '#fde8e8', color: '#E52322' }}>
+                          Eliminar
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
           {usuarios.length === 0 && !cargando && (

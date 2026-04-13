@@ -443,52 +443,6 @@ export default function NuevoDespacho() {
 
       <main className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-4">
 
-        {/* Pedidos activos */}
-        {misPedidos.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📋 Pedidos activos</h2>
-            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>Podés reprogramar o cancelar entregas si el cliente no puede recibirlas.</p>
-            <div className="space-y-2">
-              {misPedidos.map(p => (
-                <div key={p.id} className="flex items-center justify-between gap-3 py-2.5 border-b last:border-0"
-                  style={{ borderColor: '#f4f4f3' }}>
-                  <div className="min-w-0">
-                    <p className="font-medium text-sm leading-tight truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
-                    <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
-                      {p.fecha_entrega} · V{p.vuelta} · {p.sucursal}
-                    </p>
-                    {p.notas?.startsWith('⚡') && (
-                      <p className="text-xs mt-0.5 truncate" style={{ color: '#b45309' }}>{p.notas.split('|')[0].trim()}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white"
-                      style={{ background: ESTADO_COLOR[p.estado] ?? '#B9BBB7' }}>
-                      {ESTADO_LABEL[p.estado] ?? p.estado}
-                    </span>
-                    {['pendiente', 'programado'].includes(p.estado) && (
-                      <>
-                        <button
-                          onClick={() => { setPedidoReprog(p); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                          style={{ background: '#fef3c7', color: '#b45309' }}>
-                          📅 Reprog.
-                        </button>
-                        <button
-                          onClick={() => handleCancelarPedido(p.id, p.cliente)}
-                          className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                          style={{ background: '#fde8e8', color: '#E52322' }}>
-                          Cancelar
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Subir PDF */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📄 Solicitud de Despacho</h2>

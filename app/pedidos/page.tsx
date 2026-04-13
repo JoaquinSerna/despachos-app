@@ -43,7 +43,7 @@ const normalizar = (s: string) =>
     .replace(/\s+/g, ' ').trim()
 
 interface Pedido {
-  id: string; nv: string; cliente: string; direccion: string
+  id: string; nv: string; id_despacho: string | null; cliente: string; direccion: string
   sucursal: string; fecha_entrega: string; vuelta: number
   estado: string; peso_total_kg: number | null; volumen_total_m3: number | null
   notas: string | null; camion_id: string | null
@@ -73,8 +73,8 @@ export default function PedidosPage() {
   const [itemsMap, setItemsMap] = useState<Record<string, Item[]>>({})
   const [fotosMap, setFotosMap] = useState<Record<string, Foto[]>>({})
 
-  // Fila expandida
-  const [expandidoId, setExpandidoId] = useState<string | null>(null)
+  // Filas expandidas (múltiples a la vez)
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
   // Lightbox
   const [lightbox, setLightbox] = useState<string | null>(null)
 
@@ -108,10 +108,10 @@ export default function PedidosPage() {
     setCargando(true)
     setCategoriasMap({})
     setItemsMap({})
-    setExpandidoId(null)
+    setExpandidos(new Set())
     let q = supabase
       .from('pedidos')
-      .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
+      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
       .limit(200)
@@ -184,7 +184,12 @@ export default function PedidosPage() {
   }
 
   function toggleExpandir(id: string) {
-    setExpandidoId(prev => prev === id ? null : id)
+    setExpandidos(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   function iniciarEdicion(p: Pedido) {
@@ -362,7 +367,7 @@ export default function PedidosPage() {
               <thead>
                 <tr style={{ background: '#f4f4f3', borderBottom: '1px solid #e8edf8' }}>
                   <th className="w-8 px-3 py-3"></th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>NV</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>NV / SD</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Cliente</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Dirección</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>Fecha</th>
@@ -378,7 +383,7 @@ export default function PedidosPage() {
                 {pedidos.map((p, i) => {
                   const cats = categoriasMap[p.id]
                   const items = itemsMap[p.id]
-                  const expandido = expandidoId === p.id
+                  const expandido = expandidos.has(p.id)
                   const borderColor = i < pedidos.length - 1 || expandido ? '1px solid #f4f4f3' : 'none'
                   return (
                     <>
@@ -392,7 +397,12 @@ export default function PedidosPage() {
                             ▶
                           </button>
                         </td>
-                        <td className="px-4 py-2.5 font-medium whitespace-nowrap" style={{ color: '#1a1a1a' }}>{p.nv}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{p.nv}</div>
+                          {p.id_despacho && (
+                            <div className="text-xs mt-0.5" style={{ color: '#888' }}>SD {p.id_despacho}</div>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 max-w-[150px] truncate" style={{ color: '#1a1a1a' }} title={p.cliente}>{p.cliente}</td>
                         <td className="px-4 py-2.5 max-w-[160px] truncate text-xs" style={{ color: '#666' }} title={p.direccion}>{p.direccion}</td>
                         <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#666' }}>

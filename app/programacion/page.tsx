@@ -36,6 +36,14 @@ const PAGO_LABEL: Record<string, string> = {
 }
 
 function hoy() { return new Date().toISOString().split('T')[0] }
+
+// Hora de corte para cada vuelta: si ya pasó ese horario, la vuelta no está disponible para hoy
+const VUELTA_CORTE: Record<number, number> = { 1: 8, 2: 10, 3: 13, 4: 15 }
+function vueltasDisponibles(fecha: string): number[] {
+  if (fecha !== hoy()) return [1, 2, 3, 4]
+  const horaActual = new Date().getHours()
+  return [1, 2, 3, 4].filter(v => horaActual < VUELTA_CORTE[v])
+}
 function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
 function posColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.min(100, Math.round(peso / max * 100)) }
@@ -261,7 +269,14 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
               onMouseDown={e => e.stopPropagation()}
               className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
               style={{ borderColor: '#e8edf8' }}>
-              {[1, 2, 3, 4].map(v => <option key={v} value={v}>Vuelta {v}</option>)}
+              {[1, 2, 3, 4].map(v => {
+                const disponible = vueltasDisponibles(reprogFecha).includes(v)
+                return (
+                  <option key={v} value={v} disabled={!disponible}>
+                    Vuelta {v}{!disponible ? ' (pasada)' : ''}
+                  </option>
+                )
+              })}
             </select>
             <input type="text" value={reprogMotivo}
               onChange={e => setReprogMotivo(e.target.value)}
@@ -1004,7 +1019,14 @@ function ProgramacionInner() {
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva vuelta</label>
                 <select value={reprogVueltaNueva} onChange={e => setReprogVueltaNueva(parseInt(e.target.value))}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-                  {[1, 2, 3, 4].map(v => <option key={v} value={v}>Vuelta {v}</option>)}
+                  {[1, 2, 3, 4].map(v => {
+                    const disponible = vueltasDisponibles(reprogVueltaFecha).includes(v)
+                    return (
+                      <option key={v} value={v} disabled={!disponible}>
+                        Vuelta {v}{!disponible ? ' (pasada)' : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
             </div>

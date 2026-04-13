@@ -252,7 +252,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
         <div className="mt-2 p-2.5 rounded-lg" style={{ background: '#f4f4f3' }}>
           <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>📅 Reprogramar entrega</p>
           <div className="space-y-1.5">
-            <input type="date" value={reprogFecha} min={mananaStr}
+            <input type="date" value={reprogFecha} min={hoy()}
               onChange={e => setReprogFecha(e.target.value)}
               onMouseDown={e => e.stopPropagation()}
               className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
@@ -996,7 +996,7 @@ function ProgramacionInner() {
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva fecha</label>
                 <input type="date" value={reprogVueltaFecha}
-                  min={(() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()}
+                  min={hoy()}
                   onChange={e => setReprogVueltaFecha(e.target.value)}
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
               </div>

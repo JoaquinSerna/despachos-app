@@ -45,9 +45,21 @@ const normalizar = (s: string) =>
 interface Pedido {
   id: string; nv: string; id_despacho: string | null; cliente: string; direccion: string
   sucursal: string; fecha_entrega: string; vuelta: number
-  estado: string; peso_total_kg: number | null; volumen_total_m3: number | null
+  estado: string; estado_pago: string | null; peso_total_kg: number | null; volumen_total_m3: number | null
   notas: string | null; camion_id: string | null
 }
+
+const PAGO_COLOR: Record<string, { bg: string; text: string }> = {
+  cobrado:          { bg: '#dcfce7', text: '#166534' },
+  cuenta_corriente: { bg: '#dbeafe', text: '#1e40af' },
+  pendiente_cobro:  { bg: '#fef9c3', text: '#854d0e' },
+  pago_en_obra:     { bg: '#ffedd5', text: '#9a3412' },
+}
+const PAGO_LABEL: Record<string, string> = {
+  cobrado: 'Cobrado', cuenta_corriente: 'Cta. Cte.',
+  pendiente_cobro: 'Pend. cobro', pago_en_obra: 'Pago en obra',
+}
+const ESTADOS_PAGO = ['cobrado', 'cuenta_corriente', 'pendiente_cobro', 'pago_en_obra']
 
 interface Item {
   nombre: string; cantidad: number; unidad: string
@@ -59,7 +71,7 @@ interface Foto {
 }
 
 interface EditState {
-  id: string; sucursal: string; peso: string; posiciones: string
+  id: string; sucursal: string; peso: string; posiciones: string; estado_pago: string
 }
 
 export default function PedidosPage() {
@@ -111,7 +123,7 @@ export default function PedidosPage() {
     setExpandidos(new Set())
     let q = supabase
       .from('pedidos')
-      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
+      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
       .limit(200)
@@ -198,6 +210,7 @@ export default function PedidosPage() {
       sucursal: p.sucursal,
       peso: p.peso_total_kg != null ? String(p.peso_total_kg) : '',
       posiciones: p.volumen_total_m3 != null ? String(p.volumen_total_m3) : '',
+      estado_pago: p.estado_pago ?? '',
     })
   }
 
@@ -207,6 +220,7 @@ export default function PedidosPage() {
     const updates: Record<string, any> = { id: editando.id, sucursal: editando.sucursal }
     if (editando.peso !== '') updates.peso_total_kg = Math.round(parseFloat(editando.peso) || 0)
     if (editando.posiciones !== '') updates.volumen_total_m3 = parseFloat(editando.posiciones) || 0
+    if (editando.estado_pago !== '') updates.estado_pago = editando.estado_pago
 
     const res = await fetch('/api/pedidos', {
       method: 'PATCH',
@@ -222,6 +236,7 @@ export default function PedidosPage() {
         sucursal: editando.sucursal,
         peso_total_kg: updates.peso_total_kg ?? p.peso_total_kg,
         volumen_total_m3: updates.volumen_total_m3 ?? p.volumen_total_m3,
+        estado_pago: updates.estado_pago ?? p.estado_pago,
       } : p))
       showToast('Pedido actualizado')
       setEditando(null)
@@ -229,7 +244,7 @@ export default function PedidosPage() {
     setGuardando(false)
   }
 
-  const COLS = 11 // número de columnas de la tabla para el colspan del detalle
+  const COLS = 12 // número de columnas de la tabla para el colspan del detalle
 
   return (
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
@@ -280,6 +295,18 @@ export default function PedidosPage() {
                   onChange={e => setEditando(prev => prev ? { ...prev, posiciones: e.target.value } : prev)}
                   className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: '#e8edf8' }} placeholder="ej: 4.5" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Estado de pago</label>
+                <select value={editando.estado_pago}
+                  onChange={e => setEditando(prev => prev ? { ...prev, estado_pago: e.target.value } : prev)}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }}>
+                  <option value="">Sin especificar</option>
+                  {ESTADOS_PAGO.map(ep => (
+                    <option key={ep} value={ep}>{PAGO_LABEL[ep]}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="flex gap-2 mt-5">
@@ -374,6 +401,7 @@ export default function PedidosPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>V.</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Sucursal</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Estado</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>Pago</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: '#254A96' }}>Kg / Pos</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold" style={{ color: '#254A96' }}>Productos</th>
                   <th className="px-4 py-3"></th>
@@ -420,6 +448,17 @@ export default function PedidosPage() {
                             style={{ background: ESTADO_COLOR[p.estado] ?? '#999' }}>
                             {ESTADO_LABEL[p.estado] ?? p.estado}
                           </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {p.estado_pago ? (() => {
+                            const col = PAGO_COLOR[p.estado_pago] ?? { bg: '#f4f4f3', text: '#555' }
+                            return (
+                              <span className="text-xs px-2 py-0.5 rounded-lg font-medium whitespace-nowrap"
+                                style={{ background: col.bg, color: col.text }}>
+                                {PAGO_LABEL[p.estado_pago] ?? p.estado_pago}
+                              </span>
+                            )
+                          })() : <span style={{ color: '#ccc' }}>—</span>}
                         </td>
                         <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#555' }}>
                           <div>{p.peso_total_kg != null ? `${p.peso_total_kg.toLocaleString('es-AR')} kg` : <span style={{ color: '#ccc' }}>—</span>}</div>

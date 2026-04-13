@@ -29,10 +29,10 @@ const VUELTAS = [
 ]
 const PAGO_COLOR: Record<string, string> = {
   cobrado: 'bg-green-100 text-green-800', cuenta_corriente: 'bg-blue-100 text-blue-800',
-  pendiente_cobro: 'bg-yellow-100 text-yellow-800', provisorio: 'bg-orange-100 text-orange-800',
+  pendiente_cobro: 'bg-yellow-100 text-yellow-800', pago_en_obra: 'bg-orange-100 text-orange-800',
 }
 const PAGO_LABEL: Record<string, string> = {
-  cobrado: 'Cobrado', cuenta_corriente: 'Cta. Cte.', pendiente_cobro: 'Pend.', provisorio: 'Provis.',
+  cobrado: 'Cobrado', cuenta_corriente: 'Cta. Cte.', pendiente_cobro: 'Pend.', pago_en_obra: 'P.Obra',
 }
 
 function hoy() { return new Date().toISOString().split('T')[0] }
@@ -50,6 +50,26 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     acumPos[c.codigo] = ya.filter(p => p.camion_id === c.codigo).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
   })
   const asigs: Record<string, string | null> = {}
+  // Tracking hierro type per truck: true = solo hierro, false = tiene no-hierro, undefined = vacío
+  const camionEsHierro: Record<string, boolean | undefined> = {}
+
+  const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
+
+  // Pre-clasificar camiones que ya tienen pedidos asignados (ya array)
+  camiones.forEach(c => {
+    const yaEnCamion = ya.filter(p => p.camion_id === c.codigo)
+    if (yaEnCamion.length === 0) { camionEsHierro[c.codigo] = undefined; return }
+    const todosHierro = yaEnCamion.every(p => {
+      const items = p.items ?? []
+      return items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+    })
+    const algunoHierro = yaEnCamion.some(p => {
+      const items = p.items ?? []
+      return items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+    })
+    // Si mezcla, marcar como no-hierro (mezcla ya existente, respetar)
+    camionEsHierro[c.codigo] = todosHierro ? true : (algunoHierro ? undefined : false)
+  })
 
   // Ordenar: prioridades primero, luego por distancia al depósito (cercanos primero → se agrupan geográficamente)
   const ordenados = [...sin].sort((a, b) => {
@@ -65,19 +85,24 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     const pos = p.volumen_total_m3 ?? 0
     const esVolcador = p.requiere_volcador === true
 
-    // ¿El pedido necesita grúa? (tiene items que no son hierro/malla/vigueta/pretensado)
-    const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
+    // ¿El pedido es solo hierro (tubos/perfiles/chapas)?
     const itemsDelPedido = p.items ?? []
     const soloHierro = itemsDelPedido.length > 0 &&
       itemsDelPedido.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
     const requiereGrua = !esVolcador && !soloHierro
 
-    // Filtrar por capacidad de peso Y posiciones, y tipo de camión requerido
+    // Filtrar por capacidad, tipo de camión y anti-mezcla hierro/no-hierro
     const elegibles = camiones.filter(c => {
       if (acum[c.codigo] + peso > c.tonelaje_max_kg) return false
       if (c.posiciones_total > 0 && pos > 0 && acumPos[c.codigo] + pos > c.posiciones_total) return false
       if (esVolcador && !c.volcador) return false
       if (requiereGrua && !c.grua_hidraulica) return false
+      // Anti-mezcla: no poner hierro en camión con no-hierro, ni no-hierro en camión con hierro
+      const tipoActual = camionEsHierro[c.codigo]
+      if (tipoActual !== undefined) {
+        if (soloHierro && tipoActual === false) return false  // camión tiene no-hierro
+        if (!soloHierro && tipoActual === true) return false  // camión tiene solo hierro
+      }
       return true
     })
 
@@ -110,8 +135,21 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
       if (score < mejorScore) { mejorScore = score; mejor = c }
     }
 
-    if (mejor) { asigs[p.id] = mejor.codigo; acum[mejor.codigo] += peso; acumPos[mejor.codigo] += pos }
-    else asigs[p.id] = null
+    if (mejor) {
+      asigs[p.id] = mejor.codigo
+      acum[mejor.codigo] += peso
+      acumPos[mejor.codigo] += pos
+      // Actualizar tipo de camión para anti-mezcla en próximos pedidos
+      const tipoAnterior = camionEsHierro[mejor.codigo]
+      if (tipoAnterior === undefined) {
+        camionEsHierro[mejor.codigo] = soloHierro
+      } else if (tipoAnterior !== soloHierro) {
+        // Mezcla forzada (no debería pasar, pero si ocurre lo marcamos como mixto)
+        camionEsHierro[mejor.codigo] = undefined
+      }
+    } else {
+      asigs[p.id] = null
+    }
   }
   return asigs
 }

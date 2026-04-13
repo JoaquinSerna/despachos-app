@@ -600,7 +600,7 @@ export default function NuevoDespacho() {
                   <option value="cobrado">Cobrado</option>
                   <option value="cuenta_corriente">Cuenta corriente</option>
                   <option value="pendiente_cobro">Pendiente de cobro</option>
-                  <option value="provisorio">Provisorio</option>
+                  <option value="pago_en_obra">Pago en obra</option>
                 </select>
               </div>
 

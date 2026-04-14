@@ -82,6 +82,21 @@ export default function NuevoDespacho() {
   const [linkMaps, setLinkMaps] = useState('')
   const [linkMapsOk, setLinkMapsOk] = useState<boolean | null>(null)
   const [puedeEditarDespachos, setPuedeEditarDespachos] = useState(false)
+  const [tabActivo, setTabActivo] = useState<'despacho' | 'retiro'>('despacho')
+
+  // ── Retiro state ──────────────────────────────────────────
+  const RETIRO_FORM_INICIAL = { cliente: '', telefono: '', direccion: '', sucursal: '', fecha_estimada: '', notas: '' }
+  const [formRetiro, setFormRetiro] = useState(RETIRO_FORM_INICIAL)
+  const [itemsRetiro, setItemsRetiro] = useState<{ nombre_producto: string; cantidad: number; id_producto: number | null; _codigo?: string; _encontrado?: boolean; _noEncontrado?: boolean }[]>(
+    [{ nombre_producto: '', cantidad: 1, id_producto: null, _codigo: '', _encontrado: false, _noEncontrado: false }]
+  )
+  const [loadingRetiro, setLoadingRetiro] = useState(false)
+  const [exitoRetiro, setExitoRetiro] = useState(false)
+  const [errorRetiro, setErrorRetiro] = useState('')
+  const [linkMapsRetiro, setLinkMapsRetiro] = useState('')
+  const [linkMapsRetiroOk, setLinkMapsRetiroOk] = useState<boolean | null>(null)
+  const [latRetiro, setLatRetiro] = useState<number | null>(null)
+  const [lngRetiro, setLngRetiro] = useState<number | null>(null)
 
   useEffect(() => { _setToast = setToastState; return () => { _setToast = null } }, [])
 
@@ -379,6 +394,102 @@ export default function NuevoDespacho() {
     }
   }
 
+  const handleLinkMapsRetiro = (url: string) => {
+    setLinkMapsRetiro(url)
+    if (!url.trim()) { setLinkMapsRetiroOk(null); return }
+    const resultado = parsearLinkMaps(url)
+    if (resultado) {
+      setLatRetiro(resultado.lat)
+      setLngRetiro(resultado.lng)
+      if (resultado.direccion) setFormRetiro(prev => ({ ...prev, direccion: resultado.direccion! }))
+      setLinkMapsRetiroOk(true)
+    } else {
+      setLinkMapsRetiroOk(false)
+    }
+  }
+
+  async function buscarPorCodigoRetiro(codigo: string, idx: number) {
+    const cod = codigo.trim()
+    if (!cod || isNaN(Number(cod))) return
+    const res = await fetch(`/api/stock-import?id_producto=${cod}`)
+    const data = await res.json()
+    if (Array.isArray(data) && data.length > 0) {
+      const nombre = data[0].nombre
+      const id = data[0].id_producto ?? null
+      setItemsRetiro(prev => {
+        const upd = [...prev]
+        upd[idx] = { ...upd[idx], nombre_producto: nombre, id_producto: id, _encontrado: true, _noEncontrado: false }
+        return upd
+      })
+    } else {
+      setItemsRetiro(prev => {
+        const upd = [...prev]
+        upd[idx] = { ...upd[idx], nombre_producto: '', id_producto: null, _encontrado: false, _noEncontrado: true }
+        return upd
+      })
+    }
+  }
+
+  const handleSubmitRetiro = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setLoadingRetiro(true)
+    setErrorRetiro('')
+
+    const itemsValidos = itemsRetiro.filter(it => it.nombre_producto.trim())
+    if (itemsValidos.length === 0) {
+      setErrorRetiro('Agregá al menos un producto para retirar.')
+      setLoadingRetiro(false)
+      return
+    }
+
+    const { data: pedidoInsertado, error: errIns } = await supabase.from('pedidos').insert({
+      cliente: formRetiro.cliente,
+      telefono: formRetiro.telefono,
+      direccion: formRetiro.direccion,
+      sucursal: formRetiro.sucursal,
+      fecha_entrega: formRetiro.fecha_estimada || null,
+      vuelta: 1,
+      estado_pago: 'cuenta_corriente',
+      notas: formRetiro.notas || null,
+      vendedor_id: userId,
+      estado: 'pendiente',
+      peso_total_kg: 0,
+      volumen_total_m3: 0,
+      tipo: 'retiro',
+      latitud: latRetiro,
+      longitud: lngRetiro,
+    }).select('id').single()
+
+    if (errIns) { setErrorRetiro(errIns.message); setLoadingRetiro(false); return }
+
+    if (pedidoInsertado && itemsValidos.length > 0) {
+      await supabase.from('pedido_items').insert(
+        itemsValidos.map(it => ({
+          pedido_id: pedidoInsertado.id,
+          codigo_material: it.id_producto ? String(it.id_producto) : null,
+          nombre: it.nombre_producto,
+          cantidad: it.cantidad,
+          unidad: 'u',
+        }))
+      )
+    }
+
+    toast('Solicitud de retiro guardada correctamente')
+    setExitoRetiro(true)
+    setLoadingRetiro(false)
+  }
+
+  const resetRetiro = () => {
+    setExitoRetiro(false)
+    setFormRetiro(RETIRO_FORM_INICIAL)
+    setItemsRetiro([{ nombre_producto: '', cantidad: 1, id_producto: null, _codigo: '', _encontrado: false, _noEncontrado: false }])
+    setLinkMapsRetiro('')
+    setLinkMapsRetiroOk(null)
+    setLatRetiro(null)
+    setLngRetiro(null)
+    setErrorRetiro('')
+  }
+
   const inputClass = "w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 transition-colors"
   const inputStyle = { borderColor: '#e8edf8', fontFamily: 'Barlow, sans-serif' }
 
@@ -391,6 +502,24 @@ export default function NuevoDespacho() {
         <div className="flex gap-3 justify-center">
           <button onClick={resetForm} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: '#254A96' }}>
             Nuevo pedido
+          </button>
+          <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
+            Ir al panel
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  if (exitoRetiro) return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
+      <div className="bg-white rounded-2xl shadow-lg p-10 text-center max-w-md w-full mx-4">
+        <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-6" style={{ background: '#d1fae5' }}>🔄</div>
+        <h2 className="text-2xl font-semibold mb-2" style={{ color: '#254A96' }}>Retiro solicitado</h2>
+        <p className="text-sm mb-8" style={{ color: '#B9BBB7' }}>La solicitud de retiro fue registrada. El ruteador definirá cuándo pasamos a buscarlo.</p>
+        <div className="flex gap-3 justify-center">
+          <button onClick={resetRetiro} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: '#254A96' }}>
+            Nueva solicitud
           </button>
           <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
             Ir al panel
@@ -421,9 +550,32 @@ export default function NuevoDespacho() {
           </button>
           <div className="w-px h-5 bg-gray-200" />
           <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
-          <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Nueva Solicitud de Despacho</span>
+          <span className="font-semibold text-sm" style={{ color: '#254A96' }}>
+            {tabActivo === 'retiro' ? 'Solicitud de Retiro' : 'Nueva Solicitud de Despacho'}
+          </span>
         </div>
       </nav>
+
+      {/* Tab switcher */}
+      {puedeEditarDespachos && (
+        <div className="sticky top-14 z-30 bg-white border-b" style={{ borderColor: '#e8edf8' }}>
+          <div className="max-w-3xl mx-auto px-4 md:px-6 flex gap-0">
+            {([
+              { id: 'despacho', label: '📦 Nueva solicitud de despacho' },
+              { id: 'retiro', label: '🔄 Solicitud de retiro' },
+            ] as const).map(tab => (
+              <button key={tab.id} onClick={() => setTabActivo(tab.id)}
+                className="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+                style={{
+                  borderBottomColor: tabActivo === tab.id ? '#254A96' : 'transparent',
+                  color: tabActivo === tab.id ? '#254A96' : '#B9BBB7',
+                }}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Modal reprogramar */}
       {pedidoReprog && (
@@ -479,7 +631,7 @@ export default function NuevoDespacho() {
           </div>
         )}
 
-        {puedeEditarDespachos && <>
+        {puedeEditarDespachos && tabActivo === 'despacho' && <>
 
         {/* Subir PDF */}
         <div className="bg-white rounded-xl shadow-sm p-6">
@@ -690,6 +842,189 @@ export default function NuevoDespacho() {
         )}
 
         </>}
+
+        {/* ── TAB RETIRO ─────────────────────────────────────── */}
+        {puedeEditarDespachos && tabActivo === 'retiro' && (
+          <form onSubmit={handleSubmitRetiro} className="space-y-4">
+
+            {/* Info banner */}
+            <div className="rounded-xl px-5 py-4 text-sm flex items-start gap-3"
+              style={{ background: '#f0fdfa', border: '1px solid #99f6e4', color: '#0f766e' }}>
+              <span className="text-lg leading-none mt-0.5">🔄</span>
+              <div>
+                <p className="font-semibold">Solicitud de retiro</p>
+                <p className="text-xs mt-0.5" style={{ color: '#0d9488' }}>Indicá qué pallets/materiales tenemos que retirar y de dónde. El ruteador va a definir cuándo conviene pasar.</p>
+              </div>
+            </div>
+
+            {/* Datos del cliente */}
+            <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#B9BBB7' }}>Datos del cliente</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Cliente <span style={{ color: '#E52322' }}>*</span></label>
+                  <input type="text" value={formRetiro.cliente} onChange={e => setFormRetiro(p => ({ ...p, cliente: e.target.value }))} required
+                    placeholder="Nombre del cliente"
+                    className={inputClass} style={inputStyle} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Teléfono</label>
+                  <input type="tel" value={formRetiro.telefono} onChange={e => setFormRetiro(p => ({ ...p, telefono: e.target.value }))}
+                    placeholder="Teléfono de contacto"
+                    className={inputClass} style={inputStyle} />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Dirección de retiro <span style={{ color: '#E52322' }}>*</span></label>
+                <input type="text" value={formRetiro.direccion} onChange={e => setFormRetiro(p => ({ ...p, direccion: e.target.value }))} required
+                  placeholder="Dirección donde está el material"
+                  className={inputClass} style={inputStyle} />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                  Link de Google Maps <span style={{ color: '#B9BBB7', fontWeight: 400 }}>(opcional)</span>
+                </label>
+                <div className="relative">
+                  <input type="url" value={linkMapsRetiro}
+                    onChange={e => handleLinkMapsRetiro(e.target.value)}
+                    placeholder="https://maps.google.com/..."
+                    className={inputClass}
+                    style={{ ...inputStyle, paddingRight: '2rem',
+                      borderColor: linkMapsRetiroOk === true ? '#10b981' : linkMapsRetiroOk === false ? '#E52322' : '#e8edf8' }} />
+                  {linkMapsRetiroOk === true && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: '#10b981' }}>✓</span>}
+                  {linkMapsRetiroOk === false && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: '#E52322' }}>✕</span>}
+                </div>
+                {linkMapsRetiroOk === false && <p className="text-xs mt-1" style={{ color: '#E52322' }}>No se encontraron coordenadas en el link</p>}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Sucursal <span style={{ color: '#E52322' }}>*</span></label>
+                  <select value={formRetiro.sucursal} onChange={e => setFormRetiro(p => ({ ...p, sucursal: e.target.value }))} required
+                    className={inputClass} style={inputStyle}>
+                    <option value="">Seleccionar sucursal...</option>
+                    <option value="LP520">LP520</option>
+                    <option value="LP139">LP139</option>
+                    <option value="Guernica">Guernica</option>
+                    <option value="Cañuelas">Cañuelas</option>
+                    <option value="Pinamar">Pinamar</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                    Fecha estimada <span style={{ color: '#B9BBB7', fontWeight: 400 }}>(orientativa)</span>
+                  </label>
+                  <input type="date" value={formRetiro.fecha_estimada} onChange={e => setFormRetiro(p => ({ ...p, fecha_estimada: e.target.value }))}
+                    className={inputClass} style={inputStyle} />
+                </div>
+              </div>
+            </div>
+
+            {/* Productos a retirar */}
+            <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#B9BBB7' }}>Productos a retirar</p>
+              <p className="text-xs" style={{ color: '#B9BBB7' }}>Buscá por código de producto (mismo código del sistema de abastecimiento).</p>
+
+              <div className="space-y-3">
+                {itemsRetiro.map((item, idx) => (
+                  <div key={idx} className="border rounded-xl p-4 space-y-3" style={{ borderColor: '#e8edf8' }}>
+                    <div className="flex gap-3 items-start">
+                      {/* Código */}
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs" style={{ color: '#B9BBB7' }}>Código</span>
+                        <input
+                          value={item._codigo ?? ''}
+                          onChange={e => {
+                            const upd = [...itemsRetiro]
+                            upd[idx] = { ...upd[idx], _codigo: e.target.value, _encontrado: false, _noEncontrado: false }
+                            setItemsRetiro(upd)
+                          }}
+                          onBlur={e => buscarPorCodigoRetiro(e.target.value, idx)}
+                          placeholder="ej: 1234"
+                          className="w-20 border rounded px-2 py-1.5 text-xs text-center focus:outline-none"
+                          style={{ borderColor: item._encontrado ? '#bbf7d0' : item._noEncontrado ? '#fca5a5' : '#e8edf8' }} />
+                      </div>
+
+                      {/* Nombre */}
+                      <div className="flex flex-col gap-0.5 flex-1">
+                        <span className="text-xs flex items-center gap-1" style={{ color: '#B9BBB7' }}>
+                          Producto
+                          {item._encontrado && <span className="text-xs px-1 rounded" style={{ background: '#d1fae5', color: '#065f46' }}>✓ maestro</span>}
+                          {item._noEncontrado && <span className="text-xs px-1 rounded" style={{ background: '#fef3c7', color: '#b45309' }}>manual</span>}
+                        </span>
+                        <input
+                          value={item.nombre_producto}
+                          readOnly={item._encontrado}
+                          onChange={e => {
+                            const upd = [...itemsRetiro]; upd[idx] = { ...upd[idx], nombre_producto: e.target.value }; setItemsRetiro(upd)
+                          }}
+                          placeholder={item._noEncontrado ? 'Ingresá el nombre del producto' : 'Nombre o buscá por código'}
+                          className="flex-1 border rounded px-2.5 py-1.5 text-xs focus:outline-none"
+                          style={{ borderColor: '#e8edf8', background: item._encontrado ? '#f0fdf4' : 'white', color: '#1a1a1a' }} />
+                      </div>
+
+                      {/* Cantidad */}
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs" style={{ color: '#B9BBB7' }}>Cant.</span>
+                        <input type="number" min={1}
+                          value={item.cantidad}
+                          onChange={e => {
+                            const upd = [...itemsRetiro]; upd[idx] = { ...upd[idx], cantidad: parseInt(e.target.value) || 1 }; setItemsRetiro(upd)
+                          }}
+                          className="w-16 border rounded px-2 py-1.5 text-xs text-center focus:outline-none"
+                          style={{ borderColor: '#e8edf8' }} />
+                      </div>
+
+                      {/* Eliminar */}
+                      {itemsRetiro.length > 1 && (
+                        <button type="button" onClick={() => setItemsRetiro(prev => prev.filter((_, i) => i !== idx))}
+                          className="mt-5 text-xs px-2 py-1.5 rounded"
+                          style={{ color: '#E52322', background: '#fde8e8' }}>✕</button>
+                      )}
+                    </div>
+
+                    {item._noEncontrado && !item.nombre_producto && (
+                      <p className="text-xs" style={{ color: '#b45309' }}>
+                        ⚠ Código no encontrado en el maestro — ingresá el nombre manualmente.
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <button type="button"
+                onClick={() => setItemsRetiro(prev => [...prev, { nombre_producto: '', cantidad: 1, id_producto: null, _codigo: '', _encontrado: false, _noEncontrado: false }])}
+                className="w-full py-2 text-xs rounded-lg border-dashed border"
+                style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>
+                + Agregar producto
+              </button>
+            </div>
+
+            {/* Notas */}
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Notas adicionales</label>
+              <textarea value={formRetiro.notas} onChange={e => setFormRetiro(p => ({ ...p, notas: e.target.value }))} rows={3}
+                className={inputClass} style={inputStyle}
+                placeholder="Ej: pallets vacíos en el depósito, horario de acceso, contacto en obra, etc." />
+            </div>
+
+            {errorRetiro && (
+              <div className="rounded-lg px-4 py-3 text-sm font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>
+                {errorRetiro}
+              </div>
+            )}
+
+            <button type="submit" disabled={loadingRetiro}
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
+              style={{ background: loadingRetiro ? '#5eada3' : '#0f766e' }}>
+              {loadingRetiro ? 'Guardando...' : '🔄 Confirmar solicitud de retiro'}
+            </button>
+          </form>
+        )}
+
       </main>
     </div>
   )

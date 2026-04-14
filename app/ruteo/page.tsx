@@ -23,6 +23,7 @@ interface Pedido {
   longitud: number | null
   telefono: string | null
   items?: { nombre: string; cantidad: number; unidad: string }[]
+  tipo?: string
 }
 
 interface CamionDisponible {
@@ -1060,30 +1061,40 @@ export default function RuteoPage() {
                       const entregado = pedido.estado === 'entregado'
                       const rechazado = pedido.estado === 'rechazado'
                       const finalizado = entregado || rechazado
+                      const esRetiro = pedido.tipo === 'retiro'
                       return (
                         <div key={pedido.id}
-                          className="bg-white rounded-xl shadow-sm overflow-hidden"
-                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : '#f0f0f0'}` }}>
+                          className="rounded-xl shadow-sm overflow-hidden"
+                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : esRetiro ? '#99f6e4' : '#f0f0f0'}`, background: esRetiro ? '#f0fdfa' : 'white' }}>
                           <div className="px-4 py-3 flex items-center justify-between"
-                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : 'white', borderBottom: '1px solid #f4f4f3' }}>
+                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : esRetiro ? '#ccfbf1' : 'white', borderBottom: '1px solid #f4f4f3' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : '#254A96' }}>
-                                {entregado ? '✓' : rechazado ? '✕' : (pedido.orden_entrega ?? idx + 1)}
+                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : esRetiro ? '#0d9488' : '#254A96' }}>
+                                {entregado ? '✓' : rechazado ? '✕' : esRetiro ? '🔄' : (pedido.orden_entrega ?? idx + 1)}
                               </div>
                               <div>
-                                <p className="font-semibold text-sm" style={{ color: '#254A96' }}>{pedido.cliente}</p>
-                                <p className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-semibold text-sm" style={{ color: esRetiro ? '#0f766e' : '#254A96' }}>{pedido.cliente}</p>
+                                  {esRetiro && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#99f6e4', color: '#0f766e' }}>RETIRO</span>}
+                                </div>
+                                {pedido.nv && <p className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</p>}
                               </div>
                             </div>
                             <span className="text-xs px-2 py-1 rounded-full font-medium"
                               style={entregado ? { background: '#d1fae5', color: '#065f46' } : rechazado ? { background: '#fde8e8', color: '#E52322' } : { background: '#e8edf8', color: '#254A96' }}>
-                              {entregado ? 'Entregado' : rechazado ? 'Rechazado' : 'Pendiente'}
+                              {entregado ? 'Completado' : rechazado ? 'Rechazado' : 'Pendiente'}
                             </span>
                           </div>
                           <div className="px-4 py-3 space-y-3">
+                            {esRetiro && (
+                              <div className="rounded-lg px-3 py-2 text-xs font-medium flex items-center gap-1.5"
+                                style={{ background: '#ccfbf1', color: '#0f766e' }}>
+                                🔄 Pasá a <strong>retirar</strong> los productos de este cliente
+                              </div>
+                            )}
                             <div>
-                              <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Dirección</p>
+                              <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{esRetiro ? 'Lugar de retiro' : 'Dirección'}</p>
                               <p className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{pedido.direccion}</p>
                             </div>
                             {pedido.items && pedido.items.length > 0 && (

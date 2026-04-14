@@ -8,7 +8,7 @@ import { puedeEditar } from '@/app/lib/permisos'
 interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
   fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
-  volumen_total_m3: number | null; pedido_grande?: boolean
+  volumen_total_m3: number | null; pedido_grande?: boolean; tipo?: string
   notas: string | null; camion_id: string | null; orden_entrega: number | null
   latitud: number | null; longitud: number | null; barrio_cerrado?: boolean; prioridad?: boolean
   requiere_volcador?: boolean
@@ -213,12 +213,20 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   const [reprogMotivo, setReprogMotivo] = useState('')
   const mananaStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()
   const esReprogramado = pedido.notas?.startsWith('⚡')
+  const esRetiro = pedido.tipo === 'retiro'
+  const borderColor = esRetiro ? '#0d9488' : pedido.pedido_grande ? '#f59e0b' : esReprogramado ? '#fbbf24' : '#f0f0f0'
+  const bgColor = esRetiro ? '#f0fdfa' : pedido.pedido_grande ? '#fffbeb' : 'white'
   return (
     <div draggable onDragStart={e => onDragStart(e, pedido)}
-      className="bg-white rounded-lg p-3 mb-2 cursor-grab active:cursor-grabbing select-none hover:shadow-md transition-shadow"
-      style={{ border: `1px solid ${pedido.pedido_grande ? '#f59e0b' : esReprogramado ? '#fbbf24' : '#f0f0f0'}`,
-               background: pedido.pedido_grande ? '#fffbeb' : 'white' }}>
-      {pedido.pedido_grande && (
+      className="rounded-lg p-3 mb-2 cursor-grab active:cursor-grabbing select-none hover:shadow-md transition-shadow"
+      style={{ border: `1px solid ${borderColor}`, background: bgColor }}>
+      {esRetiro && (
+        <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg flex items-center gap-1.5"
+          style={{ background: '#ccfbf1', color: '#0f766e' }}>
+          🔄 Retiro — no cuenta para cupos
+        </div>
+      )}
+      {pedido.pedido_grande && !esRetiro && (
         <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg"
           style={{ background: '#fde68a', color: '#92400e' }}>
           ⚠️ Pedido grande — requiere separación

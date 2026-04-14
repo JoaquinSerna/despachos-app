@@ -47,7 +47,7 @@ interface Pedido {
   id: string; nv: string; id_despacho: string | null; cliente: string; direccion: string
   sucursal: string; fecha_entrega: string; vuelta: number
   estado: string; estado_pago: string | null; peso_total_kg: number | null; volumen_total_m3: number | null
-  notas: string | null; camion_id: string | null
+  notas: string | null; camion_id: string | null; tipo?: string
 }
 
 const PAGO_COLOR: Record<string, { bg: string; text: string }> = {
@@ -128,7 +128,7 @@ export default function PedidosPage() {
     setExpandidos(new Set())
     let q = supabase
       .from('pedidos')
-      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id', { count: 'exact' })
+      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
       .limit(200)
@@ -459,9 +459,15 @@ export default function PedidosPage() {
                           </button>
                         </td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <div className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{p.nv}</div>
-                          {p.id_despacho && (
-                            <div className="text-xs mt-0.5" style={{ color: '#888' }}>SD {p.id_despacho}</div>
+                          {p.tipo === 'retiro' ? (
+                            <span className="text-xs px-2 py-1 rounded font-semibold" style={{ background: '#ccfbf1', color: '#0f766e' }}>🔄 RETIRO</span>
+                          ) : (
+                            <>
+                              <div className="font-medium text-sm" style={{ color: '#1a1a1a' }}>{p.nv}</div>
+                              {p.id_despacho && (
+                                <div className="text-xs mt-0.5" style={{ color: '#888' }}>SD {p.id_despacho}</div>
+                              )}
+                            </>
                           )}
                         </td>
                         <td className="px-4 py-2.5 max-w-[150px] truncate" style={{ color: '#1a1a1a' }} title={p.cliente}>{p.cliente}</td>

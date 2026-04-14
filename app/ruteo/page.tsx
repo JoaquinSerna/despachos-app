@@ -69,6 +69,7 @@ export default function RuteoPage() {
   const [confirmando, setConfirmando] = useState(false)
   const [accionModal, setAccionModal] = useState<'entregar' | 'rechazar'>('entregar')
   const [motivoRechazo, setMotivoRechazo] = useState('')
+  const [errorModal, setErrorModal] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const LABELS_FOTO = ['Remito', 'Material en puerta', 'Daño / Roto', 'Otro']
@@ -349,13 +350,14 @@ export default function RuteoPage() {
 
   const cerrarModal = () => {
     setModalPedido(null); setNota(''); setFotos([])
-    setAccionModal('entregar'); setMotivoRechazo('')
+    setAccionModal('entregar'); setMotivoRechazo(''); setErrorModal('')
   }
 
   const confirmarEntrega = async (accion: 'entregar' | 'rechazar') => {
     if (!modalPedido) return
-    if (fotos.length === 0) { showToast('Necesitás al menos una foto', 'err'); return }
-    if (accion === 'rechazar' && !motivoRechazo.trim()) { showToast('Ingresá el motivo del rechazo', 'err'); return }
+    if (fotos.length === 0) { setErrorModal('Necesitás agregar al menos una foto antes de continuar.'); return }
+    if (accion === 'rechazar' && !motivoRechazo.trim()) { setErrorModal('Ingresá el motivo del rechazo para continuar.'); return }
+    setErrorModal('')
     setConfirmando(true)
 
     try {
@@ -606,7 +608,7 @@ export default function RuteoPage() {
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[70] px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
           {toast.tipo === 'ok' ? '✓' : '✕'} {toast.msg}
         </div>
@@ -728,6 +730,14 @@ export default function RuteoPage() {
                   className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
                   style={{ borderColor: '#fca5a5' }}
                   placeholder="Ej: Cliente no estaba, no aceptó el pedido, dirección incorrecta..." />
+              </div>
+            )}
+
+            {/* Error inline */}
+            {errorModal && (
+              <div className="rounded-xl px-4 py-3 text-sm font-medium flex items-center gap-2"
+                style={{ background: '#fde8e8', color: '#E52322', border: '1px solid #fca5a5' }}>
+                ⚠️ {errorModal}
               </div>
             )}
 

@@ -58,6 +58,9 @@ export default function RuteoPage() {
   const [kmRuta, setKmRuta] = useState<number | null>(null)
   const [guardandoRuta, setGuardandoRuta] = useState(false)
 
+  // Manual de uso
+  const [modalAyuda, setModalAyuda] = useState(false)
+
   // Soporte técnico
   const [modalSoporte, setModalSoporte] = useState(false)
   const [contactosSoporte, setContactosSoporte] = useState<{ id: number; nombre: string; telefono: string; sucursal: string }[]>([])
@@ -614,7 +617,70 @@ export default function RuteoPage() {
         </div>
       )}
 
-      {/* Modal confirmar entrega */}
+      {/* Botón flotante ayuda */}
+      <button onClick={() => setModalAyuda(true)}
+        className="fixed bottom-24 right-6 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-lg font-bold"
+        style={{ background: '#254A96', color: 'white' }}
+        title="Manual de uso">
+        ?
+      </button>
+
+      {/* Modal ayuda — manual del chofer */}
+      {modalAyuda && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center px-6 pt-5 pb-3 border-b flex-shrink-0" style={{ borderColor: '#e8edf8' }}>
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>📖 Manual de uso</h3>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>Guía rápida para el chofer</p>
+              </div>
+              <button onClick={() => setModalAyuda(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+            <div className="overflow-y-auto px-6 py-4 space-y-4">
+              {[
+                { icono: '📱', titulo: 'Abrir la app', desc: 'Iniciá sesión con tu usuario. La app te lleva directo a tu ruteo del día.', tips: ['Si no aparece nada, todavía no te asignaron pedidos para hoy.'] },
+                { icono: '🗺️', titulo: 'Ver tu recorrido', desc: 'Ves todos los pedidos asignados a tu camión, en el orden de entrega establecido, con dirección, cliente y observaciones.', tips: ['El orden lo define el ruteador — respetalo salvo fuerza mayor.'] },
+                { icono: '📍', titulo: 'Navegar a la entrega', desc: 'Tocá el botón de Maps en cada pedido para abrir la navegación directamente al domicilio del cliente.', tips: ['Si la dirección está mal, avisale al ruteador.'] },
+                { icono: '📷', titulo: 'Confirmar entrega', desc: 'Cuando entregás, tocá "Entregado", sacá una foto como comprobante y confirmá. Podés agregar una nota si es necesario.', tips: ['La foto es obligatoria.', 'El ruteador ve el estado en tiempo real.'] },
+                { icono: '✕', titulo: 'Registrar rechazo', desc: 'Si el cliente no acepta el pedido, tocá "Rechazado", sacá una foto y escribí el motivo del rechazo.', tips: ['El motivo es obligatorio para registrar un rechazo.', 'El pedido queda como rechazado y el ruteador lo reprograma.'] },
+                { icono: '🛟', titulo: 'Contactar soporte', desc: 'Si tenés algún problema técnico o duda, tocá el botón verde de soporte para comunicarte con el equipo.', tips: [] },
+              ].map((paso, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0 mt-0.5"
+                    style={{ background: '#e8edf8' }}>
+                    {paso.icono}
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-sm" style={{ color: '#254A96' }}>
+                      <span className="text-xs font-normal mr-1" style={{ color: '#B9BBB7' }}>{i + 1}.</span>
+                      {paso.titulo}
+                    </p>
+                    <p className="text-xs mt-0.5 leading-relaxed" style={{ color: '#555' }}>{paso.desc}</p>
+                    {paso.tips.length > 0 && (
+                      <ul className="mt-1.5 space-y-1">
+                        {paso.tips.map((tip, j) => (
+                          <li key={j} className="text-xs flex gap-1.5" style={{ color: '#888' }}>
+                            <span style={{ color: '#254A96' }}>•</span> {tip}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-6 py-4 border-t flex-shrink-0" style={{ borderColor: '#e8edf8' }}>
+              <button onClick={() => setModalAyuda(false)}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{ background: '#254A96' }}>
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Botón flotante soporte — solo cuando hay camión seleccionado y hay contactos */}
       {camionSeleccionado && contactosSoporte.length > 0 && (
         <button onClick={() => setModalSoporte(true)}

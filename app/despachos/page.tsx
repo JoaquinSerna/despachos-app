@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { puedeEditar } from '../lib/permisos'
 
 // Franjas horarias para comerciales (se mapean a vueltas internas)
 // Franja 3 "tarde" cubre V3+V4 — el ruteador decide la vuelta exacta
@@ -77,11 +78,18 @@ export default function NuevoDespacho() {
   const [reprogMotivo, setReprogMotivo] = useState('')
   const [linkMaps, setLinkMaps] = useState('')
   const [linkMapsOk, setLinkMapsOk] = useState<boolean | null>(null)
+  const [puedeEditarDespachos, setPuedeEditarDespachos] = useState(false)
 
   useEffect(() => { _setToast = setToastState; return () => { _setToast = null } }, [])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (!user) router.push('/'); else setUserId(user.id) })
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { router.push('/'); return }
+      setUserId(user.id)
+      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
+        if (data) setPuedeEditarDespachos(puedeEditar(data.permisos, data.rol, 'despachos'))
+      })
+    })
   }, [])
 
   useEffect(() => {
@@ -443,6 +451,16 @@ export default function NuevoDespacho() {
 
       <main className="max-w-3xl mx-auto px-4 md:px-6 py-6 space-y-4">
 
+        {/* Aviso solo visualización */}
+        {!puedeEditarDespachos && (
+          <div className="rounded-xl px-5 py-4 text-sm font-medium flex items-center gap-3"
+            style={{ background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+            👁️ Tenés acceso de solo visualización a este módulo. No podés cargar nuevas solicitudes de despacho.
+          </div>
+        )}
+
+        {puedeEditarDespachos && <>
+
         {/* Subir PDF */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📄 Solicitud de Despacho</h2>
@@ -634,6 +652,8 @@ export default function NuevoDespacho() {
             </button>
           </form>
         )}
+
+        </>}
       </main>
     </div>
   )

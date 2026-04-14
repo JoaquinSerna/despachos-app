@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { puedeEditar } from '../lib/permisos'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'cancelado']
@@ -106,13 +107,16 @@ export default function PedidosPage() {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
   }
 
+  const [puedeEditarPedidos, setPuedeEditarPedidos] = useState(false)
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      supabase.from('usuarios').select('rol').eq('id', user.id).single().then(({ data }) => {
+      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
         if (!['gerencia', 'ruteador', 'admin_flota'].includes(data?.rol)) {
           router.push('/dashboard'); return
         }
+        setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))
       })
     })
   }, [])
@@ -512,11 +516,13 @@ export default function PedidosPage() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <button onClick={() => iniciarEdicion(p)}
-                            className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                            style={{ background: '#f4f4f3', color: '#254A96' }}>
-                            ✏️
-                          </button>
+                          {puedeEditarPedidos && (
+                            <button onClick={() => iniciarEdicion(p)}
+                              className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                              style={{ background: '#f4f4f3', color: '#254A96' }}>
+                              ✏️
+                            </button>
+                          )}
                         </td>
                       </tr>
 

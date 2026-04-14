@@ -78,6 +78,19 @@ export async function PUT(req: NextRequest) {
   }
 }
 
+// PATCH - actualizar permisos de un usuario
+export async function PATCH(req: NextRequest) {
+  try {
+    const { id, permisos } = await req.json()
+    if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
+    const { error } = await getAdmin().from('usuarios').update({ permisos }).eq('id', id)
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    return NextResponse.json({ success: true })
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
+}
+
 // DELETE - eliminar usuario
 export async function DELETE(req: NextRequest) {
   try {

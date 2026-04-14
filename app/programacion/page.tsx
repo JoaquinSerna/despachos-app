@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
+import { puedeEditar } from '@/app/lib/permisos'
 
 interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
@@ -747,6 +748,16 @@ function ProgramacionInner() {
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
 
+  const [puedeEditarProg, setPuedeEditarProg] = useState(false)
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
+        if (data) setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
+      })
+    })
+  }, [])
+
   useEffect(() => { cargarDatos() }, [fecha, sucursal, vueltaActiva])
 
   async function cargarDatos() {
@@ -1102,22 +1113,29 @@ function ProgramacionInner() {
             <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => { const l = pedidos.map(p => ({ ...p, camion_id: null })); setPedidos(l); construirColumnas(l, camiones); setConfirmado(false) }}
-              disabled={cargando || guardando}
-              className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
-              style={{ borderColor: '#e8edf8', color: '#666' }}>Limpiar</button>
-            <button onClick={() => { setCamionParaReprog(null); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
-              disabled={cargando || guardando || pedidos.length === 0}
-              className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
-              style={{ borderColor: '#fbbf24', color: '#b45309', background: '#fef3c7' }}>📅 Reprog. vuelta</button>
-            <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
-              className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
-              style={{ background: '#7c3aed' }}>✦ Sugerir</button>
-            <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0 || confirmado}
-              className="px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-40"
-              style={{ background: confirmado ? '#d1fae5' : '#254A96', color: confirmado ? '#065f46' : 'white' }}>
-              {guardando ? 'Guardando…' : confirmado ? '✓ Confirmado' : 'Confirmar'}
-            </button>
+            {puedeEditarProg && <>
+              <button onClick={() => { const l = pedidos.map(p => ({ ...p, camion_id: null })); setPedidos(l); construirColumnas(l, camiones); setConfirmado(false) }}
+                disabled={cargando || guardando}
+                className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
+                style={{ borderColor: '#e8edf8', color: '#666' }}>Limpiar</button>
+              <button onClick={() => { setCamionParaReprog(null); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
+                disabled={cargando || guardando || pedidos.length === 0}
+                className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
+                style={{ borderColor: '#fbbf24', color: '#b45309', background: '#fef3c7' }}>📅 Reprog. vuelta</button>
+              <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
+                className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
+                style={{ background: '#7c3aed' }}>✦ Sugerir</button>
+              <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0 || confirmado}
+                className="px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-40"
+                style={{ background: confirmado ? '#d1fae5' : '#254A96', color: confirmado ? '#065f46' : 'white' }}>
+                {guardando ? 'Guardando…' : confirmado ? '✓ Confirmado' : 'Confirmar'}
+              </button>
+            </>}
+            {!puedeEditarProg && (
+              <span className="text-xs px-3 py-2 rounded-lg" style={{ background: '#f4f4f3', color: '#B9BBB7' }}>
+                👁️ Solo visualización
+              </span>
+            )}
           </div>
         </div>
       </div>

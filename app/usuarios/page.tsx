@@ -5,6 +5,7 @@ import { supabase } from '../supabase' // solo para auth check
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG } from '../lib/roles'
+import { MODULOS, MODULO_LABEL, MODULO_ICON, nivelEfectivo } from '../lib/permisos'
 
 interface Usuario {
   id: string
@@ -13,6 +14,7 @@ interface Usuario {
   rol: string
   sucursal: string | null
   created_at: string
+  permisos?: Record<string, string>
 }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -34,6 +36,9 @@ export default function UsuariosPage() {
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [busqueda, setBusqueda] = useState('')
+  const [modalPermisos, setModalPermisos] = useState<Usuario | null>(null)
+  const [permisosEdit, setPermisosEdit] = useState<Record<string, string>>({})
+  const [guardandoPermisos, setGuardandoPermisos] = useState(false)
 
   // Soporte técnico
   const [contactosSoporte, setContactosSoporte] = useState<SoporteContacto[]>([])
@@ -91,6 +96,37 @@ export default function UsuariosPage() {
     await fetch('/api/soporte-contactos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: c.id, activo: !c.activo }) })
     cargarSoporte()
+  }
+
+  const abrirPermisos = (u: Usuario) => {
+    setPermisosEdit({ ...(u.permisos ?? {}) })
+    setModalPermisos(u)
+  }
+
+  const togglePermiso = (modulo: string, nivel: 'editor' | 'viewer') => {
+    setPermisosEdit(prev => ({ ...prev, [modulo]: nivel }))
+  }
+
+  const resetPermiso = (modulo: string) => {
+    setPermisosEdit(prev => { const n = { ...prev }; delete n[modulo]; return n })
+  }
+
+  const guardarPermisos = async () => {
+    if (!modalPermisos) return
+    setGuardandoPermisos(true)
+    const res = await fetch('/api/crear-usuario', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: modalPermisos.id, permisos: permisosEdit }),
+    })
+    const data = await res.json()
+    if (data.error) { showToast(data.error, 'err') }
+    else {
+      setUsuarios(prev => prev.map(u => u.id === modalPermisos.id ? { ...u, permisos: permisosEdit } : u))
+      showToast('Permisos actualizados')
+      setModalPermisos(null)
+    }
+    setGuardandoPermisos(false)
   }
 
   const cargarUsuarios = async () => {
@@ -275,6 +311,84 @@ export default function UsuariosPage() {
         </div>
       )}
 
+      {/* Modal permisos */}
+      {modalPermisos && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>🔐 Permisos de acceso</h3>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                  {modalPermisos.nombre} · <span style={{ color: ROL_COLOR[modalPermisos.rol] }}>{ROL_LABEL[modalPermisos.rol]}</span>
+                </p>
+              </div>
+              <button onClick={() => setModalPermisos(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+
+            <div className="space-y-2">
+              {MODULOS.map(modulo => {
+                const override = permisosEdit[modulo]
+                const efectivo = nivelEfectivo(permisosEdit, modalPermisos.rol, modulo)
+                const esDefault = !override
+                return (
+                  <div key={modulo} className="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                    style={{ borderColor: '#e8edf8', background: '#fafafa' }}>
+                    <span className="text-base w-6 text-center">{MODULO_ICON[modulo]}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{MODULO_LABEL[modulo]}</p>
+                      {esDefault && (
+                        <p className="text-xs" style={{ color: '#B9BBB7' }}>Default del rol ({efectivo === 'editor' ? 'editor' : 'visualizador'})</p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => togglePermiso(modulo, 'editor')}
+                        className="text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors"
+                        style={{
+                          background: override === 'editor' ? '#254A96' : (esDefault && efectivo === 'editor' ? '#e8edf8' : '#f4f4f3'),
+                          color: override === 'editor' ? 'white' : (esDefault && efectivo === 'editor' ? '#254A96' : '#999'),
+                        }}>
+                        ✏️ Editor
+                      </button>
+                      <button
+                        onClick={() => togglePermiso(modulo, 'viewer')}
+                        className="text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors"
+                        style={{
+                          background: override === 'viewer' ? '#6b7280' : (esDefault && efectivo === 'viewer' ? '#e8edf8' : '#f4f4f3'),
+                          color: override === 'viewer' ? 'white' : (esDefault && efectivo === 'viewer' ? '#374151' : '#999'),
+                        }}>
+                        👁️ Ver
+                      </button>
+                      {!esDefault && (
+                        <button onClick={() => resetPermiso(modulo)}
+                          className="text-xs px-2 py-1.5 rounded-lg"
+                          style={{ background: '#fef3c7', color: '#d97706' }}
+                          title="Restaurar default del rol">
+                          ↩
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setModalPermisos(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border"
+                style={{ borderColor: '#e8edf8', color: '#666' }}>
+                Cancelar
+              </button>
+              <button onClick={guardarPermisos} disabled={guardandoPermisos}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: '#254A96' }}>
+                {guardandoPermisos ? 'Guardando...' : 'Guardar permisos'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -354,6 +468,11 @@ export default function UsuariosPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
+                        <button onClick={() => abrirPermisos(u)}
+                          className="text-xs px-2 py-1 rounded-lg"
+                          style={{ background: '#fef3c7', color: '#d97706' }}>
+                          🔐 Permisos
+                        </button>
                         <button onClick={() => abrirEditar(u)}
                           className="text-xs px-2 py-1 rounded-lg"
                           style={{ background: '#e8edf8', color: '#254A96' }}>

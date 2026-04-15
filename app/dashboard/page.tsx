@@ -57,6 +57,7 @@ export default function Dashboard() {
   const [toastDash, setToastDash] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [refrescando, setRefrescando] = useState(false)
   const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null)
+  const [permisosUsuario, setPermisosUsuario] = useState<Record<string, string> | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const usuarioRef = useRef<{ id: string; rol: string } | null>(null)
   const router = useRouter()
@@ -84,7 +85,7 @@ export default function Dashboard() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('rol, nombre')
+        .select('rol, nombre, permisos')
         .eq('id', user.id)
         .single()
 
@@ -94,6 +95,7 @@ export default function Dashboard() {
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')
       setNombreUsuario(userData?.nombre ?? user.email?.split('@')[0] ?? 'usuario')
+      setPermisosUsuario(userData?.permisos ?? null)
       setVerificando(false)
       const rol = userData?.rol ?? ''
       usuarioRef.current = { id: user.id, rol }
@@ -178,7 +180,20 @@ export default function Dashboard() {
  
   const hora = new Date().getHours()
   const saludo = hora < 12 ? 'Buenos días' : hora < 18 ? 'Buenas tardes' : 'Buenas noches'
-  const cards = TODAS_LAS_CARDS.filter(c => !rolUsuario || c.roles.includes(rolUsuario))
+  // Mapeo href → nombre de módulo en el sistema de permisos
+  const HREF_A_MODULO: Record<string, string> = {
+    '/despachos': 'despachos', '/pedidos': 'pedidos', '/programacion': 'programacion',
+    '/ruteo': 'ruteo', '/confirmaciones': 'confirmaciones', '/abastecimiento': 'abastecimiento',
+  }
+  const cards = TODAS_LAS_CARDS.filter(c => {
+    if (!rolUsuario) return true
+    // Acceso por rol por defecto
+    if (c.roles.includes(rolUsuario)) return true
+    // Acceso por permiso individual (editor o viewer)
+    const modulo = HREF_A_MODULO[c.href]
+    if (modulo && permisosUsuario?.[modulo]) return true
+    return false
+  })
  
   return (
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>

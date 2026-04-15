@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
-import { puedeEditar } from '../lib/permisos'
+import { puedeEditar, tieneAcceso } from '../lib/permisos'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'cancelado']
@@ -113,7 +113,7 @@ export default function PedidosPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
-        if (!['gerencia', 'ruteador', 'admin_flota'].includes(data?.rol)) {
+        if (!tieneAcceso(data?.permisos, data?.rol, 'pedidos')) {
           router.push('/dashboard'); return
         }
         setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))

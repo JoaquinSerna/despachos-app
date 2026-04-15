@@ -47,6 +47,33 @@ export function puedeEditar(
 }
 
 /**
+ * Roles que tienen acceso por defecto a cada módulo (editores + visualizadores de base).
+ * Si un rol no está aquí pero tiene un override explícito en permisos, igual tiene acceso.
+ */
+const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
+  despachos:      ['gerencia', 'admin_flota', 'ruteador', 'comercial'],
+  pedidos:        ['gerencia', 'admin_flota', 'ruteador'],
+  programacion:   ['gerencia', 'admin_flota', 'ruteador'],
+  ruteo:          ['gerencia', 'admin_flota', 'ruteador'],
+  confirmaciones: ['gerencia', 'admin_flota', 'confirmador'],
+  abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
+}
+
+/**
+ * Determina si un usuario puede acceder (ver o editar) a un módulo.
+ * Accede si su rol tiene acceso por defecto O si tiene un override explícito de permisos.
+ */
+export function tieneAcceso(
+  permisos: Record<string, string> | null | undefined,
+  rol: string,
+  modulo: Modulo
+): boolean {
+  if (ROL_ACCESO_DEFAULT[modulo]?.includes(rol)) return true
+  if (permisos && modulo in permisos) return true
+  return false
+}
+
+/**
  * Devuelve el nivel efectivo para mostrar en UI ('editor' | 'viewer')
  */
 export function nivelEfectivo(

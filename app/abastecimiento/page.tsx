@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/app/supabase'
+import { tieneAcceso } from '@/app/lib/permisos'
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -153,9 +154,9 @@ export default function AbastecimientoPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, email').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, email, permisos').eq('id', user.id).single()
       const r = data?.rol ?? ''
-      if (!['gerencia', 'ruteador', 'deposito'].includes(r)) { router.push('/dashboard'); return }
+      if (!tieneAcceso(data?.permisos, r, 'abastecimiento')) { router.push('/dashboard'); return }
       setRol(r)
       setUserEmail(data?.email ?? user.email ?? '')
       cargarReqs(tab)

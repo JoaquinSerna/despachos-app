@@ -20,6 +20,8 @@ interface Props {
   mode?: 'fixed' | 'inline'
 }
 
+const ROLES_LOGISTICA = ['gerencia', 'admin_flota', 'ruteador', 'confirmador', 'deposito']
+
 export default function NotificacionBell({ mode = 'fixed' }: Props) {
   const router = useRouter()
   const pathname = usePathname()
@@ -27,6 +29,7 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   const [pedidos, setPedidos] = useState<PedidoPendiente[]>([])
   const [open, setOpen] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
+  const [rol, setRol] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   // Close dropdown on outside click
@@ -38,11 +41,19 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
     return () => document.removeEventListener('mousedown', close)
   }, [])
 
-  // Track auth state
+  // Track auth state and fetch role
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => setLoggedIn(!!user))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setLoggedIn(!!session?.user)
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return
+      setLoggedIn(true)
+      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      setRol(data?.rol ?? null)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
+      if (!session?.user) { setLoggedIn(false); setRol(null); return }
+      setLoggedIn(true)
+      const { data } = await supabase.from('usuarios').select('rol').eq('id', session.user.id).single()
+      setRol(data?.rol ?? null)
     })
     return () => subscription.unsubscribe()
   }, [])
@@ -71,7 +82,9 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   }, [pathname])
 
   // Fixed overlay: hide on login page and pages that have inline bell
-  if (mode === 'fixed' && (!loggedIn || HIDDEN_PATHS.includes(pathname))) return null
+  // Only show for logistics roles — not for comercial/chofer
+  if (!loggedIn || (rol !== null && !ROLES_LOGISTICA.includes(rol))) return null
+  if (mode === 'fixed' && HIDDEN_PATHS.includes(pathname)) return null
 
   const hayNotificaciones = count > 0
 

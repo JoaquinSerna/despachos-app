@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Barlow } from "next/font/google";
 import "./globals.css";
-import NotificacionBell from "./components/NotificacionBell";
 
 const barlow = Barlow({
   subsets: ["latin"],
@@ -24,7 +23,6 @@ export default function RootLayout({
     <html lang="es">
       <body className={`${barlow.variable} antialiased`} style={{ fontFamily: 'Barlow, sans-serif' }}>
         {children}
-        <NotificacionBell />
       </body>
     </html>
   );

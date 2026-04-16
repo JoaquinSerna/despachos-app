@@ -77,6 +77,18 @@ function calcularDistanciaRuta(pedidos: { latitud: number | null; longitud: numb
   return Math.round(dist)
 }
 
+interface PedidoDetalle {
+  id: string
+  nv: string
+  cliente: string
+  direccion: string
+  sucursal_destino: string
+  estado: string
+  peso_total_kg: number
+  volumen_total_m3: number
+  orden_entrega: number | null
+}
+
 interface DatosVuelta {
   vuelta: number
   pedidos: number
@@ -86,6 +98,7 @@ interface DatosVuelta {
   pctKg: number
   distanciaKm: number
   pedidosConUbicacion: number
+  detalle: PedidoDetalle[]
 }
 
 interface DatosCamionDia {
@@ -160,7 +173,7 @@ export default function MetricasPage() {
     const [{ data: flotaDia }, { data: pedidosData }, { data: camionesData }] = await Promise.all([
       supabase.from('flota_dia').select('camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta').eq('fecha', fecha).eq('activo', true),
       supabase.from('pedidos')
-        .select('camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud')
+        .select('id, nv, cliente, direccion, sucursal_destino, estado, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
       supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
     ])
@@ -203,6 +216,14 @@ export default function MetricasPage() {
           pctPos: pct(pos, camion.posiciones_total),
           distanciaKm: dist,
           pedidosConUbicacion: pv.filter((p: any) => p.latitud && p.longitud).length,
+          detalle: pv
+            .sort((a: any, b: any) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
+            .map((p: any) => ({
+              id: p.id, nv: p.nv, cliente: p.cliente, direccion: p.direccion,
+              sucursal_destino: p.sucursal_destino, estado: p.estado,
+              peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
+              orden_entrega: p.orden_entrega,
+            })),
         }
       })
 
@@ -384,8 +405,19 @@ export default function MetricasPage() {
 
 // ─── Vista Diaria ────────────────────────────────────────────────────────────────
 
+const ESTADO_COLOR: Record<string, { bg: string; color: string }> = {
+  pendiente:    { bg: '#fef3c7', color: '#b45309' },
+  conf_stock:   { bg: '#dbeafe', color: '#1d4ed8' },
+  preparacion:  { bg: '#ede9fe', color: '#7c3aed' },
+  en_transito:  { bg: '#d1fae5', color: '#065f46' },
+  entregado:    { bg: '#d1fae5', color: '#065f46' },
+  programado:   { bg: '#e8edf8', color: '#254A96' },
+  rechazado:    { bg: '#fde8e8', color: '#E52322' },
+}
+
 function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string }) {
   const [filtroFlota, setFiltroFlota] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
+  const [modalVuelta, setModalVuelta] = useState<{ camion: string; vuelta: DatosVuelta } | null>(null)
 
   if (datos.length === 0) return (
     <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
@@ -513,7 +545,16 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                       <div key={v.vuelta} className="rounded-xl p-3 space-y-2" style={{ background: '#f8faff', border: '1px solid #e8edf8' }}>
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-semibold" style={{ color: '#254A96' }}>{VUELTA_LABEL[v.vuelta] ?? `V${v.vuelta}`}</span>
-                          <span className="text-xs" style={{ color: '#B9BBB7' }}>{v.pedidos} pedido{v.pedidos !== 1 ? 's' : ''}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs" style={{ color: '#B9BBB7' }}>{v.pedidos} pedido{v.pedidos !== 1 ? 's' : ''}</span>
+                            <button
+                              onClick={() => setModalVuelta({ camion: d.camion_codigo, vuelta: v })}
+                              className="text-xs px-2 py-0.5 rounded-lg font-semibold"
+                              style={{ background: '#e8edf8', color: '#254A96' }}
+                            >
+                              Ver →
+                            </button>
+                          </div>
                         </div>
                         {/* Barra kg */}
                         <div>
@@ -570,6 +611,82 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
           </div>
         )
       })}
+
+      {/* Modal pedidos de vuelta */}
+      {modalVuelta && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setModalVuelta(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full overflow-hidden"
+            style={{ maxWidth: 680, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-4 flex items-center justify-between border-b" style={{ borderColor: '#f0f0f0' }}>
+              <div>
+                <p className="font-bold text-sm" style={{ color: '#254A96' }}>
+                  🚛 {modalVuelta.camion} — {VUELTA_LABEL[modalVuelta.vuelta.vuelta] ?? `V${modalVuelta.vuelta.vuelta}`}
+                </p>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                  {modalVuelta.vuelta.pedidos} pedido{modalVuelta.vuelta.pedidos !== 1 ? 's' : ''} ·
+                  {' '}{Math.round(modalVuelta.vuelta.kgUsados).toLocaleString('es-AR')} kg ·
+                  {' '}{Math.round(modalVuelta.vuelta.posicionesUsadas)} pos
+                  {modalVuelta.vuelta.distanciaKm > 0 && <> · ~{modalVuelta.vuelta.distanciaKm} km</>}
+                </p>
+              </div>
+              <button
+                onClick={() => setModalVuelta(null)}
+                className="text-xl leading-none px-2"
+                style={{ color: '#B9BBB7' }}
+              >×</button>
+            </div>
+
+            {/* Table */}
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
+                    {['#', 'NV', 'Cliente', 'Destino', 'Kg', 'Pos', 'Estado'].map(h => (
+                      <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {modalVuelta.vuelta.detalle.map((p, i) => {
+                    const sem = ESTADO_COLOR[p.estado] ?? { bg: '#f4f4f3', color: '#666' }
+                    return (
+                      <tr key={p.id} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
+                        <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>{p.orden_entrega ?? i + 1}</td>
+                        <td className="px-4 py-2.5 text-xs font-medium whitespace-nowrap" style={{ color: '#254A96' }}>{p.nv}</td>
+                        <td className="px-4 py-2.5">
+                          <p className="text-xs font-medium" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                          <p className="text-xs" style={{ color: '#B9BBB7' }}>{p.direccion}</p>
+                        </td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.sucursal_destino}</td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#1a1a1a' }}>
+                          {Math.round(p.peso_total_kg).toLocaleString('es-AR')} kg
+                        </td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#1a1a1a' }}>
+                          {Math.round(p.volumen_total_m3)} pos
+                        </td>
+                        <td className="px-4 py-2.5">
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap"
+                            style={{ background: sem.bg, color: sem.color }}>
+                            {p.estado}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

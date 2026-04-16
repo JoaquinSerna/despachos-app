@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import NotificacionBell from '../components/NotificacionBell'
 
 const TODAS_LAS_CARDS = [
   { href: '/despachos',      icon: '📦', titulo: 'Nuevo pedido',       descripcion: 'Cargar solicitud de despacho',              disponible: true, roles: ['gerencia','ruteador','comercial'] },
@@ -280,11 +281,12 @@ export default function Dashboard() {
 
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
+        <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <img src="/logo.png" alt="Construyo al Costo" className="h-8 w-auto rounded-lg" />
           </div>
           <div className="flex items-center gap-2">
+            <NotificacionBell mode="inline" />
             <span className="text-xs hidden md:block" style={{ color: '#B9BBB7' }}>{usuario.email}</span>
             <button onClick={() => setModalPassword(true)}
               className="text-xs px-3 py-1.5 rounded-lg font-medium"
@@ -300,7 +302,7 @@ export default function Dashboard() {
         </div>
       </nav>
  
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-6 md:py-8">
+      <main className="max-w-[1400px] mx-auto px-4 md:px-6 py-6 md:py-8">
  
         {/* Saludo */}
         <div className="mb-6">

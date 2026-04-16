@@ -509,7 +509,7 @@ export default function PedidosPage() {
 
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center">
+        <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => router.push('/dashboard')}
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
@@ -525,7 +525,7 @@ export default function PedidosPage() {
         </div>
       </nav>
 
-      <main className="max-w-6xl mx-auto px-4 py-5">
+      <main className="max-w-[1400px] mx-auto px-4 py-5">
 
         {/* Filtros */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
@@ -620,8 +620,8 @@ export default function PedidosPage() {
                             </>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 max-w-[150px] truncate" style={{ color: '#1a1a1a' }} title={p.cliente}>{p.cliente}</td>
-                        <td className="px-4 py-2.5 max-w-[160px] truncate text-xs" style={{ color: '#666' }} title={p.direccion}>{p.direccion}</td>
+                        <td className="px-4 py-2.5" style={{ color: '#1a1a1a', minWidth: 140 }}>{p.cliente}</td>
+                        <td className="px-4 py-2.5 text-xs" style={{ color: '#666', minWidth: 160 }}>{p.direccion}</td>
                         <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: '#666' }}>
                           {p.fecha_entrega ? new Date(p.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) : '—'}
                         </td>

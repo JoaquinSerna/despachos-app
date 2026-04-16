@@ -260,9 +260,9 @@ export default function ConfirmacionesPage() {
         {/* Lista por fecha */}
         {Object.keys(porFecha).length === 0 ? (
           <div className="bg-white rounded-xl shadow-sm p-12 text-center">
-            <p className="text-4xl mb-3">{soloSinConfirmar ? '🎉' : '📭'}</p>
+            <p className="text-4xl mb-3">{filtroConfirmado === 'sin_confirmar' ? '🎉' : '📭'}</p>
             <p className="font-medium text-sm" style={{ color: '#254A96' }}>
-              {soloSinConfirmar ? '¡Todos los clientes están confirmados!' : 'No hay pedidos programados'}
+              {filtroConfirmado === 'sin_confirmar' ? '¡Todos los clientes están confirmados!' : 'No hay pedidos programados'}
             </p>
           </div>
         ) : (

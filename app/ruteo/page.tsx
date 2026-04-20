@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditoria } from '../lib/auditoria'
+import { tieneAcceso } from '../lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
 
 interface Pedido {
@@ -89,11 +90,12 @@ export default function RuteoPage() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('nombre, rol, camion_codigo')
+        .select('nombre, rol, camion_codigo, permisos')
         .eq('id', user.id)
         .single()
 
-      if (!['chofer', 'gerencia', 'admin_flota', 'ruteador'].includes(userData?.rol)) {
+      // chofer siempre tiene acceso (su vista especial); el resto usa tieneAcceso() para respetar overrides
+      if (userData?.rol !== 'chofer' && !tieneAcceso(userData?.permisos, userData?.rol, 'ruteo')) {
         router.push('/dashboard')
         return
       }

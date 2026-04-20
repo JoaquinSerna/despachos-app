@@ -1,14 +1,16 @@
-// Módulos con control de permisos editor/visualizador
-export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento'] as const
+// Modulos con control de permisos editor/visualizador
+export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota'] as const
 export type Modulo = typeof MODULOS[number]
 
 export const MODULO_LABEL: Record<Modulo, string> = {
   despachos:      'Nueva solicitud de despacho',
   pedidos:        'Listado de pedidos',
-  programacion:   'Programación',
+  programacion:   'Programacion',
   ruteo:          'Ruteo',
   confirmaciones: 'Confirmaciones',
   abastecimiento: 'Abastecimiento',
+  metricas:       'Metricas',
+  flota:          'Flota del dia',
 }
 
 export const MODULO_ICON: Record<Modulo, string> = {
@@ -18,9 +20,11 @@ export const MODULO_ICON: Record<Modulo, string> = {
   ruteo:          '🗺️',
   confirmaciones: '📞',
   abastecimiento: '📦',
+  metricas:       '📊',
+  flota:          '🚛',
 }
 
-// Qué roles pueden EDITAR cada módulo por defecto (sin override de permisos)
+// Que roles pueden EDITAR cada modulo por defecto (sin override de permisos)
 const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
   despachos:      ['gerencia', 'admin_flota', 'ruteador', 'comercial'],
   pedidos:        ['gerencia', 'admin_flota', 'ruteador'],
@@ -28,11 +32,13 @@ const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
   ruteo:          ['gerencia', 'admin_flota', 'ruteador'],
   confirmaciones: ['gerencia', 'admin_flota', 'confirmador'],
   abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
+  metricas:       ['gerencia', 'admin_flota', 'ruteador'],
+  flota:          ['gerencia', 'admin_flota'],
 }
 
 /**
- * Determina si un usuario puede editar un módulo.
- * Si tiene un override explícito en `permisos`, lo usa.
+ * Determina si un usuario puede editar un modulo.
+ * Si tiene un override explicito en `permisos`, lo usa.
  * Si no, cae al default del rol.
  */
 export function puedeEditar(
@@ -47,8 +53,8 @@ export function puedeEditar(
 }
 
 /**
- * Roles que tienen acceso por defecto a cada módulo (editores + visualizadores de base).
- * Si un rol no está aquí pero tiene un override explícito en permisos, igual tiene acceso.
+ * Roles que tienen acceso por defecto a cada modulo (editores + visualizadores de base).
+ * Si un rol no esta aqui pero tiene un override explicito en permisos, igual tiene acceso.
  */
 const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   despachos:      ['gerencia', 'admin_flota', 'ruteador', 'comercial'],
@@ -57,11 +63,13 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   ruteo:          ['gerencia', 'admin_flota', 'ruteador'],
   confirmaciones: ['gerencia', 'admin_flota', 'confirmador'],
   abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
+  metricas:       ['gerencia', 'admin_flota', 'ruteador'],
+  flota:          ['gerencia', 'admin_flota'],
 }
 
 /**
- * Determina si un usuario puede acceder (ver o editar) a un módulo.
- * Accede si su rol tiene acceso por defecto O si tiene un override explícito de permisos.
+ * Determina si un usuario puede acceder (ver o editar) a un modulo.
+ * Accede si su rol tiene acceso por defecto O si tiene un override explicito de permisos.
  */
 export function tieneAcceso(
   permisos: Record<string, string> | null | undefined,

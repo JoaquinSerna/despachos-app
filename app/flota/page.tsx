@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { tieneAcceso } from '../lib/permisos'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -55,8 +56,8 @@ export default function FlotaDia() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
-      if (!['gerencia', 'admin_flota'].includes(data?.rol)) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single()
+      if (!tieneAcceso(data?.permisos, data?.rol, 'flota')) { router.push('/dashboard'); return }
     })
   }, [])
 

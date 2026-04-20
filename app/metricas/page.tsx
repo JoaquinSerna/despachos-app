@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { tieneAcceso } from '../lib/permisos'
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function mesActual() { return new Date().toISOString().slice(0, 7) }
@@ -153,8 +154,8 @@ export default function MetricasPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, sucursal').eq('id', user.id).single()
-      if (!['gerencia', 'admin_flota', 'ruteador'].includes(data?.rol)) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single()
+      if (!tieneAcceso(data?.permisos, data?.rol, 'metricas')) { router.push('/dashboard'); return }
       if (data?.sucursal) {
         setFiltroSucursal(data.sucursal)
         // Recargar con la sucursal del usuario (el useEffect inicial usó '')

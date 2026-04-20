@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { tieneAcceso } from '../lib/permisos'
 
 interface Pedido {
   id: string
@@ -56,11 +57,11 @@ export default function ConfirmacionesPage() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('nombre, rol, sucursal')
+        .select('nombre, rol, permisos, sucursal')
         .eq('id', user.id)
         .single()
 
-      if (!['confirmador', 'gerencia'].includes(userData?.rol)) {
+      if (!tieneAcceso(userData?.permisos, userData?.rol, 'confirmaciones')) {
         router.push('/dashboard')
         return
       }

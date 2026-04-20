@@ -771,8 +771,11 @@ function ProgramacionInner() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
-        if (data) setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
+      supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single().then(({ data }) => {
+        if (!data) return
+        setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
+        // Pre-seleccionar sucursal del usuario si no viene por URL param
+        if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
     })
   }, [])

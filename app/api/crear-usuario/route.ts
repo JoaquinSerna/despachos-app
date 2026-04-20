@@ -55,22 +55,33 @@ export async function POST(req: NextRequest) {
 // PUT - editar usuario
 export async function PUT(req: NextRequest) {
   try {
-    const { id, nombre, email, password, rol, sucursal } = await req.json()
+    const { id, emailAnterior, nombre, email, password, rol, sucursal } = await req.json()
 
-    // Actualizar auth (email y/o password) si se enviaron
+    // Solo actualizar Auth si el email o password cambiaron realmente
+    // (evita disparar triggers/confirmaciones innecesarias que pueden sobreescribir la tabla)
     const authUpdates: Record<string, string> = {}
-    if (email) authUpdates.email = email
     if (password) authUpdates.password = password
+    if (email && email !== emailAnterior) authUpdates.email = email
     if (Object.keys(authUpdates).length > 0) {
       const { error: authError } = await getAdmin().auth.admin.updateUserById(id, authUpdates)
       if (authError) return NextResponse.json({ error: authError.message }, { status: 400 })
     }
 
-    // Actualizar tabla usuarios
-    const dbUpdates: Record<string, string> = { nombre, rol, sucursal: sucursal || 'LP520' }
-    if (email) dbUpdates.email = email
-    const { error } = await getAdmin().from('usuarios').update(dbUpdates).eq('id', id)
+    // Actualizar tabla usuarios — usar .select() para confirmar que realmente se actualizó
+    const dbUpdates: Record<string, any> = {
+      nombre,
+      rol,
+      sucursal: sucursal || null,   // '' → null = "Todas las sucursales"
+    }
+    if (email && email !== emailAnterior) dbUpdates.email = email
+    const { data: updated, error } = await getAdmin()
+      .from('usuarios')
+      .update(dbUpdates)
+      .eq('id', id)
+      .select('id')
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+    if (!updated || updated.length === 0)
+      return NextResponse.json({ error: 'No se encontró el usuario' }, { status: 404 })
 
     return NextResponse.json({ success: true })
   } catch (e: any) {

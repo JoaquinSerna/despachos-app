@@ -173,6 +173,7 @@ export default function UsuariosPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: modal.usuario.id,
+            emailAnterior: modal.usuario.email,
             nombre: form.nombre,
             email: form.email,
             password: form.password || undefined,

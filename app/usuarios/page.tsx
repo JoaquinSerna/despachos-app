@@ -15,6 +15,7 @@ interface Usuario {
   sucursal: string | null
   created_at: string
   permisos?: Record<string, string>
+  activo?: boolean   // columna en DB: activo boolean DEFAULT true NOT NULL
 }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -194,16 +195,18 @@ export default function UsuariosPage() {
     }
   }
 
-  const eliminar = async (u: Usuario) => {
-    if (!confirm(`¿Eliminar al usuario ${u.nombre}? Esta acción no se puede deshacer.`)) return
+  const toggleActivo = async (u: Usuario) => {
+    const nuevoEstado = !(u.activo !== false)  // undefined → true → false
+    const accion = nuevoEstado ? 'activar' : 'inactivar'
+    if (!confirm(`¿${nuevoEstado ? 'Activar' : 'Inactivar'} a ${u.nombre}?`)) return
     const res = await fetch('/api/crear-usuario', {
-      method: 'DELETE',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: u.id }),
+      body: JSON.stringify({ id: u.id, activo: nuevoEstado }),
     })
     const data = await res.json()
     if (data.error) { showToast(data.error, 'err'); return }
-    showToast('Usuario eliminado')
+    showToast(`Usuario ${nuevoEstado ? 'activado' : 'inactivado'}`)
     cargarUsuarios()
   }
 
@@ -461,9 +464,22 @@ export default function UsuariosPage() {
                     u.sucursal?.toLowerCase().includes(q)
                   )
                 })
-                .map((u, i, arr) => (
-                  <tr key={u.id} style={{ borderBottom: i < arr.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
-                    <td className="px-4 py-3 font-medium" style={{ color: '#1a1a1a' }}>{u.nombre}</td>
+                .map((u, i, arr) => {
+                  const estaActivo = u.activo !== false
+                  return (
+                  <tr key={u.id} style={{
+                    borderBottom: i < arr.length - 1 ? '1px solid #f4f4f3' : 'none',
+                    opacity: estaActivo ? 1 : 0.5,
+                  }}>
+                    <td className="px-4 py-3 font-medium" style={{ color: '#1a1a1a' }}>
+                      <div className="flex items-center gap-2">
+                        {u.nombre}
+                        {!estaActivo && (
+                          <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                            style={{ background: '#f4f4f3', color: '#B9BBB7' }}>inactivo</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.email}</td>
                     <td className="px-4 py-3">
                       <span className="text-xs px-2 py-1 rounded-full font-medium"
@@ -489,15 +505,18 @@ export default function UsuariosPage() {
                           style={{ background: '#e8edf8', color: '#254A96' }}>
                           Editar
                         </button>
-                        <button onClick={() => eliminar(u)}
+                        <button onClick={() => toggleActivo(u)}
                           className="text-xs px-2 py-1 rounded-lg"
-                          style={{ background: '#fde8e8', color: '#E52322' }}>
-                          Eliminar
+                          style={estaActivo
+                            ? { background: '#fde8e8', color: '#E52322' }
+                            : { background: '#d1fae5', color: '#065f46' }}>
+                          {estaActivo ? 'Inactivar' : 'Activar'}
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
             </tbody>
           </table>
           {usuarios.length === 0 && !cargando && (

@@ -91,10 +91,24 @@ export async function PUT(req: NextRequest) {
 
 const EMAILS_ADMIN_PERMISOS = ['joaquin.serna3@gmail.com', 'astaffieri@construyoalcosto.com']
 
-// PATCH - actualizar permisos de un usuario (solo admins autorizados)
+// PATCH - actualizar permisos o estado activo/inactivo
 export async function PATCH(req: NextRequest) {
   try {
-    // Verificar que el solicitante es un admin de permisos
+    const { id, permisos, activo } = await req.json()
+    if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
+
+    // Toggle activo/inactivo
+    if (activo !== undefined) {
+      const { error } = await getAdmin().from('usuarios').update({ activo }).eq('id', id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+      // Banear/desbanear en Supabase Auth para bloquear el login
+      const banDuration = activo ? 'none' : '876000h'
+      const { error: authErr } = await getAdmin().auth.admin.updateUserById(id, { ban_duration: banDuration })
+      if (authErr) return NextResponse.json({ error: authErr.message }, { status: 400 })
+      return NextResponse.json({ success: true })
+    }
+
+    // Actualizar permisos (solo admins autorizados)
     const authHeader = req.headers.get('authorization')
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '')
@@ -103,8 +117,6 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
       }
     }
-    const { id, permisos } = await req.json()
-    if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
     const { error } = await getAdmin().from('usuarios').update({ permisos }).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     return NextResponse.json({ success: true })

@@ -122,11 +122,12 @@ export default function PedidosPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUserEmail(user.email ?? '')
-      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
+      supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single().then(({ data }) => {
         if (!tieneAcceso(data?.permisos, data?.rol, 'pedidos')) {
           router.push('/dashboard'); return
         }
         setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))
+        if (data?.sucursal) setFiltroSucursal(data.sucursal)
       })
     })
   }, [])

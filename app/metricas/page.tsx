@@ -153,8 +153,14 @@ export default function MetricasPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, sucursal').eq('id', user.id).single()
       if (!['gerencia', 'admin_flota', 'ruteador'].includes(data?.rol)) { router.push('/dashboard'); return }
+      if (data?.sucursal) {
+        setFiltroSucursal(data.sucursal)
+        // Recargar con la sucursal del usuario (el useEffect inicial usó '')
+        if (vista === 'diaria') cargarDiaria(data.sucursal)
+        else cargarMensual(data.sucursal)
+      }
     })
   }, [])
 

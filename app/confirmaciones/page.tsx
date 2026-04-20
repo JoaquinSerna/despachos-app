@@ -56,7 +56,7 @@ export default function ConfirmacionesPage() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('nombre, rol')
+        .select('nombre, rol, sucursal')
         .eq('id', user.id)
         .single()
 
@@ -67,7 +67,8 @@ export default function ConfirmacionesPage() {
 
       setUsuario(user)
       setNombreUsuario(userData?.nombre ?? user.email ?? '')
-      cargarPedidos()
+      if (userData?.sucursal) setFiltroSucursal(userData.sucursal)
+      cargarPedidos({ sucursal: userData?.sucursal ?? '' })
     })
   }, [])
 

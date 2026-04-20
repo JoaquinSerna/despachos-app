@@ -184,7 +184,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
 
 const BIG_MODES = ['stock', 'separar', 'reprog']
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand, soloVer = false }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -196,6 +196,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onMoverSucursal: (id: string, sucursal: string) => void
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   onNeedsExpand?: (id: string, needs: boolean) => void
+  soloVer?: boolean
 }) {
   const [expandido, setExpandido] = useState(false)
   const [modo, _setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal' | 'stock'>('normal')
@@ -219,9 +220,9 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   const borderColor = esRetiro ? '#0d9488' : pedido.pedido_grande ? '#f59e0b' : esReprogramado ? '#fbbf24' : '#f0f0f0'
   const bgColor = esRetiro ? '#f0fdfa' : pedido.pedido_grande ? '#fffbeb' : 'white'
   return (
-    <div draggable onDragStart={e => onDragStart(e, pedido)}
-      className="rounded-lg p-3 mb-2 cursor-grab active:cursor-grabbing select-none hover:shadow-md transition-shadow"
-      style={{ border: `1px solid ${borderColor}`, background: bgColor }}>
+    <div draggable={!soloVer} onDragStart={e => { if (!soloVer) onDragStart(e, pedido) }}
+      className="rounded-lg p-3 mb-2 select-none hover:shadow-md transition-shadow"
+      style={{ border: `1px solid ${borderColor}`, background: bgColor, cursor: soloVer ? 'default' : 'grab' }}>
       {esRetiro && (
         <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg flex items-center gap-1.5"
           style={{ background: '#ccfbf1', color: '#0f766e' }}>
@@ -240,14 +241,16 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${PAGO_COLOR[pedido.estado_pago] ?? 'bg-gray-100 text-gray-600'}`}>
             {PAGO_LABEL[pedido.estado_pago] ?? pedido.estado_pago}
           </span>
-          <button
-            onMouseDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); setModo('cancelar') }}
-            title="Cancelar pedido"
-            className="w-4 h-4 flex items-center justify-center rounded hover:bg-red-50 transition-colors"
-            style={{ color: '#E52322', fontSize: '10px', lineHeight: 1 }}>
-            ✕
-          </button>
+          {!soloVer && (
+            <button
+              onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); setModo('cancelar') }}
+              title="Cancelar pedido"
+              className="w-4 h-4 flex items-center justify-center rounded hover:bg-red-50 transition-colors"
+              style={{ color: '#E52322', fontSize: '10px', lineHeight: 1 }}>
+              ✕
+            </button>
+          )}
         </div>
       </div>
       <p className="text-xs mb-1.5 leading-tight" style={{ color: '#B9BBB7' }}>{pedido.direccion}</p>
@@ -258,19 +261,23 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             <span className="text-xs" style={{ color: '#B9BBB7' }}>{pedido.volumen_total_m3} pos.</span>
           )}
           {pedido.peso_total_kg != null && (
-            <button onMouseDown={e => e.stopPropagation()}
-              onClick={e => { e.stopPropagation(); setEditPeso(pedido.peso_total_kg ?? 0); setEditPos(pedido.volumen_total_m3 ?? 0); setModo('editar_peso') }}
-              className="text-xs font-semibold hover:underline"
-              style={{ color: '#254A96' }} title="Editar peso y posiciones">
-              {pedido.peso_total_kg} kg ✎
-            </button>
+            soloVer
+              ? <span className="text-xs font-semibold" style={{ color: '#254A96' }}>{pedido.peso_total_kg} kg</span>
+              : <button onMouseDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); setEditPeso(pedido.peso_total_kg ?? 0); setEditPos(pedido.volumen_total_m3 ?? 0); setModo('editar_peso') }}
+                  className="text-xs font-semibold hover:underline"
+                  style={{ color: '#254A96' }} title="Editar peso y posiciones">
+                  {pedido.peso_total_kg} kg ✎
+                </button>
           )}
           {pedido.peso_total_kg == null && (
-            <button onMouseDown={e => e.stopPropagation()}
-              onClick={e => { e.stopPropagation(); setEditPeso(0); setEditPos(0); setModo('editar_peso') }}
-              className="text-xs hover:underline" style={{ color: '#f59e0b' }} title="Ingresar peso y posiciones">
-              ⚠ sin peso ✎
-            </button>
+            soloVer
+              ? <span className="text-xs" style={{ color: '#B9BBB7' }}>sin peso</span>
+              : <button onMouseDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); setEditPeso(0); setEditPos(0); setModo('editar_peso') }}
+                  className="text-xs hover:underline" style={{ color: '#f59e0b' }} title="Ingresar peso y posiciones">
+                  ⚠ sin peso ✎
+                </button>
           )}
         </div>
       </div>
@@ -509,7 +516,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
               className="text-xs px-2 py-1.5 rounded" style={{ background: '#e8edf8', color: '#666' }}>×</button>
           </div>
         </div>
-      ) : (
+      ) : soloVer ? null : (
         <div className="flex items-center gap-2 mt-1.5 flex-wrap">
           <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('vuelta') }}
             className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
@@ -569,22 +576,25 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
       <div className="flex gap-1 flex-wrap mt-1.5">
         {pedido.prioridad && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>⭐ Prioridad</span>}
         {pedido.barrio_cerrado && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#e8edf8', color: '#254A96' }}>🔒 Barrio cerrado</span>}
-        <button onMouseDown={e => e.stopPropagation()}
-          onClick={e => { e.stopPropagation(); onToggleVolcador(pedido.id, !pedido.requiere_volcador) }}
-          className="text-xs px-1.5 py-0.5 rounded font-medium transition-colors"
-          style={pedido.requiere_volcador
-            ? { background: '#fde8e8', color: '#E52322' }
-            : { background: '#f4f4f3', color: '#B9BBB7' }}
-          title={pedido.requiere_volcador ? 'Requiere volcador (click para quitar)' : 'Marcar como requiere volcador'}>
-          🚛 {pedido.requiere_volcador ? 'Volcador' : 'volcador?'}
-        </button>
+        {soloVer
+          ? pedido.requiere_volcador && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>🚛 Volcador</span>
+          : <button onMouseDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); onToggleVolcador(pedido.id, !pedido.requiere_volcador) }}
+              className="text-xs px-1.5 py-0.5 rounded font-medium transition-colors"
+              style={pedido.requiere_volcador
+                ? { background: '#fde8e8', color: '#E52322' }
+                : { background: '#f4f4f3', color: '#B9BBB7' }}
+              title={pedido.requiere_volcador ? 'Requiere volcador (click para quitar)' : 'Marcar como requiere volcador'}>
+              🚛 {pedido.requiere_volcador ? 'Volcador' : 'volcador?'}
+            </button>
+        }
       </div>
       {pedido.notas && <p className="text-xs rounded px-2 py-1 mt-1.5 leading-tight" style={{ background: esReprogramado ? '#fef3c7' : '#fff8e1', color: '#b45309' }}>{pedido.notas}</p>}
     </div>
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -599,6 +609,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onMoverSucursal: (id: string, sucursal: string) => void
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   deposito?: { lat: number; lng: number }
+  soloVer?: boolean
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
   const [manualExpanded, setManualExpanded] = useState(false)
@@ -685,7 +696,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} />)}
       </div>
     </div>
   )
@@ -1268,7 +1279,7 @@ function ProgramacionInner() {
           <div className="flex-1 overflow-y-auto p-4">
             <div className="max-w-2xl mx-auto space-y-2">
               <p className="text-xs mb-3 font-medium" style={{ color: '#B9BBB7' }}>
-                {pedidos.length} pedido{pedidos.length !== 1 ? 's' : ''} sin vuelta asignada — elegí a qué vuelta mandar cada uno
+                {pedidos.length} pedido{pedidos.length !== 1 ? 's' : ''} sin vuelta asignada{puedeEditarProg ? ' — elegí a qué vuelta mandar cada uno' : ''}
               </p>
               {pedidos.map(p => (
                 <div key={p.id} className="bg-white rounded-xl border px-4 py-3 flex items-center gap-4"
@@ -1287,20 +1298,22 @@ function ProgramacionInner() {
                       </p>
                     )}
                   </div>
-                  <div className="flex gap-1 shrink-0">
-                    {[1, 2, 3, 4].map(v => (
-                      <button key={v} onClick={() => handleAsignarVuelta(p.id, v)}
+                  {puedeEditarProg && (
+                    <div className="flex gap-1 shrink-0">
+                      {[1, 2, 3, 4].map(v => (
+                        <button key={v} onClick={() => handleAsignarVuelta(p.id, v)}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
+                          style={{ background: '#e8edf8', color: '#254A96' }}>
+                          V{v}
+                        </button>
+                      ))}
+                      <button onClick={() => handleAsignarVuelta(p.id, 5)}
                         className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
-                        style={{ background: '#e8edf8', color: '#254A96' }}>
-                        V{v}
+                        style={{ background: '#f0f9ff', color: '#0369a1' }}>
+                        DHora
                       </button>
-                    ))}
-                    <button onClick={() => handleAsignarVuelta(p.id, 5)}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
-                      style={{ background: '#f0f9ff', color: '#0369a1' }}>
-                      DHora
-                    </button>
-                  </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -1329,7 +1342,8 @@ function ProgramacionInner() {
                 onToggleVolcador={handleToggleVolcador}
                 onSepararPedido={handleSepararPedido}
                 onMoverSucursal={handleMoverSucursal}
-                onIncidenciaStock={handleIncidenciaStock} />
+                onIncidenciaStock={handleIncidenciaStock}
+                soloVer={!puedeEditarProg} />
             </div>
             <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
             {/* Camiones — scroll horizontal */}
@@ -1351,7 +1365,8 @@ function ProgramacionInner() {
                     onMoverSucursal={handleMoverSucursal}
                     onIncidenciaStock={handleIncidenciaStock}
                     onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
-                    deposito={DEPOSITOS[sucursal]} />
+                    deposito={DEPOSITOS[sucursal]}
+                    soloVer={!puedeEditarProg} />
                 ))}
               </div>
             </div>

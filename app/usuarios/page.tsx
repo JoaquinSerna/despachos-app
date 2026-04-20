@@ -43,6 +43,7 @@ export default function UsuariosPage() {
   const [permisosEdit, setPermisosEdit] = useState<Record<string, string>>({})
   const [guardandoPermisos, setGuardandoPermisos] = useState(false)
   const [esAdminPermisos, setEsAdminPermisos] = useState(false)
+  const [botonPedidosVisible, setBotonPedidosVisible] = useState(true)
 
   // Soporte técnico
   const [contactosSoporte, setContactosSoporte] = useState<SoporteContacto[]>([])
@@ -197,7 +198,7 @@ export default function UsuariosPage() {
 
   const darVisualizacionPedidosComerciales = async () => {
     const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor')
-    if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen acceso a pedidos'); return }
+    if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen acceso a pedidos'); setBotonPedidosVisible(false); return }
     if (!confirm(`¿Dar visualización de pedidos a ${comerciales.length} comerciale${comerciales.length !== 1 ? 's' : ''}?`)) return
     try {
       await Promise.all(comerciales.map(u =>
@@ -208,6 +209,7 @@ export default function UsuariosPage() {
         })
       ))
       showToast(`${comerciales.length} comercial${comerciales.length !== 1 ? 'es' : ''} actualizados`)
+      setBotonPedidosVisible(false)
       cargarUsuarios()
     } catch { showToast('Error al actualizar', 'err') }
   }
@@ -459,7 +461,7 @@ export default function UsuariosPage() {
               className="text-xs px-3 py-1.5 rounded-lg border focus:outline-none w-52"
               style={{ borderColor: '#e8edf8', color: '#1a1a1a' }}
             />
-            {esAdminPermisos && (
+            {botonPedidosVisible && (
               <button onClick={darVisualizacionPedidosComerciales}
                 className="text-xs px-3 py-1.5 rounded-lg font-medium border"
                 style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>

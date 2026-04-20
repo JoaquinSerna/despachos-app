@@ -459,14 +459,7 @@ export default function UsuariosPage() {
               className="text-xs px-3 py-1.5 rounded-lg border focus:outline-none w-52"
               style={{ borderColor: '#e8edf8', color: '#1a1a1a' }}
             />
-            {esAdminPermisos && usuarios.some(u => u.rol === 'comercial' && u.sucursal !== null) && (
-              <button onClick={resetSucursalComerciales}
-                className="text-xs px-3 py-1.5 rounded-lg font-medium border"
-                style={{ borderColor: '#fde68a', color: '#92400e', background: '#fef9c3' }}>
-                🏪 Comerciales → Todas las sucursales
-              </button>
-            )}
-            {esAdminPermisos && usuarios.some(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor') && (
+            {esAdminPermisos && (
               <button onClick={darVisualizacionPedidosComerciales}
                 className="text-xs px-3 py-1.5 rounded-lg font-medium border"
                 style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>

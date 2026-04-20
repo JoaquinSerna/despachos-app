@@ -195,6 +195,23 @@ export default function UsuariosPage() {
     }
   }
 
+  const darVisualizacionPedidosComerciales = async () => {
+    const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor')
+    if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen acceso a pedidos'); return }
+    if (!confirm(`¿Dar visualización de pedidos a ${comerciales.length} comerciale${comerciales.length !== 1 ? 's' : ''}?`)) return
+    try {
+      await Promise.all(comerciales.map(u =>
+        fetch('/api/crear-usuario', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: u.id, permisos: { ...(u.permisos ?? {}), pedidos: 'viewer' } }),
+        })
+      ))
+      showToast(`${comerciales.length} comercial${comerciales.length !== 1 ? 'es' : ''} actualizados`)
+      cargarUsuarios()
+    } catch { showToast('Error al actualizar', 'err') }
+  }
+
   const resetSucursalComerciales = async () => {
     const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.sucursal !== null)
     if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen "Todas las sucursales"'); return }
@@ -447,6 +464,13 @@ export default function UsuariosPage() {
                 className="text-xs px-3 py-1.5 rounded-lg font-medium border"
                 style={{ borderColor: '#fde68a', color: '#92400e', background: '#fef9c3' }}>
                 🏪 Comerciales → Todas las sucursales
+              </button>
+            )}
+            {esAdminPermisos && usuarios.some(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor') && (
+              <button onClick={darVisualizacionPedidosComerciales}
+                className="text-xs px-3 py-1.5 rounded-lg font-medium border"
+                style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>
+                📋 Comerciales → Ver pedidos
               </button>
             )}
             <button onClick={exportarExcel}

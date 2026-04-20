@@ -539,7 +539,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             className="text-xs hover:underline" style={{ color: '#f59e0b' }}>
             📅 reprogramar
           </button>
-          {(pedido.items?.length ?? 0) > 1 && (
+          {(pedido.items?.length ?? 0) > 0 && (
             <>
               <span style={{ color: '#e0e0e0' }}>|</span>
               <button onMouseDown={e => e.stopPropagation()}

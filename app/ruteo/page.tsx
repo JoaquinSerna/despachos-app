@@ -33,6 +33,8 @@ interface CamionDisponible {
   sucursal: string
 }
 
+const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
+
 const VUELTA_LABEL: Record<number, string> = {
   1: '8:00 – 10:00hs',
   2: '10:00 – 12:00hs',
@@ -48,6 +50,7 @@ export default function RuteoPage() {
   const [datosUsuario, setDatosUsuario] = useState<{ nombre: string; rol: string } | null>(null)
   const [camionSeleccionado, setCamionSeleccionado] = useState<string | null>(null)
   const [camionesDisponibles, setCamionesDisponibles] = useState<CamionDisponible[]>([])
+  const [filtroSucursal, setFiltroSucursal] = useState<string>('')
   const [pedidos, setPedidos] = useState<Pedido[]>([])
   const [fecha, setFecha] = useState(hoy())
   const [vueltaActiva, setVueltaActiva] = useState<number | null>(null)
@@ -90,7 +93,7 @@ export default function RuteoPage() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('nombre, rol, camion_codigo, permisos')
+        .select('nombre, rol, camion_codigo, permisos, sucursal')
         .eq('id', user.id)
         .single()
 
@@ -101,6 +104,7 @@ export default function RuteoPage() {
       }
 
       setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer', rol: userData?.rol ?? '' })
+      if (userData?.sucursal) setFiltroSucursal(userData.sucursal)
 
       // Si es chofer, buscar el camión asignado para HOY en flota_dia
       if (userData?.rol === 'chofer') {
@@ -899,37 +903,62 @@ export default function RuteoPage() {
               /* Otros roles: pueden elegir cualquier camión */
               <>
                 <h2 className="font-semibold text-base mb-1" style={{ color: '#254A96' }}>¿Qué camión querés ver?</h2>
-                <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>
+                <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
                   {new Date(fecha + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' })}
                 </p>
+                {/* Filtro por sucursal */}
+                <div className="flex gap-1.5 flex-wrap mb-4">
+                  <button onClick={() => setFiltroSucursal('')}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    style={{ background: filtroSucursal === '' ? '#254A96' : '#e8edf8', color: filtroSucursal === '' ? 'white' : '#254A96' }}>
+                    Todas
+                  </button>
+                  {SUCURSALES.filter(s => camionesDisponibles.some(c => c.sucursal === s)).map(s => (
+                    <button key={s} onClick={() => setFiltroSucursal(s)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      style={{ background: filtroSucursal === s ? '#254A96' : '#e8edf8', color: filtroSucursal === s ? 'white' : '#254A96' }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
                 {camionesDisponibles.length === 0 ? (
                   <div className="text-center py-8" style={{ color: '#B9BBB7' }}>
                     <p className="text-3xl mb-3">🚛</p>
                     <p className="text-sm">No hay camiones con entregas programadas para esta fecha</p>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {camionesDisponibles.map(c => (
-                      <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
-                        className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
-                        style={{ borderColor: '#e8edf8' }}
-                        onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
-                        onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
-                            style={{ background: '#254A96' }}>
-                            🚛
+                ) : (() => {
+                  const filtrados = filtroSucursal
+                    ? camionesDisponibles.filter(c => c.sucursal === filtroSucursal)
+                    : camionesDisponibles
+                  return filtrados.length === 0 ? (
+                    <div className="text-center py-8" style={{ color: '#B9BBB7' }}>
+                      <p className="text-3xl mb-3">🚛</p>
+                      <p className="text-sm">No hay camiones de {filtroSucursal} para esta fecha</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {filtrados.map(c => (
+                        <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
+                          className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
+                          style={{ borderColor: '#e8edf8' }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
+                              style={{ background: '#254A96' }}>
+                              🚛
+                            </div>
+                            <div>
+                              <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
+                              <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
-                            <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
-                          </div>
-                        </div>
-                        <span style={{ color: '#B9BBB7' }}>›</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                          <span style={{ color: '#B9BBB7' }}>›</span>
+                        </button>
+                      ))}
+                    </div>
+                  )
+                })()}
               </>
             )}
           </div>

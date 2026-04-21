@@ -467,6 +467,9 @@ export default function RuteoPage() {
 
       if (data.success) {
         const nuevoEstado = accion === 'rechazar' ? 'rechazado' : 'entregado'
+        const notasNuevas = accion === 'rechazar' && motivoRechazo
+          ? (nota ? `${nota} | ✕ ${motivoRechazo}` : `✕ ${motivoRechazo}`)
+          : (nota || modalPedido.notas)
         showToast(accion === 'rechazar' ? 'Entrega rechazada' : 'Entrega confirmada')
         if (usuario && datosUsuario) {
           await logAuditoria(usuario.id, datosUsuario.nombre,
@@ -477,7 +480,7 @@ export default function RuteoPage() {
             })
         }
         setPedidos(prev => prev.map(p =>
-          p.id === modalPedido.id ? { ...p, estado: nuevoEstado } : p
+          p.id === modalPedido.id ? { ...p, estado: nuevoEstado, notas: notasNuevas ?? p.notas } : p
         ))
         cerrarModal()
       } else {
@@ -1343,9 +1346,9 @@ export default function RuteoPage() {
                                 ⚠️ {pedido.notas}
                               </p>
                             )}
-                            {rechazado && (pedido as any).motivo_rechazo && (
+                            {rechazado && pedido.notas && (
                               <p className="text-xs rounded-lg px-3 py-2" style={{ background: '#fde8e8', color: '#E52322' }}>
-                                ✕ {(pedido as any).motivo_rechazo}
+                                {pedido.notas}
                               </p>
                             )}
                             {!finalizado && (

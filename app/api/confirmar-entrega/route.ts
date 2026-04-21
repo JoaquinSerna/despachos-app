@@ -46,8 +46,12 @@ export async function POST(request: NextRequest) {
 
     // Actualizar estado del pedido
     const updates: Record<string, any> = { estado }
-    if (nota) updates.notas = nota
-    if (estado === 'rechazado' && motivoRechazo) updates.motivo_rechazo = motivoRechazo
+    if (estado === 'rechazado' && motivoRechazo) {
+      // Guardar motivo de rechazo en notas (no existe columna separada)
+      updates.notas = nota ? `${nota} | ✕ ${motivoRechazo}` : `✕ ${motivoRechazo}`
+    } else if (nota) {
+      updates.notas = nota
+    }
 
     const { data: updated, error } = await supabase
       .from('pedidos')

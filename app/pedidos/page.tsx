@@ -6,15 +6,15 @@ import { useRouter } from 'next/navigation'
 import { puedeEditar, tieneAcceso } from '../lib/permisos'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
-const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'cancelado']
+const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado', 'cancelado']
 
 const ESTADO_COLOR: Record<string, string> = {
   pendiente: '#f59e0b', programado: '#3b82f6', en_camino: '#8b5cf6',
-  entregado: '#10b981', cancelado: '#ef4444',
+  entregado: '#10b981', entregado_parcial: '#f59e0b', rechazado: '#ef4444', cancelado: '#9ca3af',
 }
 const ESTADO_LABEL: Record<string, string> = {
   pendiente: 'Pendiente', programado: 'Programado', en_camino: 'En camino',
-  entregado: 'Entregado', cancelado: 'Cancelado',
+  entregado: 'Entregado', entregado_parcial: 'Parcial', rechazado: 'Rechazado', cancelado: 'Cancelado',
 }
 
 const TIPO_COLOR: Record<string, { bg: string; text: string }> = {
@@ -109,6 +109,11 @@ export default function PedidosPage() {
 
   const [puedeEditarPedidos, setPuedeEditarPedidos] = useState(false)
   const [userEmail, setUserEmail] = useState('')
+  const [userRol, setUserRol] = useState('')
+
+  // Modal revertir entrega
+  const [modalRevertir, setModalRevertir] = useState<Pedido | null>(null)
+  const [revertiendo, setRevertiendo] = useState(false)
 
   // Modal solicitar transferencia
   const [modalTransfer, setModalTransfer] = useState<Pedido | null>(null)
@@ -127,6 +132,7 @@ export default function PedidosPage() {
           router.push('/dashboard'); return
         }
         setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))
+        setUserRol(data?.rol ?? '')
         if (data?.sucursal) setFiltroSucursal(data.sucursal)
       })
     })
@@ -315,6 +321,35 @@ export default function PedidosPage() {
     }
   }
 
+  async function revertirEntrega() {
+    if (!modalRevertir) return
+    setRevertiendo(true)
+    const nota = `⚠ Revertido por gerencia el ${new Date().toLocaleDateString('es-AR')}`
+    const notaFinal = modalRevertir.notas ? `${modalRevertir.notas} | ${nota}` : nota
+    const res = await fetch('/api/pedidos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: modalRevertir.id,
+        estado: 'programado',
+        camion_id: modalRevertir.camion_id, // conservar el camión asignado
+        notas: notaFinal,
+      }),
+    })
+    const data = await res.json()
+    if (data.error) {
+      showToast(`Error: ${data.error}`, 'err')
+    } else {
+      setPedidos(prev => prev.map(p => p.id === modalRevertir.id
+        ? { ...p, estado: 'programado', notas: notaFinal }
+        : p
+      ))
+      showToast(`NV ${modalRevertir.nv} revertido a Programado`)
+      setModalRevertir(null)
+    }
+    setRevertiendo(false)
+  }
+
   const COLS = 13 // número de columnas de la tabla para el colspan del detalle
 
   return (
@@ -325,6 +360,39 @@ export default function PedidosPage() {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
           {toast.tipo === 'ok' ? '✓' : '✕'} {toast.msg}
+        </div>
+      )}
+
+      {/* Modal revertir entrega */}
+      {modalRevertir && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm space-y-4" style={{ fontFamily: 'Barlow, sans-serif' }}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0" style={{ background: '#fde8e8' }}>↩</div>
+              <div>
+                <h3 className="font-bold text-sm" style={{ color: '#1a1a1a' }}>Revertir entrega</h3>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                  NV {modalRevertir.nv} · {modalRevertir.cliente}
+                </p>
+              </div>
+            </div>
+            <div className="rounded-xl p-3 text-xs space-y-1" style={{ background: '#fef9c3', color: '#854d0e' }}>
+              <p className="font-semibold">Estado actual: <span className="capitalize">{ESTADO_LABEL[modalRevertir.estado] ?? modalRevertir.estado}</span></p>
+              <p>El pedido volverá a estado <strong>Programado</strong> y quedará visible en Fin del día / Programación.</p>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={revertirEntrega} disabled={revertiendo}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: '#E52322' }}>
+                {revertiendo ? 'Revirtiendo...' : '↩ Confirmar reversión'}
+              </button>
+              <button onClick={() => setModalRevertir(null)}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -684,13 +752,23 @@ export default function PedidosPage() {
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          {puedeEditarPedidos && (
-                            <button onClick={() => iniciarEdicion(p)}
-                              className="text-xs px-2.5 py-1 rounded-lg font-medium"
-                              style={{ background: '#f4f4f3', color: '#254A96' }}>
-                              ✏️
-                            </button>
-                          )}
+                          <div className="flex gap-1.5 items-center">
+                            {puedeEditarPedidos && (
+                              <button onClick={() => iniciarEdicion(p)}
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                style={{ background: '#f4f4f3', color: '#254A96' }}>
+                                ✏️
+                              </button>
+                            )}
+                            {userRol === 'gerencia' && (p.estado === 'entregado' || p.estado === 'rechazado' || p.estado === 'entregado_parcial') && (
+                              <button onClick={() => setModalRevertir(p)}
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                style={{ background: '#fde8e8', color: '#E52322' }}
+                                title="Revertir entrega">
+                                ↩
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
 

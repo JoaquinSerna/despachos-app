@@ -66,39 +66,39 @@ export async function POST(request: NextRequest) {
       notas: notaFinal,
     }).eq('id', pedidoId)
 
-    // Create saldo pedido with pending items
+    // Create saldo pedido (always, even when items_pendientes is empty)
     let saldoId: string | null = null
-    if (itemsPendientes.length > 0) {
-      const { data: nuevoPedido, error: insertErr } = await admin
-        .from('pedidos')
-        .insert({
-          nv: original.nv,
-          id_despacho: original.id_despacho,
-          cliente: original.cliente,
-          direccion: original.direccion,
-          sucursal: original.sucursal,
-          fecha_entrega: original.fecha_entrega,
-          vuelta: original.vuelta,
-          estado: 'programado',
-          camion_id: null,
-          telefono: original.telefono,
-          tipo: original.tipo,
-          latitud: original.latitud,
-          longitud: original.longitud,
-          barrio_cerrado: original.barrio_cerrado,
-          requiere_volcador: original.requiere_volcador,
-          prioridad: true,
-          notas: `📦 Saldo parcial — NV ${original.nv}`,
-          estado_pago: original.estado_pago,
-          volumen_total_m3: null,
-          peso_total_kg: null,
-          pedido_grande: false,
-        })
-        .select('id')
-        .single()
+    const { data: nuevoPedido, error: insertErr } = await admin
+      .from('pedidos')
+      .insert({
+        nv: original.nv,
+        id_despacho: original.id_despacho,
+        cliente: original.cliente,
+        direccion: original.direccion,
+        sucursal: original.sucursal,
+        fecha_entrega: original.fecha_entrega,
+        vuelta: original.vuelta,
+        estado: 'programado',
+        camion_id: null,
+        telefono: original.telefono,
+        tipo: original.tipo,
+        latitud: original.latitud,
+        longitud: original.longitud,
+        barrio_cerrado: original.barrio_cerrado,
+        requiere_volcador: original.requiere_volcador,
+        prioridad: true,
+        notas: `📦 Saldo parcial — NV ${original.nv}`,
+        estado_pago: original.estado_pago,
+        volumen_total_m3: null,
+        peso_total_kg: null,
+        pedido_grande: false,
+      })
+      .select('id')
+      .single()
 
-      if (!insertErr && nuevoPedido) {
-        saldoId = nuevoPedido.id
+    if (!insertErr && nuevoPedido) {
+      saldoId = nuevoPedido.id
+      if (itemsPendientes.length > 0) {
         await admin.from('pedido_items').insert(
           itemsPendientes.map(item => ({
             pedido_id: nuevoPedido.id,

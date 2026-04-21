@@ -416,7 +416,8 @@ export default function RuteoPage() {
     const itemsPendientes = items
       .map((item, i) => ({ ...item, cantidad: item.cantidad - (cantEntregadas[i] ?? item.cantidad) }))
       .filter(item => item.cantidad > 0)
-    if (itemsPendientes.length === 0) { setErrorParcial('No hay saldo pendiente. Usá "✓ Confirmar" normal.'); return }
+    // Solo bloquear si hay items registrados pero ninguno quedó pendiente
+    if (items.length > 0 && itemsPendientes.length === 0) { setErrorParcial('No hay saldo pendiente. Usá "✓ Confirmar" normal.'); return }
     setErrorParcial(''); setConfirmandoParcial(true)
     try {
       const formData = new FormData()
@@ -812,7 +813,7 @@ export default function RuteoPage() {
       {modalPedido && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
           style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#254A96' }}>Registrar entrega</h3>
@@ -929,30 +930,36 @@ export default function RuteoPage() {
             {/* Cantidades por item */}
             <div>
               <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>¿Cuánto entregaste?</p>
-              <div className="space-y-2">
-                {(modalParcial.items ?? []).map((item, i) => {
-                  const entregado = cantEntregadas[i] ?? item.cantidad
-                  const pendiente = item.cantidad - entregado
-                  return (
-                    <div key={i} className="rounded-xl p-3 border"
-                      style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
-                      <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
-                      <div className="flex items-center gap-3">
-                        <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? item.cantidad) - 1) }))}
-                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
-                          style={{ background: '#f4f4f3', color: '#666' }}>−</button>
-                        <span className="text-sm font-semibold flex-1 text-center" style={{ color: '#254A96' }}>
-                          {entregado} / {item.cantidad} {item.unidad}
-                        </span>
-                        <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.min(item.cantidad, (prev[i] ?? item.cantidad) + 1) }))}
-                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
-                          style={{ background: '#f4f4f3', color: '#666' }}>+</button>
-                        {pendiente > 0 && <span className="text-xs shrink-0" style={{ color: '#b45309' }}>Saldo: {pendiente}</span>}
+              {(modalParcial.items ?? []).length === 0 ? (
+                <div className="rounded-xl p-3 border text-xs" style={{ borderColor: '#e8edf8', color: '#B9BBB7', background: '#f9f9f9' }}>
+                  Este pedido no tiene items registrados. Indicá el motivo y adjuntá foto.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(modalParcial.items ?? []).map((item, i) => {
+                    const entregado = cantEntregadas[i] ?? item.cantidad
+                    const pendiente = item.cantidad - entregado
+                    return (
+                      <div key={i} className="rounded-xl p-3 border"
+                        style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
+                        <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                        <div className="flex items-center gap-3">
+                          <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? item.cantidad) - 1) }))}
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                            style={{ background: '#f4f4f3', color: '#666' }}>−</button>
+                          <span className="text-sm font-semibold flex-1 text-center" style={{ color: '#254A96' }}>
+                            {entregado} / {item.cantidad} {item.unidad}
+                          </span>
+                          <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.min(item.cantidad, (prev[i] ?? item.cantidad) + 1) }))}
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                            style={{ background: '#f4f4f3', color: '#666' }}>+</button>
+                          {pendiente > 0 && <span className="text-xs shrink-0" style={{ color: '#b45309' }}>Saldo: {pendiente}</span>}
+                        </div>
                       </div>
-                    </div>
-                  )
-                })}
-              </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Motivo obligatorio */}
@@ -1355,13 +1362,11 @@ export default function RuteoPage() {
                                     ✓ Confirmar
                                   </button>
                                 </div>
-                                {(pedido.items ?? []).length > 0 && (
-                                  <button onClick={() => abrirModalParcial(pedido)}
-                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-                                    style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }}>
-                                    📦 Entrega parcial
-                                  </button>
-                                )}
+                                <button onClick={() => abrirModalParcial(pedido)}
+                                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+                                  style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }}>
+                                  📦 Entrega parcial
+                                </button>
                               </div>
                             )}
                             {finalizado && pedido.notas && (

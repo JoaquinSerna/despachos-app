@@ -145,7 +145,13 @@ export default function FinDelDiaPage() {
                       <input type="checkbox" checked={seleccionados.has(p.id)} onChange={() => toggleSeleccion(p.id)}
                         className="w-4 h-4 shrink-0 accent-blue-700" />
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                          {p.notas?.startsWith('📦 Saldo parcial') && (
+                            <span className="text-xs px-1.5 py-0.5 rounded font-medium shrink-0"
+                              style={{ background: '#fef3c7', color: '#b45309' }}>📦 Saldo</span>
+                          )}
+                        </div>
                         <p className="text-xs truncate" style={{ color: '#B9BBB7' }}>{p.direccion}</p>
                         {p.peso_total_kg && <p className="text-xs font-medium" style={{ color: '#254A96' }}>{p.peso_total_kg} kg</p>}
                       </div>

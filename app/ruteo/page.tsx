@@ -80,6 +80,15 @@ export default function RuteoPage() {
   const [errorModal, setErrorModal] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // Entrega parcial
+  const [modalParcial, setModalParcial] = useState<Pedido | null>(null)
+  const [cantEntregadas, setCantEntregadas] = useState<Record<number, number>>({})
+  const [notaParcial, setNotaParcial] = useState('')
+  const [fotosParcial, setFotosParcial] = useState<{ file: File; preview: string; label: string }[]>([])
+  const [confirmandoParcial, setConfirmandoParcial] = useState(false)
+  const [errorParcial, setErrorParcial] = useState('')
+  const fileRefParcial = useRef<HTMLInputElement>(null)
+
   const LABELS_FOTO = ['Remito', 'Material en puerta', 'Daño / Roto', 'Otro']
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
@@ -165,7 +174,24 @@ export default function RuteoPage() {
       .in('codigo', codigos)
       .order('codigo')
 
-    setCamionesDisponibles(camionesData ?? [])
+    // Prefer flota_dia.sucursal (per-day assignment) over camiones_flota.sucursal (base)
+    const { data: flotaDiaData } = await supabase
+      .from('flota_dia')
+      .select('camion_codigo, sucursal')
+      .eq('fecha', fecha)
+      .in('camion_codigo', codigos)
+
+    const flotaDiaSuc: Record<string, string> = {}
+    for (const fd of (flotaDiaData ?? [])) {
+      if (fd.sucursal) flotaDiaSuc[fd.camion_codigo] = fd.sucursal
+    }
+
+    const camiones = (camionesData ?? []).map(c => ({
+      ...c,
+      sucursal: flotaDiaSuc[c.codigo] || c.sucursal,
+    }))
+
+    setCamionesDisponibles(camiones)
   }
 
   const cargarInfoRuta = async () => {
@@ -363,6 +389,58 @@ export default function RuteoPage() {
     setAccionModal('entregar'); setMotivoRechazo(''); setErrorModal('')
   }
 
+  const abrirModalParcial = (pedido: Pedido) => {
+    setModalParcial(pedido)
+    const init: Record<number, number> = {}
+    ;(pedido.items ?? []).forEach((item, i) => { init[i] = item.cantidad })
+    setCantEntregadas(init)
+    setNotaParcial(''); setFotosParcial([]); setErrorParcial('')
+  }
+
+  const handleFotoParcial = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    files.forEach(file => {
+      const reader = new FileReader()
+      reader.onload = () => setFotosParcial(prev => [...prev, { file, preview: reader.result as string, label: 'Material en puerta' }])
+      reader.readAsDataURL(file)
+    })
+    if (fileRefParcial.current) fileRefParcial.current.value = ''
+  }
+
+  const confirmarParcial = async () => {
+    if (!modalParcial) return
+    if (fotosParcial.length === 0) { setErrorParcial('Necesitás agregar al menos una foto.'); return }
+    if (!notaParcial.trim()) { setErrorParcial('Ingresá el motivo de la entrega parcial.'); return }
+    const items = modalParcial.items ?? []
+    const itemsPendientes = items
+      .map((item, i) => ({ ...item, cantidad: item.cantidad - (cantEntregadas[i] ?? item.cantidad) }))
+      .filter(item => item.cantidad > 0)
+    if (itemsPendientes.length === 0) { setErrorParcial('No hay saldo pendiente. Usá "✓ Confirmar" normal.'); return }
+    setErrorParcial(''); setConfirmandoParcial(true)
+    try {
+      const formData = new FormData()
+      formData.append('pedido_id', modalParcial.id)
+      formData.append('items_pendientes', JSON.stringify(itemsPendientes))
+      formData.append('nota', notaParcial.trim())
+      for (let i = 0; i < fotosParcial.length; i++) {
+        const blob = await comprimirFoto(fotosParcial[i].file)
+        formData.append(`foto_${i}`, blob, `foto_${i}.jpg`)
+        formData.append(`label_${i}`, fotosParcial[i].label)
+      }
+      const res = await fetch('/api/entrega-parcial', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (data.success) {
+        setPedidos(prev => prev.map(p => p.id === modalParcial.id ? { ...p, estado: 'entregado_parcial' } : p))
+        showToast('Entrega parcial registrada')
+        setModalParcial(null); setCantEntregadas({}); setNotaParcial(''); setFotosParcial([])
+      } else {
+        setErrorParcial(data.error ?? 'Error al guardar')
+      }
+    } catch (e: any) { setErrorParcial(e.message ?? 'Error al guardar') }
+    setConfirmandoParcial(false)
+  }
+
   const confirmarEntrega = async (accion: 'entregar' | 'rechazar') => {
     if (!modalPedido) return
     if (fotos.length === 0) { setErrorModal('Necesitás agregar al menos una foto antes de continuar.'); return }
@@ -412,7 +490,7 @@ export default function RuteoPage() {
 
   const pedidosVuelta = pedidos.filter(p => p.vuelta === vueltaActiva)
   const vueltas = [...new Set(pedidos.map(p => p.vuelta))].sort()
-  const finalizadosVuelta = pedidosVuelta.filter(p => p.estado === 'entregado' || p.estado === 'rechazado').length
+  const finalizadosVuelta = pedidosVuelta.filter(p => ['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado)).length
   const entregadosVuelta = finalizadosVuelta
   const totalVuelta = pedidosVuelta.length
 
@@ -835,6 +913,106 @@ export default function RuteoPage() {
         </div>
       )}
 
+      {/* Modal entrega parcial */}
+      {modalParcial && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#b45309' }}>📦 Entrega parcial</h3>
+                <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{modalParcial.cliente}</p>
+              </div>
+              <button onClick={() => setModalParcial(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+
+            {/* Cantidades por item */}
+            <div>
+              <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>¿Cuánto entregaste?</p>
+              <div className="space-y-2">
+                {(modalParcial.items ?? []).map((item, i) => {
+                  const entregado = cantEntregadas[i] ?? item.cantidad
+                  const pendiente = item.cantidad - entregado
+                  return (
+                    <div key={i} className="rounded-xl p-3 border"
+                      style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
+                      <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                      <div className="flex items-center gap-3">
+                        <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? item.cantidad) - 1) }))}
+                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                          style={{ background: '#f4f4f3', color: '#666' }}>−</button>
+                        <span className="text-sm font-semibold flex-1 text-center" style={{ color: '#254A96' }}>
+                          {entregado} / {item.cantidad} {item.unidad}
+                        </span>
+                        <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.min(item.cantidad, (prev[i] ?? item.cantidad) + 1) }))}
+                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                          style={{ background: '#f4f4f3', color: '#666' }}>+</button>
+                        {pendiente > 0 && <span className="text-xs shrink-0" style={{ color: '#b45309' }}>Saldo: {pendiente}</span>}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Motivo obligatorio */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#b45309' }}>
+                Motivo <span style={{ color: '#E52322' }}>*</span>
+              </label>
+              <textarea value={notaParcial} onChange={e => setNotaParcial(e.target.value)} rows={2}
+                className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                style={{ borderColor: '#fbbf24' }}
+                placeholder="Ej: No había espacio en obra, cliente aceptó solo parte..." />
+            </div>
+
+            {/* Foto obligatoria */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                Foto <span style={{ color: '#E52322' }}>*</span>
+              </label>
+              {fotosParcial.length > 0 && (
+                <div className="space-y-2 mb-2">
+                  {fotosParcial.map((f, idx) => (
+                    <div key={idx} className="flex gap-2 items-center rounded-xl p-2" style={{ background: '#f8faff', border: '1px solid #e8edf8' }}>
+                      <img src={f.preview} alt="" className="w-14 h-14 object-cover rounded-lg flex-shrink-0" />
+                      <p className="text-xs flex-1 truncate" style={{ color: '#B9BBB7' }}>{f.file.name}</p>
+                      <button onClick={() => setFotosParcial(prev => prev.filter((_, j) => j !== idx))}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                        style={{ background: '#E52322' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => fileRefParcial.current?.click()}
+                className="w-full border-2 border-dashed rounded-xl py-4 text-center"
+                style={{ borderColor: fotosParcial.length === 0 ? '#fca5a5' : '#e8edf8' }}>
+                <p className="text-xl mb-0.5">📷</p>
+                <p className="text-xs" style={{ color: fotosParcial.length === 0 ? '#E52322' : '#B9BBB7' }}>
+                  {fotosParcial.length === 0 ? 'Foto requerida' : '+ Agregar otra'}
+                </p>
+              </button>
+              <input ref={fileRefParcial} type="file" accept="image/*" capture="environment"
+                multiple onChange={handleFotoParcial} className="hidden" />
+            </div>
+
+            {errorParcial && (
+              <div className="rounded-xl px-4 py-3 text-sm font-medium"
+                style={{ background: '#fde8e8', color: '#E52322', border: '1px solid #fca5a5' }}>
+                ⚠️ {errorParcial}
+              </div>
+            )}
+
+            <button onClick={confirmarParcial}
+              disabled={confirmandoParcial || fotosParcial.length === 0 || !notaParcial.trim()}
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+              style={{ background: '#f59e0b' }}>
+              {confirmandoParcial ? 'Guardando...' : '📦 Guardar entrega parcial'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
@@ -1072,7 +1250,7 @@ export default function RuteoPage() {
                 )}
 
                 {/* Botón recorrido completo */}
-                {pedidosVuelta.filter(p => p.estado !== 'entregado' && p.estado !== 'rechazado' && p.latitud && p.longitud).length > 0 && (
+                {pedidosVuelta.filter(p => !['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado) && p.latitud && p.longitud).length > 0 && (
                   <button onClick={abrirRecorridoCompleto}
                     className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold mb-4"
                     style={{ background: '#254A96', color: 'white' }}>
@@ -1091,18 +1269,19 @@ export default function RuteoPage() {
                     {pedidosVuelta.map((pedido, idx) => {
                       const entregado = pedido.estado === 'entregado'
                       const rechazado = pedido.estado === 'rechazado'
-                      const finalizado = entregado || rechazado
+                      const parcial = pedido.estado === 'entregado_parcial'
+                      const finalizado = entregado || rechazado || parcial
                       const esRetiro = pedido.tipo === 'retiro'
                       return (
                         <div key={pedido.id}
                           className="rounded-xl shadow-sm overflow-hidden"
-                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : esRetiro ? '#99f6e4' : '#f0f0f0'}`, background: esRetiro ? '#f0fdfa' : 'white' }}>
+                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : parcial ? '#fef3c7' : esRetiro ? '#99f6e4' : '#f0f0f0'}`, background: esRetiro ? '#f0fdfa' : 'white' }}>
                           <div className="px-4 py-3 flex items-center justify-between"
-                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : esRetiro ? '#ccfbf1' : 'white', borderBottom: '1px solid #f4f4f3' }}>
+                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : parcial ? '#fffbeb' : esRetiro ? '#ccfbf1' : 'white', borderBottom: '1px solid #f4f4f3' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : esRetiro ? '#0d9488' : '#254A96' }}>
-                                {entregado ? '✓' : rechazado ? '✕' : esRetiro ? '🔄' : (pedido.orden_entrega ?? idx + 1)}
+                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : parcial ? '#f59e0b' : esRetiro ? '#0d9488' : '#254A96' }}>
+                                {entregado ? '✓' : rechazado ? '✕' : parcial ? '½' : esRetiro ? '🔄' : (pedido.orden_entrega ?? idx + 1)}
                               </div>
                               <div>
                                 <div className="flex items-center gap-1.5">
@@ -1113,8 +1292,8 @@ export default function RuteoPage() {
                               </div>
                             </div>
                             <span className="text-xs px-2 py-1 rounded-full font-medium"
-                              style={entregado ? { background: '#d1fae5', color: '#065f46' } : rechazado ? { background: '#fde8e8', color: '#E52322' } : { background: '#e8edf8', color: '#254A96' }}>
-                              {entregado ? 'Completado' : rechazado ? 'Rechazado' : 'Pendiente'}
+                              style={entregado ? { background: '#d1fae5', color: '#065f46' } : rechazado ? { background: '#fde8e8', color: '#E52322' } : parcial ? { background: '#fef3c7', color: '#b45309' } : { background: '#e8edf8', color: '#254A96' }}>
+                              {entregado ? 'Completado' : rechazado ? 'Rechazado' : parcial ? 'Parcial' : 'Pendiente'}
                             </span>
                           </div>
                           <div className="px-4 py-3 space-y-3">
@@ -1128,6 +1307,20 @@ export default function RuteoPage() {
                               <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{esRetiro ? 'Lugar de retiro' : 'Dirección'}</p>
                               <p className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{pedido.direccion}</p>
                             </div>
+                            {pedido.telefono && !finalizado && (
+                              <div className="flex gap-2">
+                                <a href={`tel:${pedido.telefono}`}
+                                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium border"
+                                  style={{ borderColor: '#e8edf8', color: '#254A96', background: '#f9f9f9' }}>
+                                  📞 {pedido.telefono}
+                                </a>
+                                <a href={`https://wa.me/${pedido.telefono.replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer"
+                                  className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium"
+                                  style={{ background: '#dcfce7', color: '#166534' }}>
+                                  💬 WA
+                                </a>
+                              </div>
+                            )}
                             {pedido.items && pedido.items.length > 0 && (
                               <div className="rounded-lg p-2.5 space-y-1" style={{ background: '#f4f4f3' }}>
                                 {pedido.items.map((item, i) => (
@@ -1149,17 +1342,26 @@ export default function RuteoPage() {
                               </p>
                             )}
                             {!finalizado && (
-                              <div className="flex gap-2 pt-1">
-                                <button onClick={() => abrirMaps(pedido)}
-                                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border"
-                                  style={{ borderColor: '#e8edf8', color: '#254A96', background: '#f9f9f9' }}>
-                                  🗺️ Abrir Maps
-                                </button>
-                                <button onClick={() => setModalPedido(pedido)}
-                                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white"
-                                  style={{ background: '#254A96' }}>
-                                  ✓ Confirmar
-                                </button>
+                              <div className="space-y-2 pt-1">
+                                <div className="flex gap-2">
+                                  <button onClick={() => abrirMaps(pedido)}
+                                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border"
+                                    style={{ borderColor: '#e8edf8', color: '#254A96', background: '#f9f9f9' }}>
+                                    🗺️ Maps
+                                  </button>
+                                  <button onClick={() => setModalPedido(pedido)}
+                                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white"
+                                    style={{ background: '#254A96' }}>
+                                    ✓ Confirmar
+                                  </button>
+                                </div>
+                                {(pedido.items ?? []).length > 0 && (
+                                  <button onClick={() => abrirModalParcial(pedido)}
+                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+                                    style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }}>
+                                    📦 Entrega parcial
+                                  </button>
+                                )}
                               </div>
                             )}
                             {finalizado && pedido.notas && (

@@ -46,6 +46,7 @@ export function puedeEditar(
   rol: string,
   modulo: Modulo
 ): boolean {
+  if (permisos && permisos[modulo] === 'none') return false
   if (permisos && modulo in permisos) {
     return permisos[modulo] === 'editor'
   }
@@ -70,12 +71,14 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
 /**
  * Determina si un usuario puede acceder (ver o editar) a un modulo.
  * Accede si su rol tiene acceso por defecto O si tiene un override explicito de permisos.
+ * Un override 'none' siempre bloquea el acceso, incluso si el rol lo tendría por default.
  */
 export function tieneAcceso(
   permisos: Record<string, string> | null | undefined,
   rol: string,
   modulo: Modulo
 ): boolean {
+  if (permisos && permisos[modulo] === 'none') return false
   if (ROL_ACCESO_DEFAULT[modulo]?.includes(rol)) return true
   if (permisos && modulo in permisos) return true
   return false

@@ -407,6 +407,16 @@ export default function UsuariosPage() {
                         }}>
                         👁️ Ver
                       </button>
+                      <button
+                        onClick={() => togglePermiso(modulo, 'none')}
+                        className="text-xs px-2.5 py-1.5 rounded-lg font-medium transition-colors"
+                        style={{
+                          background: override === 'none' ? '#E52322' : '#f4f4f3',
+                          color: override === 'none' ? 'white' : '#ccc',
+                        }}
+                        title="Sin acceso — bloquea incluso si el rol lo tiene por default">
+                        🚫
+                      </button>
                       {!esDefault && (
                         <button onClick={() => resetPermiso(modulo)}
                           className="text-xs px-2 py-1.5 rounded-lg"

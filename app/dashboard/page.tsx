@@ -185,6 +185,8 @@ export default function Dashboard() {
   const HREF_A_MODULO: Record<string, string> = {
     '/despachos': 'despachos', '/pedidos': 'pedidos', '/programacion': 'programacion',
     '/ruteo': 'ruteo', '/confirmaciones': 'confirmaciones', '/abastecimiento': 'abastecimiento',
+    '/metricas': 'metricas', '/flota': 'flota', '/flota-base': 'flota-base',
+    '/fin-del-dia': 'fin-del-dia', '/usuarios': 'usuarios', '/ayuda': 'ayuda',
   }
   const cards = TODAS_LAS_CARDS.filter(c => {
     if (!rolUsuario) return true

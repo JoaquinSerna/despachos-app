@@ -1,5 +1,5 @@
 // Modulos con control de permisos editor/visualizador
-export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota'] as const
+export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia'] as const
 export type Modulo = typeof MODULOS[number]
 
 export const MODULO_LABEL: Record<Modulo, string> = {
@@ -11,6 +11,8 @@ export const MODULO_LABEL: Record<Modulo, string> = {
   abastecimiento: 'Abastecimiento',
   metricas:       'Metricas',
   flota:          'Flota del dia',
+  'flota-base':   'Flota base',
+  'fin-del-dia':  'Fin del dia',
 }
 
 export const MODULO_ICON: Record<Modulo, string> = {
@@ -22,6 +24,8 @@ export const MODULO_ICON: Record<Modulo, string> = {
   abastecimiento: '📦',
   metricas:       '📊',
   flota:          '🚛',
+  'flota-base':   '⚙️',
+  'fin-del-dia':  '🌙',
 }
 
 // Que roles pueden EDITAR cada modulo por defecto (sin override de permisos)
@@ -34,6 +38,8 @@ const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
   abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
   metricas:       ['gerencia', 'admin_flota', 'ruteador'],
   flota:          ['gerencia', 'admin_flota'],
+  'flota-base':   ['gerencia', 'admin_flota'],
+  'fin-del-dia':  ['gerencia', 'admin_flota', 'ruteador'],
 }
 
 /**
@@ -66,6 +72,8 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
   metricas:       ['gerencia', 'admin_flota', 'ruteador'],
   flota:          ['gerencia', 'admin_flota'],
+  'flota-base':   ['gerencia', 'admin_flota'],
+  'fin-del-dia':  ['gerencia', 'admin_flota', 'ruteador'],
 }
 
 /**

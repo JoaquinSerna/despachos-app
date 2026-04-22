@@ -89,15 +89,13 @@ export async function PUT(req: NextRequest) {
   }
 }
 
-const EMAILS_ADMIN_PERMISOS = ['joaquin.serna3@gmail.com', 'astaffieri@construyoalcosto.com']
-
 // PATCH - actualizar permisos o estado activo/inactivo
 export async function PATCH(req: NextRequest) {
   try {
     const { id, permisos, activo } = await req.json()
     if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
 
-    // Toggle activo/inactivo
+    // Toggle activo/inactivo (no requiere verificacion de rol extra)
     if (activo !== undefined) {
       const { error } = await getAdmin().from('usuarios').update({ activo }).eq('id', id)
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
@@ -108,13 +106,15 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true })
     }
 
-    // Actualizar permisos (solo admins autorizados)
+    // Actualizar permisos — verificar que el caller sea gerencia
     const authHeader = req.headers.get('authorization')
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '')
       const { data: { user } } = await getAdmin().auth.getUser(token)
-      if (!user || !EMAILS_ADMIN_PERMISOS.includes(user.email ?? '')) {
-        return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+      if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
+      const { data: userRow } = await getAdmin().from('usuarios').select('rol').eq('id', user.id).single()
+      if (!userRow || userRow.rol !== 'gerencia') {
+        return NextResponse.json({ error: 'No autorizado — se requiere rol gerencia' }, { status: 403 })
       }
     }
     const { error } = await getAdmin().from('usuarios').update({ permisos }).eq('id', id)

@@ -109,7 +109,7 @@ export default function UsuariosPage() {
     setModalPermisos(u)
   }
 
-  const togglePermiso = (modulo: string, nivel: 'editor' | 'viewer') => {
+  const togglePermiso = (modulo: string, nivel: 'editor' | 'viewer' | 'none') => {
     setPermisosEdit(prev => ({ ...prev, [modulo]: nivel }))
   }
 

@@ -188,10 +188,12 @@ export default function Dashboard() {
   }
   const cards = TODAS_LAS_CARDS.filter(c => {
     if (!rolUsuario) return true
+    const modulo = HREF_A_MODULO[c.href]
+    // 'none' bloquea siempre, incluso si el rol lo tendría por default
+    if (modulo && permisosUsuario?.[modulo] === 'none') return false
     // Acceso por rol por defecto
     if (c.roles.includes(rolUsuario)) return true
     // Acceso por permiso individual (editor o viewer)
-    const modulo = HREF_A_MODULO[c.href]
     if (modulo && permisosUsuario?.[modulo]) return true
     return false
   })

@@ -9,8 +9,10 @@ const barlow = Barlow({
   display: "swap",
 });
 
+const envName = process.env.NEXT_PUBLIC_ENV_NAME
+
 export const metadata: Metadata = {
-  title: "Despachos — CAC",
+  title: envName ? `Despachos — CAC [${envName}]` : "Despachos — CAC",
   description: "Sistema de gestión de despachos y entregas",
 };
 

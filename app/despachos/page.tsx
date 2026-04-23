@@ -857,14 +857,6 @@ export default function NuevoDespacho() {
                     <option value="fuera_prog">Pedido fuera de programación</option>
                   </select>
 
-                  {/* Aviso flota sin revisar */}
-                  {flotaSinRevisar && form.fecha_entrega && form.sucursal && (
-                    <div className="mt-2 rounded-xl px-4 py-3 text-xs leading-relaxed"
-                      style={{ background: '#fef3c7', border: '1px solid #fde68a', color: '#92400e' }}>
-                      ⚠️ <strong>Flota sin revisar</strong> — Los cupos son estimados en base a la flota habitual. El admin de flota todavía no confirmó el día.
-                    </div>
-                  )}
-
                   {/* Aviso todas las vueltas cerradas */}
                   {vueltasCerradas.length === FRANJAS.length && form.fecha_entrega && (
                     <div className="mt-2 rounded-xl px-4 py-3 text-xs leading-relaxed"

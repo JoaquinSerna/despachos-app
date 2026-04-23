@@ -101,6 +101,8 @@ interface ResumenFlota {
   sucursales: string[]
   choferes: number
   ultimaModif: string | null
+  revisado: boolean
+  sinConfigurar: boolean  // true = no existe en flota_dia, usa flota base
 }
 
 function VistaLista({ onEditar, onVolver, showToast }: {
@@ -119,27 +121,24 @@ function VistaLista({ onEditar, onVolver, showToast }: {
     setLoading(true)
     const { data, error } = await supabase
       .from('flota_dia')
-      .select('fecha, activo, sucursal, chofer_id, updated_at')
+      .select('fecha, activo, sucursal, chofer_id, updated_at, revisado')
       .order('fecha', { ascending: false })
 
     if (error) { showToast('Error al cargar flotas', 'err'); setLoading(false); return }
 
     // Agrupar por fecha
-    const porFecha: Record<string, typeof data> = {}
+    const porFecha: Record<string, any[]> = {}
     ;(data ?? []).forEach((row: any) => {
       if (!porFecha[row.fecha]) porFecha[row.fecha] = []
       porFecha[row.fecha].push(row)
     })
 
-    const resumen: ResumenFlota[] = Object.entries(porFecha).map(([fecha, rows]) => {
+    const resumenExistente: ResumenFlota[] = Object.entries(porFecha).map(([fecha, rows]) => {
       const activos = rows.filter((r: any) => r.activo && r.sucursal !== 'Fuera de servicio')
       const sucursalesSet = new Set(activos.map((r: any) => r.sucursal).filter(Boolean))
       const choferes = rows.filter((r: any) => r.chofer_id).length
-      const ultimaModif = rows
-        .map((r: any) => r.updated_at)
-        .filter(Boolean)
-        .sort()
-        .at(-1) ?? null
+      const ultimaModif = rows.map((r: any) => r.updated_at).filter(Boolean).sort().at(-1) ?? null
+      const revisado = rows.every((r: any) => r.revisado === true)
       return {
         fecha,
         totalCamiones: rows.length,
@@ -147,10 +146,35 @@ function VistaLista({ onEditar, onVolver, showToast }: {
         sucursales: [...sucursalesSet],
         choferes,
         ultimaModif,
+        revisado,
+        sinConfigurar: false,
       }
     })
 
-    setFlotas(resumen)
+    // Agregar los próximos 7 días aunque no tengan flota_dia configurada
+    const fechasExistentes = new Set(resumenExistente.map(r => r.fecha))
+    const proximos: ResumenFlota[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i)
+      const fecha = d.toISOString().split('T')[0]
+      if (!fechasExistentes.has(fecha)) {
+        proximos.push({
+          fecha,
+          totalCamiones: 0,
+          activos: 0,
+          sucursales: [],
+          choferes: 0,
+          ultimaModif: null,
+          revisado: false,
+          sinConfigurar: true,
+        })
+      }
+    }
+
+    const todos = [...resumenExistente, ...proximos]
+      .sort((a, b) => b.fecha.localeCompare(a.fecha))
+
+    setFlotas(todos)
     setLoading(false)
   }
 
@@ -237,25 +261,17 @@ function VistaLista({ onEditar, onVolver, showToast }: {
           </div>
         )}
 
-        {flotas.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="text-5xl mb-4">🚛</div>
-            <p className="font-semibold text-base" style={{ color: '#254A96' }}>No hay flotas configuradas</p>
-            <p className="text-sm mt-1" style={{ color: '#B9BBB7' }}>Creá la primera flota usando el botón "Nueva flota"</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {flotasHoy.length > 0 && (
-              <Section titulo="Hoy" flotas={flotasHoy} onEditar={onEditar} destacar />
-            )}
-            {flotasFuturas.length > 0 && (
-              <Section titulo="Próximos días" flotas={flotasFuturas} onEditar={onEditar} />
-            )}
-            {flotasPasadas.length > 0 && (
-              <Section titulo="Días anteriores" flotas={flotasPasadas} onEditar={onEditar} opaco />
-            )}
-          </div>
-        )}
+        <div className="space-y-6">
+          {flotasHoy.length > 0 && (
+            <Section titulo="Hoy" flotas={flotasHoy} onEditar={onEditar} destacar />
+          )}
+          {flotasFuturas.length > 0 && (
+            <Section titulo="Próximos días" flotas={flotasFuturas} onEditar={onEditar} />
+          )}
+          {flotasPasadas.length > 0 && (
+            <Section titulo="Días anteriores" flotas={flotasPasadas} onEditar={onEditar} opaco />
+          )}
+        </div>
       </main>
     </>
   )
@@ -319,13 +335,24 @@ function CardFlota({ flota, onEditar, destacar, opaco }: {
             <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
               style={{ background: '#254A96', color: 'white' }}>Hoy</span>
           )}
+          {!flota.revisado && !opaco && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#fef3c7', color: '#92400e' }}>⚠️ Sin revisar</span>
+          )}
+          {flota.revisado && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#d1fae5', color: '#065f46' }}>✓ Revisada</span>
+          )}
         </div>
         <div className="flex items-center gap-4 text-xs flex-wrap" style={{ color: '#B9BBB7' }}>
-          <span>🚛 {flota.activos} camión{flota.activos !== 1 ? 'es' : ''} activo{flota.activos !== 1 ? 's' : ''}</span>
-          <span>👤 {flota.choferes} chofer{flota.choferes !== 1 ? 'es' : ''}</span>
-          {flota.sucursales.length > 0 && (
-            <span>📍 {flota.sucursales.join(', ')}</span>
-          )}
+          {flota.sinConfigurar
+            ? <span style={{ color: '#92400e' }}>Usando flota base — hacé clic para revisar y confirmar</span>
+            : <>
+                <span>🚛 {flota.activos} camión{flota.activos !== 1 ? 'es' : ''} activo{flota.activos !== 1 ? 's' : ''}</span>
+                <span>👤 {flota.choferes} chofer{flota.choferes !== 1 ? 'es' : ''}</span>
+                {flota.sucursales.length > 0 && <span>📍 {flota.sucursales.join(', ')}</span>}
+              </>
+          }
         </div>
         {flota.ultimaModif && (
           <p className="text-xs mt-1" style={{ color: '#B9BBB7' }}>

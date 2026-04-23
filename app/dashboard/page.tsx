@@ -455,7 +455,7 @@ export default function Dashboard() {
                             <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>{p.sucursal}</td>
                             <td className="px-4 py-3 whitespace-nowrap" style={{ color: '#B9BBB7' }}>
                               {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })}
-                              <span className="ml-1 text-xs">V{p.vuelta}</span>
+                              <span className="ml-1 text-xs">{p.vuelta === 0 ? 'Sin asig.' : `V${p.vuelta}`}</span>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap ${ESTADO_COLOR[p.estado] ?? 'bg-gray-100 text-gray-500'}`}>
@@ -483,7 +483,7 @@ export default function Dashboard() {
                         <div className="min-w-0">
                           <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
                           <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
-                            {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} · V{p.vuelta} · {p.sucursal}
+                            {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} · {p.vuelta === 0 ? 'Sin asig.' : `V${p.vuelta}`} · {p.sucursal}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">

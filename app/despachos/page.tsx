@@ -331,7 +331,8 @@ export default function NuevoDespacho() {
     }
 
     // "fuera_prog" = pedido sin vuelta asignada, el ruteador la asigna después
-    const vueltaFinal = form.vuelta === 'fuera_prog' ? null : parseInt(form.vuelta)
+    // vuelta 0 = fuera de programación (columna NOT NULL, no puede ser null)
+    const vueltaFinal = form.vuelta === 'fuera_prog' ? 0 : parseInt(form.vuelta)
 
     const { data: pedidoInsertado, error } = await supabase.from('pedidos').insert({
       nv: form.nv,

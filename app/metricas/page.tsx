@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { tieneAcceso } from '../lib/permisos'
@@ -154,6 +154,8 @@ export default function MetricasPage() {
   const [datosDia, setDatosDia] = useState<DatosCamionDia[]>([])
   const [datosMes, setDatosMes] = useState<DatosCamionMes[]>([])
   const [toast, setToast] = useState<string | null>(null)
+  const [chatAbierto, setChatAbierto] = useState(false)
+  const [exportando, setExportando] = useState(false)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
@@ -177,6 +179,59 @@ export default function MetricasPage() {
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
     else cargarMensual()
+  }
+
+  async function exportarExcel() {
+    if ((vista === 'diaria' && datosDia.length === 0) || (vista === 'mensual' && datosMes.length === 0)) {
+      showToast('Primero cargá los datos con Buscar')
+      return
+    }
+    setExportando(true)
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+
+      if (vista === 'diaria') {
+        // Fetch full pedidos for selected date
+        let q = supabase.from('pedidos')
+          .select('nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo')
+          .eq('fecha_entrega', fecha).neq('estado', 'cancelado').order('sucursal').order('cliente')
+        if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+        const { data: pedidosData } = await q
+
+        const pedRows = (pedidosData ?? []).map(p => ({
+          'NV': p.nv, 'SD': p.id_despacho ?? '', 'Tipo': p.tipo === 'retiro' ? 'Retiro' : 'Entrega',
+          'Cliente': p.cliente, 'Dirección': p.direccion, 'Sucursal': p.sucursal,
+          'Fecha': p.fecha_entrega, 'Vuelta': p.vuelta === 0 ? 'Sin asignar' : `V${p.vuelta}`,
+          'Camión': p.camion_id ?? '', 'Estado': p.estado, 'Pago': p.estado_pago ?? '',
+          'Kg': p.peso_total_kg ?? 0, 'Posiciones': p.volumen_total_m3 ?? 0, 'Notas': p.notas ?? '',
+        }))
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pedRows), 'Pedidos')
+
+        const metRows = datosDia.map(d => ({
+          'Camión': d.camion_codigo, 'Tipo': d.tipo_unidad, 'Sucursal': d.sucursal, 'Chofer': d.chofer_nombre,
+          'Pedidos': d.pedidos, 'Kg usados': Math.round(d.kgUsados), 'Cap. Kg día': d.capacidadKgDia,
+          'Ocup. Kg %': d.pctKg, 'Pos usadas': Math.round(d.posicionesUsadas), 'Cap. Pos día': d.capacidadPosDia,
+          'Ocup. Pos %': d.pctPos, 'Km ruta': d.distanciaTotalKm,
+          'Hora inicio': d.hora_inicio ? new Date(d.hora_inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '',
+          'Hora fin': d.hora_fin ? new Date(d.hora_fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '',
+        }))
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(metRows), 'Métricas flota')
+        XLSX.writeFile(wb, `metricas-${fecha}${filtroSucursal ? '-' + filtroSucursal : ''}.xlsx`)
+      } else {
+        const rows = datosMes.map(d => ({
+          'Camión': d.camion_codigo, 'Tipo': d.tipo_unidad, 'Sucursal': d.sucursal,
+          'Días activo': d.diasActivo, 'Avg Ocup. Kg %': d.avgPctKg, 'Avg Ocup. Pos %': d.avgPctPos,
+          'Km totales': d.totalKm, 'Min/km prom.': d.avgMinKm,
+        }))
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Métricas mensuales')
+        XLSX.writeFile(wb, `metricas-${mes}${filtroSucursal ? '-' + filtroSucursal : ''}.xlsx`)
+      }
+      showToast('Excel descargado')
+    } catch (e: any) {
+      showToast(`Error: ${e.message}`)
+    }
+    setExportando(false)
   }
 
   const cargarDiaria = async (sucursalParam?: string) => {
@@ -471,6 +526,11 @@ export default function MetricasPage() {
               style={{ background: '#254A96' }}>
               Buscar
             </button>
+            <button onClick={exportarExcel} disabled={exportando}
+              className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
+              style={{ background: '#f4f4f3', color: '#254A96', border: '1px solid #e8edf8' }}>
+              {exportando ? 'Exportando...' : '⬇️ Excel'}
+            </button>
           </div>
         </div>
 
@@ -485,6 +545,30 @@ export default function MetricasPage() {
           <VistaMensual datos={datosMes} mes={mes} />
         )}
       </main>
+
+      {/* Botón flotante chat IA */}
+      <button
+        onClick={() => setChatAbierto(v => !v)}
+        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold text-white shadow-xl"
+        style={{ background: chatAbierto ? '#1a3a7a' : '#254A96' }}>
+        🤖 {chatAbierto ? 'Cerrar IA' : 'Analizar con IA'}
+      </button>
+
+      {/* Panel chat IA */}
+      {chatAbierto && (
+        <div className="fixed top-0 right-0 bottom-0 z-50 flex flex-col bg-white shadow-2xl" style={{ width: 400 }}>
+          <div className="px-4 py-3 flex items-center justify-between shrink-0" style={{ background: '#254A96' }}>
+            <div>
+              <p className="font-bold text-sm text-white">🤖 Análisis IA</p>
+              <p className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>
+                Últimos 30 días · {filtroSucursal || 'Todas las sucursales'}
+              </p>
+            </div>
+            <button onClick={() => setChatAbierto(false)} className="text-white text-2xl leading-none opacity-70 hover:opacity-100 px-1">×</button>
+          </div>
+          <ChatBot sucursal={filtroSucursal} />
+        </div>
+      )}
     </div>
   )
 }
@@ -926,6 +1010,144 @@ function VistaMensual({ datos, mes }: { datos: DatosCamionMes[]; mes: string }) 
           </table>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Chat Bot ────────────────────────────────────────────────────────────────────
+
+function ChatBot({ sucursal }: { sucursal: string }) {
+  const [mensajes, setMensajes] = useState<{ rol: 'user' | 'assistant'; texto: string }[]>([])
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    enviar('Dame un resumen ejecutivo de la operación: ocupación promedio de flota, sucursal más activa, tendencias clave y las 2-3 oportunidades de mejora más importantes.', true)
+  }, [])
+
+  async function enviar(texto: string, silencioso = false) {
+    if (loading) return
+    const prevMensajes = silencioso ? [] : [...mensajes, { rol: 'user' as const, texto }]
+    if (!silencioso) setMensajes(prevMensajes)
+    setLoading(true)
+
+    const msgsApi = [...prevMensajes.map(m => ({ role: m.rol, content: m.texto })),
+      ...(silencioso ? [{ role: 'user' as const, content: texto }] : [])
+    ]
+
+    try {
+      const res = await fetch('/api/metricas-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: msgsApi, sucursal }),
+      })
+      const data = await res.json()
+      const resp = data.respuesta ?? (data.error ? `Error: ${data.error}` : 'Sin respuesta')
+      setMensajes(prev => [...(silencioso ? [] : prev), { rol: 'assistant', texto: resp }])
+    } catch {
+      setMensajes(prev => [...(silencioso ? [] : prev), { rol: 'assistant', texto: 'Error de conexión. Intentá de nuevo.' }])
+    }
+    setLoading(false)
+    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }), 100)
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const txt = input.trim()
+    if (!txt || loading) return
+    enviar(txt)
+    setInput('')
+  }
+
+  function renderMarkdown(text: string) {
+    return text.split('\n').map((line, i) => {
+      const html = line
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^- /, '• ')
+      const isItem = line.startsWith('- ') || line.startsWith('• ')
+      return (
+        <p key={i}
+          className="leading-relaxed"
+          style={{ fontSize: 13, color: '#1a1a1a', paddingLeft: isItem ? 8 : 0, marginBottom: 2 }}
+          dangerouslySetInnerHTML={{ __html: html }} />
+      )
+    })
+  }
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3" style={{ fontFamily: 'Barlow, sans-serif' }}>
+        {mensajes.length === 0 && loading && (
+          <div className="flex flex-col items-center justify-center py-12 gap-3">
+            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
+            <p className="text-xs" style={{ color: '#B9BBB7' }}>Analizando los últimos 30 días...</p>
+          </div>
+        )}
+        {mensajes.map((m, i) => (
+          <div key={i} className={`flex ${m.rol === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className="rounded-2xl px-3 py-2.5" style={{
+              maxWidth: '88%',
+              background: m.rol === 'user' ? '#254A96' : '#f4f4f3',
+            }}>
+              {m.rol === 'user'
+                ? <p style={{ fontSize: 13, color: 'white' }}>{m.texto}</p>
+                : <div>{renderMarkdown(m.texto)}</div>
+              }
+            </div>
+          </div>
+        ))}
+        {loading && mensajes.length > 0 && (
+          <div className="flex justify-start">
+            <div className="px-3 py-2.5 rounded-2xl" style={{ background: '#f4f4f3' }}>
+              <div className="flex gap-1 items-center">
+                {[0, 1, 2].map(j => (
+                  <div key={j} className="w-1.5 h-1.5 rounded-full animate-bounce"
+                    style={{ background: '#B9BBB7', animationDelay: `${j * 0.15}s` }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Suggested questions */}
+      {mensajes.length === 1 && !loading && (
+        <div className="px-3 pb-2 flex flex-wrap gap-1.5">
+          {[
+            '¿Qué camiones están ociosos?',
+            '¿Cuál es el día más cargado?',
+            '¿Cómo mejorar la ocupación?',
+            '¿Qué sucursal tiene más rechazos?',
+          ].map(q => (
+            <button key={q} onClick={() => { enviar(q); }}
+              className="text-xs px-2.5 py-1.5 rounded-xl"
+              style={{ background: '#e8edf8', color: '#254A96' }}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <form onSubmit={handleSubmit} className="p-3 border-t shrink-0" style={{ borderColor: '#f0f0f0' }}>
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Preguntá sobre tus datos..."
+            disabled={loading}
+            className="flex-1 border rounded-xl px-3 py-2 focus:outline-none"
+            style={{ fontSize: 13, borderColor: '#e8edf8' }}
+          />
+          <button type="submit" disabled={loading || !input.trim()}
+            className="px-3 py-2 rounded-xl text-sm font-bold text-white disabled:opacity-40"
+            style={{ background: '#254A96' }}>
+            →
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

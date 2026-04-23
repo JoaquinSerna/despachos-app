@@ -151,11 +151,12 @@ function VistaLista({ onEditar, onVolver, showToast }: {
       }
     })
 
-    // Agregar los próximos 30 días aunque no tengan flota_dia configurada
+    // Agregar los próximos 30 días aunque no tengan flota_dia configurada (excepto domingos)
     const fechasExistentes = new Set(resumenExistente.map(r => r.fecha))
     const proximos: ResumenFlota[] = []
     for (let i = 0; i < 30; i++) {
       const d = new Date(); d.setDate(d.getDate() + i)
+      if (d.getDay() === 0) continue  // Saltar domingos
       const fecha = d.toISOString().split('T')[0]
       if (!fechasExistentes.has(fecha)) {
         proximos.push({

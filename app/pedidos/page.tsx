@@ -687,7 +687,7 @@ export default function PedidosPage() {
                 style={{ borderColor: '#e8edf8' }} />
             </div>
           </div>
-          <button onClick={buscar} disabled={cargando}
+          <button onClick={() => buscar()} disabled={cargando}
             className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: '#254A96' }}>
             {cargando ? 'Buscando...' : 'Buscar'}

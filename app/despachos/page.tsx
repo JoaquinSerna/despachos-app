@@ -702,10 +702,10 @@ export default function NuevoDespacho() {
         {/* Subir PDF */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📄 Solicitud de Despacho</h2>
-          <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>El sistema completará los datos automáticamente desde el PDF.</p>
+          <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>El sistema completará los datos automáticamente desde el PDF o foto.</p>
           <label className="block w-full border-2 border-dashed rounded-xl px-4 py-6 text-center cursor-pointer transition-colors"
             style={{ borderColor: leyendoPDF ? '#254A96' : '#e8edf8', background: leyendoPDF ? '#e8edf8' : '#fafafa' }}>
-            <input type="file" accept=".pdf" onChange={handlePDF} className="hidden" />
+            <input type="file" accept=".pdf,image/jpeg,image/png,image/webp" onChange={handlePDF} className="hidden" />
             {leyendoPDF ? (
               <div className="flex flex-col items-center gap-2">
                 <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
@@ -720,8 +720,8 @@ export default function NuevoDespacho() {
             ) : (
               <div className="flex flex-col items-center gap-2">
                 <span className="text-3xl">📄</span>
-                <span className="text-sm font-medium" style={{ color: '#254A96' }}>Seleccionar PDF</span>
-                <span className="text-xs" style={{ color: '#B9BBB7' }}>Arrastrá o hacé click para subir</span>
+                <span className="text-sm font-medium" style={{ color: '#254A96' }}>Seleccionar PDF o foto</span>
+                <span className="text-xs" style={{ color: '#B9BBB7' }}>PDF, JPG o PNG — arrastrá o hacé click</span>
               </div>
             )}
           </label>
@@ -807,10 +807,10 @@ export default function NuevoDespacho() {
               {form.latitud && form.longitud && (
                 <div>
                   <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Ubicación de entrega</p>
-                  <div className="rounded-xl overflow-hidden border" style={{ borderColor: '#e8edf8', height: 180 }}>
+                  <div className="rounded-xl overflow-hidden border" style={{ borderColor: '#e8edf8', height: 220 }}>
                     <iframe
                       src={`https://www.google.com/maps?q=${form.latitud},${form.longitud}&hl=es&z=15&output=embed`}
-                      width="100%" height="180" style={{ border: 0, display: 'block' }}
+                      width="100%" height="220" style={{ border: 0, display: 'block' }}
                       loading="lazy" referrerPolicy="no-referrer-when-downgrade"
                     />
                   </div>

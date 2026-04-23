@@ -17,6 +17,13 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer()
     const base64 = Buffer.from(bytes).toString('base64')
 
+    const esImagen = file.type.startsWith('image/')
+    const mediaType = esImagen ? (file.type as 'image/jpeg' | 'image/png' | 'image/webp') : 'application/pdf'
+
+    const archivoContent: any = esImagen
+      ? { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } }
+      : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1000,
@@ -24,14 +31,7 @@ export async function POST(request: NextRequest) {
         {
           role: 'user',
           content: [
-            {
-              type: 'document',
-              source: {
-                type: 'base64',
-                media_type: 'application/pdf',
-                data: base64
-              }
-            },
+            archivoContent,
             {
               type: 'text',
               text: `Extraé los datos de esta Solicitud de Despacho y devolvé SOLO un JSON válido sin texto adicional:

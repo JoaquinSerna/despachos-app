@@ -432,34 +432,33 @@ export default function MetricasPage() {
 
     if (reqs.length === 0) return
 
-    const results = await Promise.allSettled(
-      reqs.map(async r => {
+    // Secuencial para no saturar el servidor OSRM demo con N pedidos paralelos.
+    // Cada resultado actualiza la UI en cuanto llega (km en tiempo real).
+    for (const r of reqs) {
+      try {
         const res = await fetch(`/api/km-ruta?coords=${encodeURIComponent(r.coords)}`)
+        if (!res.ok) continue
         const json = await res.json()
         const distM: number | null = json.distanciaM ?? null
-        return { ...r, distM }
-      })
-    )
+        if (!distM) continue
 
-    setDatosDia(prev => {
-      const next = prev.map(d => ({
-        ...d,
-        vueltas: d.vueltas.map(v => ({ ...v })),
-      }))
-      for (const result of results) {
-        if (result.status !== 'fulfilled' || !result.value.distM) continue
-        const { camionCodigo, vueltaIdx, distM } = result.value
-        const ci = next.findIndex(d => d.camion_codigo === camionCodigo)
-        if (ci === -1 || !next[ci].vueltas[vueltaIdx]) continue
-        next[ci].vueltas[vueltaIdx].distanciaKm = Math.round(distM / 1000)
-        next[ci].vueltas[vueltaIdx].kmReal = true
+        setDatosDia(prev => {
+          const next = prev.map(d => ({
+            ...d,
+            vueltas: d.vueltas.map(v => ({ ...v })),
+          }))
+          const ci = next.findIndex(d => d.camion_codigo === r.camionCodigo)
+          if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
+            next[ci].vueltas[r.vueltaIdx].distanciaKm = Math.round(distM / 1000)
+            next[ci].vueltas[r.vueltaIdx].kmReal = true
+            next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
+          }
+          return next
+        })
+      } catch {
+        // ignorar fallos individuales, la estimación ~km permanece
       }
-      // Recalcular km total del camión como suma de sus vueltas
-      for (const d of next) {
-        d.distanciaTotalKm = d.vueltas.reduce((a, v) => a + v.distanciaKm, 0)
-      }
-      return next
-    })
+    }
   }
 
   const cargarMensual = async (sucursalParam?: string) => {

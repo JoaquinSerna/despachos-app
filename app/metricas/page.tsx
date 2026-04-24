@@ -434,11 +434,9 @@ export default function MetricasPage() {
 
     const results = await Promise.allSettled(
       reqs.map(async r => {
-        const res = await fetch(
-          `https://router.project-osrm.org/route/v1/driving/${r.coords}?overview=false`
-        )
+        const res = await fetch(`/api/km-ruta?coords=${encodeURIComponent(r.coords)}`)
         const json = await res.json()
-        const distM: number | null = json.routes?.[0]?.distance ?? null
+        const distM: number | null = json.distanciaM ?? null
         return { ...r, distM }
       })
     )

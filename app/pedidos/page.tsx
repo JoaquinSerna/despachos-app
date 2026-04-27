@@ -297,12 +297,16 @@ export default function PedidosPage() {
   async function guardar() {
     if (!editando) return
     setGuardando(true)
+    const pedidoOriginal = pedidos.find(p => p.id === editando.id)
+    const sucursalCambio = pedidoOriginal && pedidoOriginal.sucursal !== editando.sucursal
     const updates: Record<string, any> = { id: editando.id, sucursal: editando.sucursal }
     if (editando.peso !== '') updates.peso_total_kg = Math.round(parseFloat(editando.peso) || 0)
     if (editando.posiciones !== '') updates.volumen_total_m3 = parseFloat(editando.posiciones) || 0
     if (editando.estado_pago !== '') updates.estado_pago = editando.estado_pago
     if (editando.fecha_entrega !== '') updates.fecha_entrega = editando.fecha_entrega
     updates.vuelta = editando.vuelta
+    // Si cambió la sucursal, desasignar el camión — no puede quedar asignado a un camión de otra sucursal
+    if (sucursalCambio) { updates.camion_id = null; updates.orden_entrega = null }
 
     const res = await fetch('/api/pedidos', {
       method: 'PATCH',
@@ -321,6 +325,7 @@ export default function PedidosPage() {
         estado_pago: updates.estado_pago ?? p.estado_pago,
         fecha_entrega: updates.fecha_entrega ?? p.fecha_entrega,
         vuelta: updates.vuelta ?? p.vuelta,
+        ...(sucursalCambio ? { camion_id: null, orden_entrega: null } : {}),
       } : p))
       showToast('Pedido actualizado')
       setEditando(null)

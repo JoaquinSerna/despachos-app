@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
 import { puedeEditar } from '@/app/lib/permisos'
+import { logAuditoria } from '@/app/lib/auditoria'
 
 interface Pedido {
   id: string; nv: string; cliente: string; direccion: string; sucursal: string
@@ -829,12 +830,16 @@ function ProgramacionInner() {
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
 
   const [puedeEditarProg, setPuedeEditarProg] = useState(false)
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
-      supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single().then(({ data }) => {
+      setUserId(user.id)
+      supabase.from('usuarios').select('rol, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
         if (!data) return
         setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
+        setUserNombre(data.nombre ?? '')
         // Pre-seleccionar sucursal del usuario si no viene por URL param
         if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
@@ -988,9 +993,15 @@ function ProgramacionInner() {
   function handleDrop(e: React.DragEvent, cod: string | null) {
     e.preventDefault(); setDragOver(null)
     if (!dragPedido.current) return
-    const id = dragPedido.current.id; dragPedido.current = null
+    const dropped = dragPedido.current
+    const camionAnterior = dropped.camion_id
+    const id = dropped.id; dragPedido.current = null
     const act = pedidos.map(p => p.id === id ? { ...p, camion_id: cod } : p)
     setPedidos(act); construirColumnas(act, camiones)
+    if (userId) {
+      const accion = cod ? 'Asignó camión' : 'Desasignó camión'
+      logAuditoria(userId, userNombre, accion, 'Programación', { pedido_nv: dropped.nv, cliente: dropped.cliente, camion_anterior: camionAnterior, camion_nuevo: cod })
+    }
   }
 
   async function handleConfirmar() {
@@ -1036,6 +1047,7 @@ function ProgramacionInner() {
       } else {
         setConfirmado(true)
         showToast('Programación confirmada')
+        if (userId) logAuditoria(userId, userNombre, 'Confirmó programación', 'Programación', { fecha, sucursal, vuelta: vueltaActiva, total_pedidos: pedidos.length, total_camiones: Object.keys(columnas.reduce((acc, col) => { if (col.pedidos.length > 0) acc[col.camion.codigo] = true; return acc }, {} as Record<string, boolean>)).length })
       }
     } catch (e: any) {
       showToast(`Error inesperado: ${e.message}`, 'err')
@@ -1055,11 +1067,13 @@ function ProgramacionInner() {
   }
 
   async function handleEditarPeso(id: string, peso: number, posiciones: number) {
+    const pedido = pedidos.find(p => p.id === id)
     try {
       await patchPedido(id, { peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false })
       const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false } : p)
       setPedidos(act); construirColumnas(act, camiones)
       showToast('Peso y posiciones actualizados')
+      if (userId && pedido) logAuditoria(userId, userNombre, 'Editó peso/posiciones', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, peso_anterior: pedido.peso_total_kg, peso_nuevo: peso, pos_anterior: pedido.volumen_total_m3, pos_nuevo: posiciones })
     } catch { showToast('Error al actualizar', 'err') }
   }
 
@@ -1070,10 +1084,12 @@ function ProgramacionInner() {
   }
 
   async function handleToggleVolcador(id: string, valor: boolean) {
+    const pedido = pedidos.find(p => p.id === id)
     try {
       await patchPedido(id, { requiere_volcador: valor })
       const act = pedidos.map(p => p.id === id ? { ...p, requiere_volcador: valor } : p)
       setPedidos(act); construirColumnas(act, camiones)
+      if (userId && pedido) logAuditoria(userId, userNombre, valor ? 'Marcó requiere volcador' : 'Quitó requiere volcador', 'Programación', { nv: pedido.nv, cliente: pedido.cliente })
     } catch { showToast('Error al actualizar tipo de camión', 'err') }
   }
 
@@ -1098,12 +1114,14 @@ function ProgramacionInner() {
   }
 
   async function handleMoverSucursal(id: string, nuevaSucursal: string) {
+    const pedido = pedidos.find(p => p.id === id)
     try {
       await patchPedido(id, { sucursal: nuevaSucursal, camion_id: null, orden_entrega: null })
       // El pedido desaparece de esta vista (era de otra sucursal)
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast(`Pedido movido a ${nuevaSucursal}`)
+      if (userId && pedido) logAuditoria(userId, userNombre, 'Movió pedido a sucursal', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, sucursal_anterior: pedido.sucursal, sucursal_nueva: nuevaSucursal })
     } catch { showToast('Error al mover sucursal', 'err') }
   }
 
@@ -1122,6 +1140,7 @@ function ProgramacionInner() {
   }
 
   async function handleCancelar(id: string) {
+    const pedido = pedidos.find(p => p.id === id)
     try {
       const res = await fetch('/api/pedidos', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
       const data = await res.json()
@@ -1129,15 +1148,18 @@ function ProgramacionInner() {
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast('Pedido eliminado')
+      if (userId && pedido) logAuditoria(userId, userNombre, 'Canceló pedido', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, sucursal: pedido.sucursal })
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
   async function handleCambiarVuelta(id: string, nuevaVuelta: number) {
+    const pedido = pedidos.find(p => p.id === id)
     try {
       await patchPedido(id, { vuelta: nuevaVuelta, camion_id: null, estado: 'pendiente' })
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast(`Pedido movido a Vuelta ${nuevaVuelta}`)
+      if (userId && pedido) logAuditoria(userId, userNombre, 'Cambió vuelta', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, vuelta_anterior: pedido.vuelta, vuelta_nueva: nuevaVuelta })
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
@@ -1158,6 +1180,7 @@ function ProgramacionInner() {
       ))
       setModalReprogVuelta(false)
       showToast(`${aReprogramar.length} pedidos reprogramados`)
+      if (userId) logAuditoria(userId, userNombre, 'Reprogramó vuelta completa', 'Programación', { fecha, vuelta: vueltaActiva, pedidos_count: aReprogramar.length, fecha_destino: reprogVueltaFecha })
       cargarDatos()
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
     setGuardando(false)
@@ -1173,6 +1196,7 @@ function ProgramacionInner() {
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+      if (userId) logAuditoria(userId, userNombre, 'Reprogramó pedido', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, fecha_nueva: fecha, vuelta_nueva: vuelta, motivo })
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 

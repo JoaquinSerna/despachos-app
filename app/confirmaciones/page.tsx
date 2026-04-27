@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { tieneAcceso } from '../lib/permisos'
+import { logAuditoria } from '../lib/auditoria'
 
 interface Pedido {
   id: string
@@ -103,6 +104,7 @@ export default function ConfirmacionesPage() {
 
   const confirmarCliente = async (pedidoId: string) => {
     setConfirmando(pedidoId)
+    const pedido = pedidos.find(p => p.id === pedidoId)
     const { error } = await supabase
       .from('pedidos')
       .update({ confirmado_cliente: true })
@@ -113,12 +115,14 @@ export default function ConfirmacionesPage() {
     } else {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, confirmado_cliente: true } : p))
       showToast('Cliente confirmado ✓')
+      if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Confirmó pedido con cliente', 'Confirmaciones', { nv: pedido.nv, cliente: pedido.cliente, sucursal: pedido.sucursal })
     }
     setConfirmando(null)
   }
 
   const guardarDireccion = async (pedidoId: string, valor: string) => {
-    const original = pedidos.find(p => p.id === pedidoId)?.direccion ?? ''
+    const pedido = pedidos.find(p => p.id === pedidoId)
+    const original = pedido?.direccion ?? ''
     if (valor.trim() === original.trim()) return
     const { error } = await supabase.from('pedidos').update({ direccion: valor.trim() }).eq('id', pedidoId)
     if (error) {
@@ -127,11 +131,13 @@ export default function ConfirmacionesPage() {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, direccion: valor.trim() } : p))
       setEditDirecciones(prev => { const n = { ...prev }; delete n[pedidoId]; return n })
       showToast('Dirección actualizada ✓')
+      if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Actualizó dirección', 'Confirmaciones', { nv: pedido.nv, cliente: pedido.cliente, direccion_nueva: valor.trim() })
     }
   }
 
   const desconfirmarCliente = async (pedidoId: string) => {
     setConfirmando(pedidoId)
+    const pedido = pedidos.find(p => p.id === pedidoId)
     const { error } = await supabase
       .from('pedidos')
       .update({ confirmado_cliente: false })
@@ -141,6 +147,7 @@ export default function ConfirmacionesPage() {
       showToast('Error', 'err')
     } else {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, confirmado_cliente: false } : p))
+      if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Desconfirmó pedido con cliente', 'Confirmaciones', { nv: pedido.nv, cliente: pedido.cliente })
     }
     setConfirmando(null)
   }

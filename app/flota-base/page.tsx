@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const SUCURSAL_COLORS: Record<string, { border: string; bg: string; header: string }> = {
@@ -30,12 +31,15 @@ interface Camion {
 export default function FlotaBasePage() {
   const router = useRouter()
   const [camiones, setCamiones] = useState<Camion[]>([])
+  const [camionesOriginal, setCamionesOriginal] = useState<Record<string, Camion>>({})
   const [choferes, setChoferes] = useState<{ id: string; nombre: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [camionEditando, setCamionEditando] = useState<string | null>(null)
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
   const [nuevoCamion, setNuevoCamion] = useState({
     codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520',
     pos_caja: 10, pos_acoplado: 0, posiciones_total: 10, tonelaje_max_kg: 5000,
@@ -50,8 +54,10 @@ export default function FlotaBasePage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, nombre').eq('id', user.id).single()
       if (!['gerencia', 'admin_flota'].includes(data?.rol)) { router.push('/dashboard'); return }
+      setUserId(user.id)
+      setUserNombre(data?.nombre ?? '')
       cargar()
     })
   }, [])
@@ -62,7 +68,11 @@ export default function FlotaBasePage() {
       supabase.from('camiones_flota').select('*').order('sucursal').order('codigo'),
       supabase.from('usuarios').select('id, nombre').eq('rol', 'chofer').order('nombre'),
     ])
-    setCamiones((cam ?? []).map(c => ({ ...c, pos_caja: c.pos_caja ?? 0, pos_acoplado: c.pos_acoplado ?? 0, chofer_id_default: c.chofer_id_default ?? '' })))
+    const mapped = (cam ?? []).map((c: any) => ({ ...c, pos_caja: c.pos_caja ?? 0, pos_acoplado: c.pos_acoplado ?? 0, chofer_id_default: c.chofer_id_default ?? '' }))
+    setCamiones(mapped)
+    const origMap: Record<string, Camion> = {}
+    mapped.forEach((c: Camion) => { origMap[c.codigo] = { ...c } })
+    setCamionesOriginal(origMap)
     setChoferes(chof ?? [])
     setLoading(false)
   }
@@ -73,6 +83,7 @@ export default function FlotaBasePage() {
 
   const guardarCamion = async (c: Camion) => {
     setGuardando(true)
+    const orig = camionesOriginal[c.codigo]
     const posTotal = (c.pos_caja || 0) + (c.pos_acoplado || 0)
     const { error } = await supabase.from('camiones_flota').update({
       sucursal: c.sucursal,
@@ -90,6 +101,19 @@ export default function FlotaBasePage() {
       showToast('Error al guardar', 'err')
     } else {
       showToast(`${c.codigo} guardado`)
+      if (userId) {
+        if (orig && orig.activo !== c.activo) {
+          logAuditoria(userId, userNombre, c.activo ? 'Activó camión' : 'Desactivó camión', 'Flota Base', { codigo: c.codigo, sucursal: c.sucursal })
+        } else {
+          const cambios: Record<string, any> = {}
+          if (orig) {
+            if (orig.sucursal !== c.sucursal) cambios.sucursal = { de: orig.sucursal, a: c.sucursal }
+            if (orig.tonelaje_max_kg !== c.tonelaje_max_kg) cambios.tonelaje_max_kg = { de: orig.tonelaje_max_kg, a: c.tonelaje_max_kg }
+            if (orig.posiciones_total !== posTotal) cambios.posiciones_total = { de: orig.posiciones_total, a: posTotal }
+          }
+          logAuditoria(userId, userNombre, 'Editó camión', 'Flota Base', { codigo: c.codigo, cambios })
+        }
+      }
       setCamionEditando(null)
     }
     setGuardando(false)
@@ -114,6 +138,7 @@ export default function FlotaBasePage() {
       showToast('Error al crear camión: ' + error.message, 'err')
     } else {
       showToast(`Camión ${nuevoCamion.codigo.toUpperCase()} creado`)
+      if (userId) logAuditoria(userId, userNombre, 'Creó camión', 'Flota Base', { codigo: nuevoCamion.codigo.trim().toUpperCase(), tipo_unidad: nuevoCamion.tipo_unidad, sucursal: nuevoCamion.sucursal, posiciones_total: posTotal, tonelaje_max_kg: nuevoCamion.tonelaje_max_kg })
       setMostrarNuevo(false)
       setNuevoCamion({ codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520', pos_caja: 10, pos_acoplado: 0, posiciones_total: 10, tonelaje_max_kg: 5000, grua_hidraulica: false, volcador: false, activo: true, chofer_id_default: '' })
       cargar()

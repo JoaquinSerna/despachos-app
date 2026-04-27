@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { puedeEditar, tieneAcceso } from '../lib/permisos'
+import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado', 'cancelado']
@@ -112,6 +113,8 @@ export default function PedidosPage() {
   const [puedeEditarPedidos, setPuedeEditarPedidos] = useState(false)
   const [userEmail, setUserEmail] = useState('')
   const [userRol, setUserRol] = useState('')
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
 
   // Modal revertir entrega
   const [modalRevertir, setModalRevertir] = useState<Pedido | null>(null)
@@ -165,12 +168,14 @@ export default function PedidosPage() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUserEmail(user.email ?? '')
-      supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single().then(({ data }) => {
+      setUserId(user.id)
+      supabase.from('usuarios').select('rol, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
         if (!tieneAcceso(data?.permisos, data?.rol, 'pedidos')) {
           router.push('/dashboard'); return
         }
         setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))
         setUserRol(data?.rol ?? '')
+        setUserNombre(data?.nombre ?? '')
         if (data?.sucursal) setFiltroSucursal(data.sucursal)
         // Auto-search if navigated from métricas with a NV param
         const nvParam = new URLSearchParams(window.location.search).get('nv')
@@ -317,6 +322,7 @@ export default function PedidosPage() {
     if (data.error) {
       showToast(data.error, 'err')
     } else {
+      const pedidoActualizado = pedidos.find(p => p.id === editando.id)
       setPedidos(prev => prev.map(p => p.id === editando.id ? {
         ...p,
         sucursal: editando.sucursal,
@@ -328,6 +334,17 @@ export default function PedidosPage() {
         ...(sucursalCambio ? { camion_id: null, orden_entrega: null } : {}),
       } : p))
       showToast('Pedido actualizado')
+      // Audit: compute changed fields
+      if (userId && pedidoOriginal) {
+        const cambios: Record<string, { de: any; a: any }> = {}
+        if (pedidoOriginal.sucursal !== editando.sucursal) cambios.sucursal = { de: pedidoOriginal.sucursal, a: editando.sucursal }
+        if (updates.peso_total_kg != null && updates.peso_total_kg !== pedidoOriginal.peso_total_kg) cambios.peso_total_kg = { de: pedidoOriginal.peso_total_kg, a: updates.peso_total_kg }
+        if (updates.volumen_total_m3 != null && updates.volumen_total_m3 !== pedidoOriginal.volumen_total_m3) cambios.volumen_total_m3 = { de: pedidoOriginal.volumen_total_m3, a: updates.volumen_total_m3 }
+        if (updates.estado_pago != null && updates.estado_pago !== pedidoOriginal.estado_pago) cambios.estado_pago = { de: pedidoOriginal.estado_pago, a: updates.estado_pago }
+        if (updates.fecha_entrega != null && updates.fecha_entrega !== pedidoOriginal.fecha_entrega) cambios.fecha_entrega = { de: pedidoOriginal.fecha_entrega, a: updates.fecha_entrega }
+        if (updates.vuelta !== pedidoOriginal.vuelta) cambios.vuelta = { de: pedidoOriginal.vuelta, a: updates.vuelta }
+        logAuditoria(userId, userNombre, 'Editó pedido', 'Pedidos', { nv: pedidoOriginal.nv, id_despacho: pedidoOriginal.id_despacho, cliente: pedidoOriginal.cliente, cambios })
+      }
       setEditando(null)
     }
     setGuardando(false)
@@ -406,6 +423,7 @@ export default function PedidosPage() {
         : p
       ))
       showToast(`NV ${modalRevertir.nv} revertido a Programado`)
+      if (userId) logAuditoria(userId, userNombre, 'Revirtió entrega a programado', 'Pedidos', { nv: modalRevertir.nv, camion_id: modalRevertir.camion_id, notas: notaFinal })
       setModalRevertir(null)
     }
     setRevertiendo(false)

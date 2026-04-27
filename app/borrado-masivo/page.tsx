@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
+import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'cancelado']
@@ -38,12 +39,14 @@ export default function BorradoMasivoPage() {
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroTexto, setFiltroTexto] = useState('')
 
+  const [userNombre, setUserNombre] = useState('')
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      supabase.from('usuarios').select('rol').eq('id', user.id).single().then(({ data: u }) => {
+      supabase.from('usuarios').select('rol, nombre').eq('id', user.id).single().then(({ data: u }) => {
         if (u?.rol !== 'gerencia') { router.push('/'); return }
         setUser(user)
+        setUserNombre(u?.nombre ?? '')
       })
     })
   }, [])
@@ -110,6 +113,10 @@ export default function BorradoMasivoPage() {
     }
 
     setResultado({ borrados, errores })
+    if (user && borrados > 0) {
+      const borradosNvs = pedidos.filter(p => seleccionados.has(p.id) && !errores.some(e => e.id === p.id)).map(p => p.nv)
+      logAuditoria(user.id, userNombre, 'Borrado masivo de pedidos', 'Borrado Masivo', { sucursal: filtroSucursal, fecha: filtroFecha, cantidad: borrados, nvs: borradosNvs })
+    }
     setPedidos(prev => prev.filter(p => !seleccionados.has(p.id) || errores.some(e => e.id === p.id)))
     setSeleccionados(new Set())
     setBorrando(false)

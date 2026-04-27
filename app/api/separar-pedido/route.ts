@@ -9,6 +9,12 @@ function getAdmin() {
   )
 }
 
+async function logAuditAPI(usuarioId: string, usuarioNombre: string, accion: string, modulo: string, detalle?: Record<string, any>) {
+  try {
+    await getAdmin().from('auditoria').insert({ usuario_id: usuarioId, usuario_nombre: usuarioNombre, accion, modulo, detalle: detalle ?? null })
+  } catch (e) { console.error('Error de auditoría API:', e) }
+}
+
 function esGranel(nombre: string): boolean {
   return nombre.toLowerCase().includes('granel')
 }
@@ -40,7 +46,9 @@ async function calcularPesoItems(admin: ReturnType<typeof getAdmin>, items: { no
 // Si items_mantener está vacío (todo sin stock) → el pedido entero vuelve a pendiente sin crear uno nuevo
 export async function POST(req: NextRequest) {
   try {
-    const { pedido_id, items_nuevo, items_mantener, motivo } = await req.json()
+    const { pedido_id, items_nuevo, items_mantener, motivo, _usuario_id, _usuario_nombre } = await req.json()
+    const uId = _usuario_id ?? ''
+    const uNombre = _usuario_nombre ?? ''
     if (!pedido_id || !items_nuevo?.length) {
       return NextResponse.json({ error: 'Faltan datos: pedido_id, items_nuevo' }, { status: 400 })
     }
@@ -61,6 +69,7 @@ export async function POST(req: NextRequest) {
         orden_entrega: null,
         notas: nota,
       }).eq('id', pedido_id)
+      if (uId) logAuditAPI(uId, uNombre, 'Registró incidencia de stock', 'Programación', { pedido_id, items_sin_stock: items_nuevo })
       return NextResponse.json({ success: true, tipo: 'reprogramado_completo' })
     }
 
@@ -114,6 +123,13 @@ export async function POST(req: NextRequest) {
       pedido_grande: false,
     }).eq('id', pedido_id)
 
+    if (uId) {
+      if (esStock) {
+        logAuditAPI(uId, uNombre, 'Registró incidencia de stock', 'Programación', { pedido_id, items_sin_stock: items_nuevo })
+      } else {
+        logAuditAPI(uId, uNombre, 'Separó pedido', 'Programación', { pedido_id, nv_original: original.nv, nv_nuevo: String(original.id_despacho) + 'B' })
+      }
+    }
     return NextResponse.json({ success: true, tipo: 'separado', nuevo_id: nuevoPedido.id })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

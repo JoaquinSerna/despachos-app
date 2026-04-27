@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG } from '../lib/roles'
 import { MODULOS, MODULO_LABEL, MODULO_ICON, nivelEfectivo } from '../lib/permisos'
+import { logAuditoria } from '../lib/auditoria'
 
 interface Usuario {
   id: string
@@ -41,6 +42,8 @@ export default function UsuariosPage() {
   const [permisosEdit, setPermisosEdit] = useState<Record<string, string>>({})
   const [guardandoPermisos, setGuardandoPermisos] = useState(false)
   const [botonPedidosVisible, setBotonPedidosVisible] = useState(true)
+  const [adminId, setAdminId] = useState('')
+  const [adminNombre, setAdminNombre] = useState('')
 
   // Soporte técnico
   const [contactosSoporte, setContactosSoporte] = useState<SoporteContacto[]>([])
@@ -55,8 +58,10 @@ export default function UsuariosPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, nombre').eq('id', user.id).single()
       if (data?.rol !== 'gerencia') { router.push('/dashboard'); return }
+      setAdminId(user.id)
+      setAdminNombre(data?.nombre ?? '')
       cargarUsuarios()
       cargarSoporte()
     })
@@ -130,6 +135,7 @@ export default function UsuariosPage() {
     else {
       setUsuarios(prev => prev.map(u => u.id === modalPermisos.id ? { ...u, permisos: permisosEdit } : u))
       showToast('Permisos actualizados')
+      if (adminId) logAuditoria(adminId, adminNombre, 'Actualizó permisos', 'Usuarios', { usuario_email: modalPermisos.email, permisos: permisosEdit })
       setModalPermisos(null)
     }
     setGuardandoPermisos(false)
@@ -165,6 +171,7 @@ export default function UsuariosPage() {
         const data = await res.json()
         if (data.error) throw new Error(data.error)
         showToast('Usuario creado correctamente')
+        if (adminId) logAuditoria(adminId, adminNombre, 'Creó usuario', 'Usuarios', { email: form.email, nombre: form.nombre, rol: form.rol, sucursal: form.sucursal })
       } else if (modal?.tipo === 'editar' && modal.usuario) {
         const res = await fetch('/api/crear-usuario', {
           method: 'PUT',
@@ -182,6 +189,7 @@ export default function UsuariosPage() {
         const data = await res.json()
         if (data.error) throw new Error(data.error)
         showToast('Usuario actualizado')
+        if (adminId) logAuditoria(adminId, adminNombre, 'Editó usuario', 'Usuarios', { email: form.email, nombre: form.nombre, rol: form.rol, sucursal: form.sucursal })
       }
       setModal(null)
       cargarUsuarios()
@@ -239,6 +247,7 @@ export default function UsuariosPage() {
     const data = await res.json()
     if (data.error) { showToast(data.error, 'err'); return }
     showToast(`Usuario ${nuevoEstado ? 'activado' : 'inactivado'}`)
+    if (adminId) logAuditoria(adminId, adminNombre, nuevoEstado ? 'Activó usuario' : 'Desactivó usuario', 'Usuarios', { email: u.email, nombre: u.nombre })
     cargarUsuarios()
   }
 

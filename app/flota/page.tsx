@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { tieneAcceso } from '../lib/permisos'
+import { logAuditoria } from '../lib/auditoria'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export default function FlotaDia() {
   const [vista, setVista] = useState<'lista' | 'editar'>('lista')
   const [fechaEditar, setFechaEditar] = useState('')
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
@@ -56,8 +59,10 @@ export default function FlotaDia() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, permisos, nombre').eq('id', user.id).single()
       if (!tieneAcceso(data?.permisos, data?.rol, 'flota')) { router.push('/dashboard'); return }
+      setUserId(user.id)
+      setUserNombre(data?.nombre ?? '')
     })
   }, [])
 
@@ -86,7 +91,7 @@ export default function FlotaDia() {
 
       {vista === 'lista'
         ? <VistaLista onEditar={abrirEditar} onVolver={() => router.push('/dashboard')} showToast={showToast} />
-        : <VistaEditar fecha={fechaEditar} onVolver={volverALista} showToast={showToast} />
+        : <VistaEditar fecha={fechaEditar} onVolver={volverALista} showToast={showToast} userId={userId} userNombre={userNombre} />
       }
     </div>
   )
@@ -369,12 +374,15 @@ function CardFlota({ flota, onEditar, destacar, opaco }: {
 
 // ─── Vista Editar ───────────────────────────────────────────────────────────────
 
-function VistaEditar({ fecha, onVolver, showToast }: {
+function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
   fecha: string
   onVolver: () => void
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
+  userId: string
+  userNombre: string
 }) {
   const [camiones, setCamiones] = useState<any[]>([])
+  const [camionesOriginal, setCamionesOriginal] = useState<any[]>([])
   const [choferes, setChoferes] = useState<{ id: string; nombre: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [guardando, setGuardando] = useState(false)
@@ -400,7 +408,7 @@ function VistaEditar({ fecha, onVolver, showToast }: {
     const fechas = (flotaDia ?? []).map((d: any) => d.updated_at).filter(Boolean).sort()
     setUltimaModif(fechas.at(-1) ?? null)
 
-    setCamiones((flotaBase ?? []).map((c: any) => {
+    const mapped = (flotaBase ?? []).map((c: any) => {
       const diaConfig = (flotaDia ?? []).find((d: any) => d.camion_codigo === c.codigo)
       return {
         ...c,
@@ -410,7 +418,9 @@ function VistaEditar({ fecha, onVolver, showToast }: {
         sucursal_extra: diaConfig?.sucursal_extra ?? '',
         sucursal_extra_desde_vuelta: diaConfig?.sucursal_extra_desde_vuelta ?? 2,
       }
-    }))
+    })
+    setCamiones(mapped)
+    setCamionesOriginal(JSON.parse(JSON.stringify(mapped)))
     setLoading(false)
   }
 
@@ -460,6 +470,21 @@ function VistaEditar({ fecha, onVolver, showToast }: {
         showToast(`Error: ${msg}`, 'err')
       } else {
         showToast('Flota guardada correctamente')
+        // Audit: log per-camion changes
+        if (userId) {
+          for (const c of camiones) {
+            const orig = camionesOriginal.find((o: any) => o.codigo === c.codigo)
+            if (!orig) continue
+            if (orig.activo_dia !== c.activo_dia) {
+              logAuditoria(userId, userNombre, c.activo_dia ? 'Activó camión en flota' : 'Desactivó camión', 'Flota', { fecha, camion_codigo: c.codigo, sucursal: c.sucursal_dia })
+            } else if (orig.chofer_id !== c.chofer_id && c.chofer_id) {
+              const chofer = choferes.find(ch => ch.id === c.chofer_id)
+              logAuditoria(userId, userNombre, 'Asignó chofer', 'Flota', { fecha, camion_codigo: c.codigo, chofer_nombre: chofer?.nombre ?? c.chofer_id, sucursal: c.sucursal_dia })
+            } else if (orig.sucursal_extra !== c.sucursal_extra && c.sucursal_extra) {
+              logAuditoria(userId, userNombre, 'Asignó camión a sucursal extra', 'Flota', { camion_codigo: c.codigo, sucursal_extra: c.sucursal_extra })
+            }
+          }
+        }
         await cargarFlota()
       }
     } catch (e: any) {

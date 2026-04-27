@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/app/supabase'
 import { useRouter } from 'next/navigation'
+import { logAuditoria } from '@/app/lib/auditoria'
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -20,13 +21,20 @@ export default function FinDelDiaPage() {
   const [prioridades, setPrioridades] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [reprogramados, setReprogramados] = useState(false)
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
   }
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (!user) router.push('/') })
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) { router.push('/'); return }
+      setUserId(user.id)
+      const { data } = await supabase.from('usuarios').select('nombre').eq('id', user.id).single()
+      setUserNombre(data?.nombre ?? '')
+    })
   }, [])
 
   useEffect(() => { cargar() }, [fecha, sucursal])
@@ -77,6 +85,7 @@ export default function FinDelDiaPage() {
       }))
       setReprogramados(true)
       showToast(`${aReprogramar.length} pedido${aReprogramar.length > 1 ? 's' : ''} reprogramados para el ${fechaDestino}`)
+      if (userId) logAuditoria(userId, userNombre, 'Reprogramó pedidos fin del día', 'Fin del día', { fecha_origen: fecha, fecha_destino: fechaDestino, pedidos_count: aReprogramar.length, sucursal })
       cargar()
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
     setProcesando(false)

@@ -5,6 +5,7 @@ import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { puedeEditar } from '../lib/permisos'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
+import { logAuditoria } from '../lib/auditoria'
 
 function detectarSucursal(sucursalObra: string, deposito: string): string {
   const obra = sucursalObra?.toUpperCase() || ''
@@ -68,6 +69,7 @@ export default function NuevoDespacho() {
   const [toastState, setToastState] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [form, setForm] = useState(FORM_INICIAL)
   const [userId, setUserId] = useState<string | null>(null)
+  const [userNombre, setUserNombre] = useState('')
   const [misPedidos, setMisPedidos] = useState<any[]>([])
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
   const [pedidoReprog, setPedidoReprog] = useState<any | null>(null)
@@ -100,8 +102,11 @@ export default function NuevoDespacho() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUserId(user.id)
-      supabase.from('usuarios').select('rol, permisos').eq('id', user.id).single().then(({ data }) => {
-        if (data) setPuedeEditarDespachos(puedeEditar(data.permisos, data.rol, 'despachos'))
+      supabase.from('usuarios').select('rol, permisos, nombre').eq('id', user.id).single().then(({ data }) => {
+        if (data) {
+          setPuedeEditarDespachos(puedeEditar(data.permisos, data.rol, 'despachos'))
+          setUserNombre(data.nombre ?? '')
+        }
       })
     })
   }, [])
@@ -132,12 +137,14 @@ export default function NuevoDespacho() {
   }
 
   async function handleCancelarPedido(id: string, cliente: string) {
+    const pedido = misPedidos.find(p => p.id === id)
     try {
       const res = await fetch('/api/pedidos', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? 'Error desconocido')
       await cargarMisPedidos()
       toast(`Pedido de ${cliente} eliminado`)
+      if (userId) logAuditoria(userId, userNombre, 'Canceló pedido', 'Despachos', { nv: pedido?.nv, cliente, sucursal: pedido?.sucursal })
     } catch (e: any) { toast(`Error: ${e.message}`, 'err') }
   }
 
@@ -157,6 +164,7 @@ export default function NuevoDespacho() {
       setPedidoReprog(null)
       await cargarMisPedidos()
       toast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
+      if (userId) logAuditoria(userId, userNombre, 'Reprogramó pedido', 'Despachos', { nv: pedido.nv, cliente: pedido.cliente, fecha_nueva: fecha, vuelta_nueva: vuelta, motivo })
     } catch (e: any) { toast(`Error: ${e.message}`, 'err') }
   }
 
@@ -386,6 +394,7 @@ export default function NuevoDespacho() {
     }
 
     toast('Solicitud de despacho guardada correctamente')
+    if (userId) logAuditoria(userId, userNombre, 'Creó pedido', 'Despachos', { nv: form.nv, id_despacho: form.id_despacho, cliente: form.cliente, sucursal: form.sucursal, fecha_entrega: form.fecha_entrega, peso_total_kg: pesoTotal })
     setExito(true); setLoading(false)
   }
 

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
@@ -68,10 +69,15 @@ export default function CargaMasiva() {
   const [error, setError] = useState('')
   const [resultado, setResultado] = useState<{ insertados: number; items_ok: number; items_error_msg: string | null; errores: any[] } | null>(null)
   const [expandido, setExpandido] = useState<string | null>(null)
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) router.push('/')
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) { router.push('/'); return }
+      setUserId(user.id)
+      const { data } = await supabase.from('usuarios').select('nombre').eq('id', user.id).single()
+      setUserNombre(data?.nombre ?? '')
     })
   }, [])
 
@@ -217,6 +223,10 @@ export default function CargaMasiva() {
       if (!data.success) throw new Error(data.error || 'Error al cargar')
 
       setResultado({ insertados: data.insertados, items_ok: data.items_ok ?? 0, items_error_msg: data.items_error_msg ?? null, errores: data.errores })
+      if (userId && data.insertados > 0) {
+        const sucursales = [...new Set(seleccionadas.map(s => s.sucursal))]
+        logAuditoria(userId, userNombre, 'Carga masiva de pedidos', 'Carga Masiva', { cantidad: data.insertados, sucursal: sucursales.join(', '), fuente: 'pdf' })
+      }
       const insertadosIds = new Set(data.resultados.map((r: any) => String(r.id_despacho)))
       setSolicitudes(prev => prev.map(s => ({
         ...s,

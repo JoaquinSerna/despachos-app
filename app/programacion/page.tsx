@@ -924,8 +924,10 @@ function ProgramacionInner() {
   }
 
   function construirColumnas(todos: Pedido[], cams: Camion[]) {
+    const camCodigos = new Set(cams.map(c => c.codigo))
     setColumnas(cams.map(c => { const ps = todos.filter(p => p.camion_id === c.codigo); return { camion: c, pedidos: ps, pesoTotal: pesoColumna(ps), posTotal: posColumna(ps) } }))
-    setSinAsignar(todos.filter(p => !p.camion_id))
+    // Pedidos sin camión asignado + pedidos cuyo camión no pertenece a esta sucursal (ej: asignado a camión de otra sucursal)
+    setSinAsignar(todos.filter(p => !p.camion_id || !camCodigos.has(p.camion_id)))
   }
 
   async function enrichLocalidades(peds: Pedido[]) {

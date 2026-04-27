@@ -1,0 +1,32 @@
+name: Sincronizar producción → staging
+
+on:
+  schedule:
+    # 3:00am Argentina (UTC-3) = 6:00am UTC
+    - cron: '0 6 * * *'
+    # 12:00pm Argentina (UTC-3) = 3:00pm UTC
+    - cron: '0 15 * * *'
+  # También permite correrlo manualmente desde GitHub Actions
+  workflow_dispatch:
+
+jobs:
+  copy-to-staging:
+    name: Copiar datos a staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Ejecutar copia producción → staging
+        run: node scripts/copy-to-staging.mjs

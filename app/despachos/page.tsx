@@ -83,7 +83,7 @@ export default function NuevoDespacho() {
   const [tabActivo, setTabActivo] = useState<'despacho' | 'retiro'>('despacho')
 
   // ── Retiro state ──────────────────────────────────────────
-  const RETIRO_FORM_INICIAL = { cliente: '', telefono: '', direccion: '', sucursal: '', fecha_estimada: '', notas: '' }
+  const RETIRO_FORM_INICIAL = { nv: '', cliente: '', telefono: '', direccion: '', sucursal: '', fecha_estimada: '', notas: '' }
   const [formRetiro, setFormRetiro] = useState(RETIRO_FORM_INICIAL)
   const [itemsRetiro, setItemsRetiro] = useState<{ nombre_producto: string; cantidad: number; id_producto: number | null; _codigo?: string; _encontrado?: boolean; _noEncontrado?: boolean }[]>(
     [{ nombre_producto: '', cantidad: 1, id_producto: null, _codigo: '', _encontrado: false, _noEncontrado: false }]
@@ -496,7 +496,7 @@ export default function NuevoDespacho() {
     }
 
     const { data: pedidoInsertado, error: errIns } = await supabase.from('pedidos').insert({
-      nv: '',
+      nv: Number(formRetiro.nv),
       cliente: formRetiro.cliente,
       telefono: formRetiro.telefono,
       direccion: formRetiro.direccion,
@@ -965,6 +965,13 @@ export default function NuevoDespacho() {
             {/* Datos del cliente */}
             <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
               <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#B9BBB7' }}>Datos del cliente</p>
+
+              <div>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>NV (Nota de Venta) <span style={{ color: '#E52322' }}>*</span></label>
+                <input type="number" value={formRetiro.nv} onChange={e => setFormRetiro(p => ({ ...p, nv: e.target.value }))} required
+                  placeholder="Número de NV del pedido original"
+                  className={inputClass} style={inputStyle} />
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>

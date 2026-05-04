@@ -496,6 +496,7 @@ export default function NuevoDespacho() {
     }
 
     const { data: pedidoInsertado, error: errIns } = await supabase.from('pedidos').insert({
+      nv: '',
       cliente: formRetiro.cliente,
       telefono: formRetiro.telefono,
       direccion: formRetiro.direccion,
@@ -992,7 +993,7 @@ export default function NuevoDespacho() {
                   Link de Google Maps <span style={{ color: '#B9BBB7', fontWeight: 400 }}>(opcional)</span>
                 </label>
                 <div className="relative">
-                  <input type="url" value={linkMapsRetiro}
+                  <input type="text" value={linkMapsRetiro}
                     onChange={e => handleLinkMapsRetiro(e.target.value)}
                     placeholder="https://maps.google.com/..."
                     className={inputClass}

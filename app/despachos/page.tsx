@@ -739,6 +739,12 @@ export default function NuevoDespacho() {
               </div>
             )}
           </label>
+          {error && !pdfListo && (
+            <div className="mt-3 rounded-lg px-4 py-3 text-sm font-medium flex items-center gap-2" style={{ background: '#fde8e8', color: '#E52322' }}>
+              <span>⚠️</span>
+              <span>{error}</span>
+            </div>
+          )}
         </div>
 
         {/* Productos */}

@@ -34,8 +34,15 @@ export async function POST(request: NextRequest) {
             archivoContent,
             {
               type: 'text',
-              text: `Extraé los datos de esta Solicitud de Despacho y devolvé SOLO un JSON válido sin texto adicional:
+              text: `Primero verificá si este documento es una Solicitud de Despacho oficial de Construyo al Costo.
+Para ser válido debe contener el encabezado "Solicitud de Despacho Pendiente #[número]" y el logo o nombre "Construyo al Costo".
+
+Si NO es una Solicitud de Despacho de Construyo al Costo, devolvé SOLO este JSON:
+{"documento_valido": false}
+
+Si SÍ es válido, extraé los datos y devolvé SOLO este JSON (sin texto adicional ni markdown):
 {
+  "documento_valido": true,
   "nv": "número del Presupuesto 2 asociado sin el # (ej: 35390)",
   "id_despacho": "número de la Solicitud de Despacho sin el # (ej: 29639)",
   "cliente": "nombre del cliente",
@@ -46,8 +53,8 @@ export async function POST(request: NextRequest) {
   "latitud": -37.254967,
   "longitud": -56.984971,
   "productos": [
-  {"descripcion": "nombre exacto del producto como figura en el PDF", "cantidad": 10}
-]
+    {"descripcion": "nombre exacto del producto como figura en el PDF", "cantidad": 10}
+  ]
 }
 No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo el JSON, sin markdown.`
             }
@@ -59,6 +66,13 @@ No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo 
     const texto = response.content[0].type === 'text' ? response.content[0].text : ''
     const limpio = texto.replace(/```json|```/g, '').trim()
     const datos = JSON.parse(limpio)
+
+    if (datos.documento_valido === false) {
+      return NextResponse.json({
+        success: false,
+        error: 'El documento no es una Solicitud de Despacho de Construyo al Costo. Solo se aceptan SDs generadas por el sistema.'
+      }, { status: 422 })
+    }
 
     return NextResponse.json({ success: true, datos })
   } catch (error: any) {

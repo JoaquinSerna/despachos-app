@@ -270,7 +270,11 @@ export default function NuevoDespacho() {
     try {
       const res = await fetch('/api/leer-nv', { method: 'POST', body: formData })
       const data = await res.json()
-      if (!data.success) { setError('No se pudo leer el PDF.'); setLeyendoPDF(false); return }
+      if (!data.success) {
+        setError(data.error || 'No se pudo leer el archivo.')
+        setLeyendoPDF(false)
+        return
+      }
 
       const { datos } = data
       const sucursal = detectarSucursal(datos.sucursal_obra || '', datos.deposito || '')

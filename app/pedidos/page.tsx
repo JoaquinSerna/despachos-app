@@ -105,6 +105,11 @@ export default function PedidosPage() {
   const [editando, setEditando] = useState<EditState | null>(null)
   const [guardando, setGuardando] = useState(false)
 
+  // Comentario rápido
+  const [modalComentario, setModalComentario] = useState<Pedido | null>(null)
+  const [comentarioTexto, setComentarioTexto] = useState('')
+  const [guardandoComentario, setGuardandoComentario] = useState(false)
+
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
@@ -287,6 +292,29 @@ export default function PedidosPage() {
     })
   }
 
+  async function guardarComentario() {
+    if (!modalComentario || !comentarioTexto.trim()) return
+    setGuardandoComentario(true)
+    const fecha = new Date().toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
+    const nuevaNota = `[${userNombre} · ${fecha}]: ${comentarioTexto.trim()}`
+    const notaFinal = modalComentario.notas ? `${modalComentario.notas} | ${nuevaNota}` : nuevaNota
+    const res = await fetch('/api/pedidos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: modalComentario.id, notas: notaFinal }),
+    })
+    if (res.ok) {
+      setPedidos(prev => prev.map(p => p.id === modalComentario.id ? { ...p, notas: notaFinal } : p))
+      if (userId) logAuditoria(userId, userNombre, 'Agregó comentario', 'Pedidos', { nv: modalComentario.nv, cliente: modalComentario.cliente, comentario: comentarioTexto.trim() })
+      showToast('Comentario guardado')
+      setModalComentario(null)
+      setComentarioTexto('')
+    } else {
+      showToast('Error al guardar el comentario', 'err')
+    }
+    setGuardandoComentario(false)
+  }
+
   function iniciarEdicion(p: Pedido) {
     setEditando({
       id: p.id,
@@ -439,6 +467,50 @@ export default function PedidosPage() {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
           {toast.tipo === 'ok' ? '✓' : '✕'} {toast.msg}
+        </div>
+      )}
+
+      {/* Modal comentario rápido */}
+      {modalComentario && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm space-y-4" style={{ fontFamily: 'Barlow, sans-serif' }}>
+            <div>
+              <h3 className="font-semibold text-sm" style={{ color: '#254A96' }}>💬 Agregar comentario</h3>
+              <p className="text-xs mt-1" style={{ color: '#B9BBB7' }}>
+                {modalComentario.cliente}{modalComentario.nv ? ` · NV ${modalComentario.nv}` : ''}
+              </p>
+            </div>
+            {modalComentario.notas && (
+              <div className="rounded-lg px-3 py-2 text-xs" style={{ background: '#f4f4f3', color: '#666' }}>
+                <p className="font-medium mb-1" style={{ color: '#B9BBB7' }}>Notas actuales:</p>
+                <p>{modalComentario.notas}</p>
+              </div>
+            )}
+            <textarea
+              value={comentarioTexto}
+              onChange={e => setComentarioTexto(e.target.value)}
+              placeholder="Ej: el cliente puso una lona verde en la entrada, tocar el timbre del costado..."
+              rows={3}
+              className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none resize-none"
+              style={{ borderColor: '#e8edf8' }}
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                disabled={!comentarioTexto.trim() || guardandoComentario}
+                onClick={guardarComentario}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                style={{ background: '#0f766e' }}>
+                {guardandoComentario ? 'Guardando...' : 'Guardar comentario'}
+              </button>
+              <button
+                onClick={() => { setModalComentario(null); setComentarioTexto('') }}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -852,6 +924,12 @@ export default function PedidosPage() {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex gap-1.5 items-center">
+                            <button onClick={() => { setModalComentario(p); setComentarioTexto('') }}
+                              className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                              style={{ background: '#f0fdfa', color: '#0f766e' }}
+                              title="Agregar comentario">
+                              💬
+                            </button>
                             {puedeEditarPedidos && (
                               <button onClick={() => iniciarEdicion(p)}
                                 className="text-xs px-2.5 py-1 rounded-lg font-medium"

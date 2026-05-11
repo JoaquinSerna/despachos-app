@@ -426,20 +426,27 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
 
   const moverCamion = (codigo: string, nuevaSucursal: string) => {
     setCamiones(prev => prev.map(c =>
-      c.codigo === codigo ? { ...c, sucursal_dia: nuevaSucursal, activo_dia: nuevaSucursal !== 'Fuera de servicio' } : c
+      c.codigo === codigo
+        ? { ...c, sucursal_dia: nuevaSucursal, activo_dia: nuevaSucursal !== 'Fuera de servicio', chofer_id: nuevaSucursal === 'Fuera de servicio' ? '' : c.chofer_id }
+        : c
     ))
   }
 
   const toggleActivo = (codigo: string) => {
     setCamiones(prev => prev.map(c =>
-      c.codigo === codigo ? { ...c, activo_dia: !c.activo_dia, sucursal_dia: c.activo_dia ? 'Fuera de servicio' : c.sucursal } : c
+      c.codigo === codigo
+        ? { ...c, activo_dia: !c.activo_dia, sucursal_dia: c.activo_dia ? 'Fuera de servicio' : c.sucursal, chofer_id: c.activo_dia ? '' : c.chofer_id }
+        : c
     ))
   }
 
   const asignarChofer = (camionCodigo: string, choferId: string) => {
-    setCamiones(prev => prev.map(c =>
-      c.codigo === camionCodigo ? { ...c, chofer_id: choferId } : c
-    ))
+    setCamiones(prev => prev.map(c => {
+      if (c.codigo === camionCodigo) return { ...c, chofer_id: choferId }
+      // Si este chofer estaba en otro camión, lo liberamos
+      if (choferId && c.chofer_id === choferId) return { ...c, chofer_id: '' }
+      return c
+    }))
   }
 
   const guardarFlota = async () => {
@@ -551,6 +558,30 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
         <p className="text-sm mb-5" style={{ color: '#B9BBB7' }}>
           Arrastrá los camiones entre sucursales. Asigná un chofer a cada camión activo.
         </p>
+
+        {/* Choferes disponibles */}
+        {(() => {
+          const choferesAsignados = new Set(camiones.filter(c => c.chofer_id && c.activo_dia).map(c => c.chofer_id))
+          const disponibles = choferes.filter(ch => !choferesAsignados.has(ch.id))
+          return (
+            <div className="mb-5 rounded-xl border p-4" style={{ borderColor: '#e8edf8', background: 'white' }}>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#B9BBB7' }}>
+                👤 Choferes disponibles ({disponibles.length})
+              </p>
+              {disponibles.length === 0
+                ? <p className="text-xs" style={{ color: '#B9BBB7' }}>Todos los choferes están asignados.</p>
+                : <div className="flex flex-wrap gap-2">
+                    {disponibles.map(ch => (
+                      <span key={ch.id} className="text-xs px-3 py-1.5 rounded-full font-medium"
+                        style={{ background: '#f4f4f3', color: '#1a1a1a' }}>
+                        {ch.nombre}
+                      </span>
+                    ))}
+                  </div>
+              }
+            </div>
+          )
+        })()}
 
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {SUCURSALES.map(sucursal => {

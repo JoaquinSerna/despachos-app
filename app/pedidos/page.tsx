@@ -83,6 +83,8 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<Pedido[]>([])
   const [cargando, setCargando] = useState(false)
   const [total, setTotal] = useState(0)
+  const [paginaOffset, setPaginaOffset] = useState(0)
+  const PAGE_SIZE = 200
 
   // Categorías, items y fotos por pedido
   const [categoriasMap, setCategoriasMap] = useState<Record<string, { label: string; tipo: string }[]>>({})
@@ -192,18 +194,23 @@ export default function PedidosPage() {
     })
   }, [])
 
-  async function buscar(textoOverride?: string) {
+  async function buscar(textoOverride?: string, append = false) {
     setCargando(true)
-    setCategoriasMap({})
-    setItemsMap({})
-    setExpandidos(new Set())
+    const currentOffset = append ? paginaOffset : 0
+    if (!append) {
+      setCategoriasMap({})
+      setItemsMap({})
+      setFotosMap({})
+      setExpandidos(new Set())
+      setPaginaOffset(0)
+    }
     const textoFinal = textoOverride !== undefined ? textoOverride : filtroTexto
     let q = supabase
       .from('pedidos')
       .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo, created_at, vendedor_id', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
-      .limit(200)
+      .range(currentOffset, currentOffset + PAGE_SIZE - 1)
 
     if (filtroFecha) q = q.eq('fecha_entrega', filtroFecha)
     if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
@@ -217,7 +224,13 @@ export default function PedidosPage() {
     if (error) { showToast(error.message, 'err'); setCargando(false); return }
 
     const pedidosList = data ?? []
-    setPedidos(pedidosList)
+    if (append) {
+      setPedidos(prev => [...prev, ...pedidosList])
+      setPaginaOffset(currentOffset + pedidosList.length)
+    } else {
+      setPedidos(pedidosList)
+      setPaginaOffset(pedidosList.length)
+    }
     setTotal(count ?? 0)
     setCargando(false)
 
@@ -230,7 +243,7 @@ export default function PedidosPage() {
           .from('usuarios').select('id, nombre').in('id', vendedorIds)
         const map: Record<string, string> = {}
         for (const v of vData ?? []) map[v.id] = v.nombre
-        setVendedoresMap(map)
+        setVendedoresMap(prev => append ? { ...prev, ...map } : map)
       }
     }
   }
@@ -278,9 +291,9 @@ export default function PedidosPage() {
       newFotosMap[f.pedido_id].push({ url: f.url, label: f.label, publicUrl: pub.publicUrl })
     }
 
-    setItemsMap(newItemsMap)
-    setCategoriasMap(newCatResult)
-    setFotosMap(newFotosMap)
+    setItemsMap(prev => ({ ...prev, ...newItemsMap }))
+    setCategoriasMap(prev => ({ ...prev, ...newCatResult }))
+    setFotosMap(prev => ({ ...prev, ...newFotosMap }))
   }
 
   function toggleExpandir(id: string) {
@@ -729,7 +742,7 @@ export default function PedidosPage() {
 
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
-        <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center">
+        <div className="max-w-[2000px] mx-auto px-3 h-14 flex items-center">
           <div className="flex items-center gap-3">
             <button onClick={() => router.push('/dashboard')}
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
@@ -745,7 +758,7 @@ export default function PedidosPage() {
         </div>
       </nav>
 
-      <main className="max-w-[1400px] mx-auto px-4 py-5">
+      <main className="max-w-[2000px] mx-auto px-3 py-5">
 
         {/* Filtros */}
         <div className="bg-white rounded-xl shadow-sm p-4 mb-4">
@@ -1058,10 +1071,19 @@ export default function PedidosPage() {
                 })}
               </tbody>
             </table>
-            {total > 200 && (
-              <p className="text-xs text-center py-3" style={{ color: '#B9BBB7' }}>
-                Mostrando los primeros 200 de {total} resultados. Refiná los filtros para ver más.
-              </p>
+            {total > pedidos.length && (
+              <div className="flex flex-col items-center gap-1.5 py-4">
+                <button
+                  onClick={() => buscar(undefined, true)}
+                  disabled={cargando}
+                  className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                  style={{ background: '#254A96' }}>
+                  {cargando ? 'Cargando...' : `Cargar más resultados`}
+                </button>
+                <span className="text-xs" style={{ color: '#B9BBB7' }}>
+                  Mostrando {pedidos.length} de {total}
+                </span>
+              </div>
             )}
           </div>
         )}

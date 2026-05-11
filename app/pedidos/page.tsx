@@ -922,24 +922,24 @@ export default function PedidosPage() {
                             }
                           </div>
                         </td>
-                        <td className="px-4 py-2.5">
-                          <div className="flex gap-1.5 items-center">
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <div className="flex gap-1.5 items-center flex-nowrap">
                             <button onClick={() => { setModalComentario(p); setComentarioTexto('') }}
-                              className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                              className="text-xs px-2.5 py-1 rounded-lg font-medium shrink-0"
                               style={{ background: '#f0fdfa', color: '#0f766e' }}
                               title="Agregar comentario">
                               💬
                             </button>
                             {puedeEditarPedidos && (
                               <button onClick={() => iniciarEdicion(p)}
-                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium shrink-0"
                                 style={{ background: '#f4f4f3', color: '#254A96' }}>
                                 ✏️
                               </button>
                             )}
                             {userRol === 'gerencia' && (p.estado === 'entregado' || p.estado === 'rechazado' || p.estado === 'entregado_parcial') && (
                               <button onClick={() => setModalRevertir(p)}
-                                className="text-xs px-2.5 py-1 rounded-lg font-medium"
+                                className="text-xs px-2.5 py-1 rounded-lg font-medium shrink-0"
                                 style={{ background: '#fde8e8', color: '#E52322' }}
                                 title="Revertir entrega">
                                 ↩

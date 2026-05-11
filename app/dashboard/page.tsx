@@ -38,7 +38,7 @@ const ESTADO_LABEL: Record<string, string> = {
 }
  
 interface PedidoReciente {
-  id: string; nv: string; cliente: string; sucursal: string; estado: string; fecha_entrega: string; vuelta: number
+  id: string; nv: string; id_despacho: string | null; cliente: string; sucursal: string; estado: string; fecha_entrega: string; vuelta: number
 }
  
 export default function Dashboard() {
@@ -119,7 +119,7 @@ export default function Dashboard() {
 
   const cargarMisPedidosPropio = async (uid: string) => {
     const { data } = await supabase.from('pedidos')
-      .select('id,nv,cliente,sucursal,estado,fecha_entrega,vuelta')
+      .select('id,nv,id_despacho,cliente,sucursal,estado,fecha_entrega,vuelta')
       .eq('vendedor_id', uid)
       .order('created_at', { ascending: false })
       .limit(50)
@@ -227,7 +227,11 @@ export default function Dashboard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <div className="bg-white rounded-2xl shadow-xl p-6 w-full max-w-sm" style={{ fontFamily: 'Barlow, sans-serif' }}>
             <h3 className="font-semibold text-sm mb-1" style={{ color: '#254A96' }}>📅 Reprogramar entrega</h3>
-            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>{pedidoReprogDash.cliente}</p>
+            <p className="text-xs mb-4" style={{ color: '#B9BBB7' }}>
+              {pedidoReprogDash.cliente}
+              {pedidoReprogDash.nv ? ` · NV ${pedidoReprogDash.nv}` : ''}
+              {pedidoReprogDash.id_despacho ? ` · SD ${pedidoReprogDash.id_despacho}` : ''}
+            </p>
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Nueva fecha</label>
@@ -481,7 +485,12 @@ export default function Dashboard() {
                     {misPedidosPropio.map(p => (
                       <div key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
                         <div className="min-w-0">
-                          <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                          <div className="flex items-baseline gap-2">
+                            <p className="font-medium text-sm truncate" style={{ color: '#1a1a1a' }}>{p.cliente}</p>
+                            <span className="text-xs shrink-0" style={{ color: '#888' }}>
+                              NV {p.nv || '—'}{p.id_despacho ? ` · SD ${p.id_despacho}` : ''}
+                            </span>
+                          </div>
                           <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
                             {new Date(p.fecha_entrega + 'T00:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} · {p.vuelta === 0 ? 'Sin asig.' : `V${p.vuelta}`} · {p.sucursal}
                           </p>

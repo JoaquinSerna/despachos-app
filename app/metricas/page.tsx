@@ -194,7 +194,7 @@ export default function MetricasPage() {
 
       // Queries paralelas: pedidos + flota + camiones para el intervalo
       let pedQ = supabase.from('pedidos')
-        .select('nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo')
+        .select('nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud')
         .gte('fecha_entrega', fechaExportDesde).lte('fecha_entrega', fechaExportHasta)
         .neq('estado', 'cancelado').order('fecha_entrega').order('sucursal').order('cliente')
       let flotQ = supabase.from('flota_dia')
@@ -212,15 +212,49 @@ export default function MetricasPage() {
 
       // Hoja 1: Pedidos detalle
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
-        (pedidosData ?? []).map(p => ({
-          'NV': p.nv, 'SD': p.id_despacho ?? '', 'Tipo': p.tipo === 'retiro' ? 'Retiro' : 'Entrega',
-          'Cliente': p.cliente, 'Dirección': p.direccion, 'Sucursal': p.sucursal,
-          'Fecha': p.fecha_entrega,
-          'Día': new Date(p.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
-          'Vuelta': p.vuelta === 0 ? 'Sin asignar' : `V${p.vuelta}`,
-          'Camión': p.camion_id ?? '', 'Estado': p.estado, 'Pago': p.estado_pago ?? '',
-          'Kg': p.peso_total_kg ?? 0, 'Posiciones': p.volumen_total_m3 ?? 0, 'Notas': p.notas ?? '',
-        }))
+        (pedidosData ?? []).map(p => {
+          const latPed = (p as any).latitud ?? null
+          const lngPed = (p as any).longitud ?? null
+
+          // Depósito asignado (sucursal del pedido)
+          const depAsig = DEPOSITOS[p.sucursal] ?? null
+          const distAsig = (latPed && lngPed && depAsig)
+            ? Math.round(distanciaKm(latPed, lngPed, depAsig.lat, depAsig.lng) * 10) / 10
+            : ''
+
+          // Depósito más cercano
+          let depCercNombre = ''; let depCercLat: number | '' = ''; let depCercLng: number | '' = ''; let distCerc: number | '' = ''
+          if (latPed && lngPed) {
+            let minDist = Infinity
+            for (const [nombre, coords] of Object.entries(DEPOSITOS)) {
+              const d = distanciaKm(latPed, lngPed, coords.lat, coords.lng)
+              if (d < minDist) {
+                minDist = d; depCercNombre = nombre
+                depCercLat = coords.lat; depCercLng = coords.lng
+                distCerc = Math.round(d * 10) / 10
+              }
+            }
+          }
+
+          return {
+            'NV': p.nv, 'SD': p.id_despacho ?? '', 'Tipo': p.tipo === 'retiro' ? 'Retiro' : 'Entrega',
+            'Cliente': p.cliente, 'Dirección': p.direccion, 'Sucursal': p.sucursal,
+            'Fecha': p.fecha_entrega,
+            'Día': new Date(p.fecha_entrega + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
+            'Vuelta': p.vuelta === 0 ? 'Sin asignar' : `V${p.vuelta}`,
+            'Camión': p.camion_id ?? '', 'Estado': p.estado, 'Pago': p.estado_pago ?? '',
+            'Kg': p.peso_total_kg ?? 0, 'Posiciones': p.volumen_total_m3 ?? 0, 'Notas': p.notas ?? '',
+            'Lat pedido': latPed ?? '',
+            'Lng pedido': lngPed ?? '',
+            'Lat depósito asignado': depAsig?.lat ?? '',
+            'Lng depósito asignado': depAsig?.lng ?? '',
+            'Dist km dep. asignado': distAsig,
+            'Depósito más cercano': depCercNombre,
+            'Lat dep. cercano': depCercLat,
+            'Lng dep. cercano': depCercLng,
+            'Dist km dep. cercano': distCerc,
+          }
+        })
       ), 'Pedidos')
 
       // Hoja 2: Resumen por día

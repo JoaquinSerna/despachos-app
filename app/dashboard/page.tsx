@@ -8,6 +8,7 @@ import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 
 const TODAS_LAS_CARDS = [
   { href: '/despachos',      icon: '📦', titulo: 'Nuevo pedido',       descripcion: 'Cargar solicitud de despacho',              disponible: true, roles: ['gerencia','ruteador','comercial'] },
+  { href: '/materiales',     icon: '🏷️', titulo: 'Materiales',         descripcion: 'Maestro de productos y posiciones',          disponible: true, roles: ['gerencia','ruteador','admin_flota','deposito'] },
   { href: '/flota-base',     icon: '⚙️', titulo: 'Flota base',         descripcion: 'Camiones, posiciones y choferes habituales', disponible: true, roles: ['gerencia','admin_flota'] },
   { href: '/flota',          icon: '🚛', titulo: 'Flota del día',      descripcion: 'Configurar camiones y choferes',             disponible: true, roles: ['gerencia','admin_flota'] },
   { href: '/pedidos',        icon: '📋', titulo: 'Pedidos',             descripcion: 'Ver y editar todos los pedidos',             disponible: true, roles: ['gerencia','ruteador','admin_flota'] },
@@ -18,7 +19,6 @@ const TODAS_LAS_CARDS = [
   { href: '/abastecimiento', icon: '🏭', titulo: 'Abastecimiento',     descripcion: 'Transferencias entre sucursales',            disponible: true, roles: ['gerencia','ruteador','deposito'] },
   { href: '/metricas',       icon: '📊', titulo: 'Métricas',           descripcion: 'Ocupación de flota y tiempos de ruta',       disponible: true, roles: ['gerencia','ruteador','admin_flota'] },
   { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',           descripcion: 'Gestión de usuarios y permisos',             disponible: true, roles: ['gerencia'] },
-  { href: '/materiales',     icon: '🏷️', titulo: 'Materiales',         descripcion: 'Maestro de productos y posiciones',          disponible: true, roles: ['gerencia','ruteador','admin_flota','deposito'] },
   { href: '/ayuda',          icon: '📖', titulo: 'Manual de uso',      descripcion: 'Guía paso a paso y diagramas de flujo',      disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial','confirmador','chofer'] },
 ]
  

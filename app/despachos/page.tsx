@@ -291,55 +291,84 @@ export default function NuevoDespacho() {
       }))
 
       if (datos.productos?.length > 0) {
-  const { data: todosMateriales } = await supabase
-    .from('materiales')
-    .select('*')
+        const [{ data: todosMateriales }, { data: todosAliases }] = await Promise.all([
+          supabase.from('materiales').select('*'),
+          supabase.from('material_aliases').select('descripcion_pdf, material_id').eq('resuelto', true),
+        ])
 
-  const normalizar = (s: string) =>
-    s.toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/(\d),(\d)/g, '$1.$2')
-      .replace(/\s*x\s*/g, 'x')
-      .replace(/(\d)\s*(mt|kg|cm|mm|m)\b/g, '$1$2')
-      .replace(/\s+/g, ' ').trim()
+        const normalizar = (s: string) =>
+          s.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/(\d),(\d)/g, '$1.$2')
+            .replace(/\s*x\s*/g, 'x')
+            .replace(/(\d)\s*(mt|kg|cm|mm|m)\b/g, '$1$2')
+            .replace(/\s+/g, ' ').trim()
 
-  // Similitud por tokens: fracción de tokens del string más corto que aparecen en el más largo
-  // Ej: "hierro redondo 8mm" vs "hierro 8mm" → 2/2 = 1.0
-  // Ej: "chapa galv corrugada 050" vs "chapa galvanizada 050" → 2/3 ≈ 0.67 (por encima del umbral)
-  const tokenSim = (a: string, b: string): number => {
-    const ta = a.split(/\s+/).filter(t => t.length > 1)
-    const tb = b.split(/\s+/).filter(t => t.length > 1)
-    if (!ta.length || !tb.length) return 0
-    const [shorter, longer] = ta.length <= tb.length ? [ta, tb] : [tb, ta]
-    const hits = shorter.filter(t => longer.some(lt => lt === t || lt.startsWith(t) || t.startsWith(lt)))
-    return hits.length / shorter.length
-  }
+        // Map alias: descripcion_normalizada → material_id
+        const aliasMap: Record<string, number> = {}
+        for (const a of todosAliases ?? []) {
+          if (a.material_id) aliasMap[normalizar(a.descripcion_pdf)] = a.material_id
+        }
 
-  const productosConDatos = datos.productos.map((p: any) => {
-    const nombrePDF = normalizar(p.descripcion)
-    // Scoring: exact=1.0 · includes=0.9 · similitud tokens≥0.6
-    const candidatos = (todosMateriales ?? [])
-      .map((m: any) => {
-        const nt = normalizar(m.nombre)
-        let score = 0
-        if (nt === nombrePDF) score = 1.0
-        else if (nt.includes(nombrePDF) || nombrePDF.includes(nt)) score = 0.9
-        else { const s = tokenSim(nombrePDF, nt); if (s >= 0.6) score = s }
-        return { m, score }
-      })
-      .filter(({ score }) => score > 0)
-      .sort((a, b) => b.score - a.score || b.m.nombre.length - a.m.nombre.length)
-    const material = candidatos[0]?.m ?? null
-    const pesoUnitario = material && material.cant_x_unid_log > 0
-      ? material.peso_kg_x_posicion / material.cant_x_unid_log : 0
-    const posiciones = material && material.cant_x_unid_log > 0
-      ? Math.ceil(p.cantidad / material.cant_x_unid_log) * material.posiciones_x_unid_log : 0
-    return { ...p, material, posiciones, peso: material ? p.cantidad * pesoUnitario : 0 }
-  })
-  setProductosNV(productosConDatos)
-  setPosicionesTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.posiciones, 0))
-  setPesoTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.peso, 0))
-}
+        // Similitud por tokens: fracción de tokens del string más corto que aparecen en el más largo
+        const tokenSim = (a: string, b: string): number => {
+          const ta = a.split(/\s+/).filter(t => t.length > 1)
+          const tb = b.split(/\s+/).filter(t => t.length > 1)
+          if (!ta.length || !tb.length) return 0
+          const [shorter, longer] = ta.length <= tb.length ? [ta, tb] : [tb, ta]
+          const hits = shorter.filter(t => longer.some(lt => lt === t || lt.startsWith(t) || t.startsWith(lt)))
+          return hits.length / shorter.length
+        }
+
+        const sinMatch: string[] = []
+        const productosConDatos = datos.productos.map((p: any) => {
+          const nombrePDF = normalizar(p.descripcion)
+          // 1. Check alias (human-confirmed)
+          const aliasMatId = aliasMap[nombrePDF]
+          const materialFromAlias = aliasMatId
+            ? (todosMateriales ?? []).find((m: any) => m.id === aliasMatId) ?? null
+            : null
+          // 2. Fallback: fuzzy scoring
+          const material = materialFromAlias ?? (() => {
+            const candidatos = (todosMateriales ?? [])
+              .map((m: any) => {
+                const nt = normalizar(m.nombre)
+                let score = 0
+                if (nt === nombrePDF) score = 1.0
+                else if (nt.includes(nombrePDF) || nombrePDF.includes(nt)) score = 0.9
+                else { const s = tokenSim(nombrePDF, nt); if (s >= 0.6) score = s }
+                return { m, score }
+              })
+              .filter(({ score }: { score: number }) => score > 0)
+              .sort((a: any, b: any) => b.score - a.score || b.m.nombre.length - a.m.nombre.length)
+            return candidatos[0]?.m ?? null
+          })()
+          if (!material) sinMatch.push(p.descripcion)
+          const pesoUnitario = material && material.cant_x_unid_log > 0
+            ? material.peso_kg_x_posicion / material.cant_x_unid_log : 0
+          const posiciones = material && material.cant_x_unid_log > 0
+            ? Math.ceil(p.cantidad / material.cant_x_unid_log) * material.posiciones_x_unid_log : 0
+          return { ...p, material, posiciones, peso: material ? p.cantidad * pesoUnitario : 0 }
+        })
+
+        // Log unmatched descriptions to material_aliases for review
+        for (const desc of [...new Set(sinMatch)]) {
+          const { data: existing } = await supabase
+            .from('material_aliases')
+            .select('id, veces_visto')
+            .eq('descripcion_pdf', desc)
+            .maybeSingle()
+          if (existing) {
+            await supabase.from('material_aliases').update({ veces_visto: existing.veces_visto + 1 }).eq('id', existing.id)
+          } else {
+            await supabase.from('material_aliases').insert({ descripcion_pdf: desc, veces_visto: 1 })
+          }
+        }
+
+        setProductosNV(productosConDatos)
+        setPosicionesTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.posiciones, 0))
+        setPesoTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.peso, 0))
+      }
       setPdfListo(true)
     } catch { setError('Error al procesar el PDF.') }
     setLeyendoPDF(false)

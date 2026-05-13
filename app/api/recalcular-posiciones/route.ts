@@ -28,8 +28,21 @@ function tokenSim(a: string, b: string): number {
   return hits.length / shorter.length
 }
 
-function matchMaterial(nombreItem: string, materiales: any[]): any | null {
+function matchMaterial(
+  nombreItem: string,
+  materiales: any[],
+  aliasMap: Record<string, number>
+): any | null {
   const nombreNorm = normalizar(nombreItem)
+
+  // 1. Check alias (human-confirmed)
+  const aliasMatId = aliasMap[nombreNorm]
+  if (aliasMatId) {
+    const fromAlias = materiales.find(m => m.id === aliasMatId)
+    if (fromAlias) return fromAlias
+  }
+
+  // 2. Fallback: fuzzy scoring
   const candidatos = materiales
     .map(m => {
       const nt = normalizar(m.nombre)
@@ -60,9 +73,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Falta pedido_id o pedido_ids' }, { status: 400 })
     }
 
-    // Cargar materiales una sola vez
-    const { data: materiales, error: matErr } = await admin.from('materiales').select('*')
+    // Cargar materiales y aliases una sola vez
+    const [{ data: materiales, error: matErr }, { data: aliases, error: aliasErr }] = await Promise.all([
+      admin.from('materiales').select('*'),
+      admin.from('material_aliases').select('descripcion_pdf, material_id').eq('resuelto', true),
+    ])
     if (matErr) return NextResponse.json({ error: matErr.message }, { status: 500 })
+    if (aliasErr) return NextResponse.json({ error: aliasErr.message }, { status: 500 })
+
+    // Build alias map: normalized description → material_id
+    const aliasMap: Record<string, number> = {}
+    for (const a of aliases ?? []) {
+      if (a.material_id) aliasMap[normalizar(a.descripcion_pdf)] = a.material_id
+    }
 
     const resultados: { id: string; posiciones: number; peso_kg: number; items_sin_match: string[] }[] = []
 
@@ -82,7 +105,7 @@ export async function POST(req: NextRequest) {
       const sinMatch: string[] = []
 
       for (const item of items) {
-        const material = matchMaterial(item.nombre, materiales ?? [])
+        const material = matchMaterial(item.nombre, materiales ?? [], aliasMap)
         if (!material || !material.cant_x_unid_log) {
           sinMatch.push(item.nombre)
           continue

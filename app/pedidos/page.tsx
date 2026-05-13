@@ -91,6 +91,7 @@ export default function PedidosPage() {
   const [itemsMap, setItemsMap] = useState<Record<string, Item[]>>({})
   const [fotosMap, setFotosMap] = useState<Record<string, Foto[]>>({})
   const [vendedoresMap, setVendedoresMap] = useState<Record<string, string>>({}) // vendedor_id → nombre
+  const [detalleCargando, setDetalleCargando] = useState(false)
 
   // Filas expandidas (múltiples a la vez)
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
@@ -250,11 +251,14 @@ export default function PedidosPage() {
   }
 
   async function cargarDetalle(ids: string[]) {
-    const [{ data: rawItems }, { data: mats }, { data: rawFotos }] = await Promise.all([
+    setDetalleCargando(true)
+    try {
+    const [{ data: rawItems, error: itemsErr }, { data: mats }, { data: rawFotos }] = await Promise.all([
       supabase.from('pedido_items').select('pedido_id, nombre, cantidad, unidad').in('pedido_id', ids),
       supabase.from('materiales').select('id, nombre, tipo_carga, categoria, subcategoria'),
       supabase.from('pedido_fotos').select('pedido_id, url, label').in('pedido_id', ids).order('created_at'),
     ])
+    if (itemsErr) console.error('[cargarDetalle] pedido_items error:', itemsErr)
 
     // Pre-normalizar materiales UNA sola vez (evita repetir normalizar() por cada item×material)
     const matsNorm = (mats ?? []).map((m: any) => ({ ...m, _n: normalizar(m.nombre) }))
@@ -295,6 +299,11 @@ export default function PedidosPage() {
     setItemsMap(prev => ({ ...prev, ...newItemsMap }))
     setCategoriasMap(prev => ({ ...prev, ...newCatResult }))
     setFotosMap(prev => ({ ...prev, ...newFotosMap }))
+    } catch (e) {
+      console.error('[cargarDetalle] error inesperado:', e)
+    } finally {
+      setDetalleCargando(false)
+    }
   }
 
   function toggleExpandir(id: string) {
@@ -1017,7 +1026,9 @@ export default function PedidosPage() {
                                 </div>
 
                                 {/* Items */}
-                                {!items || items.length === 0 ? (
+                                {detalleCargando && !items ? (
+                                  <p className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>Cargando productos…</p>
+                                ) : !items || items.length === 0 ? (
                                   <p className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>Sin productos registrados</p>
                                 ) : (
                                   <table className="w-full text-xs">

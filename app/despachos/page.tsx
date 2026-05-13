@@ -303,16 +303,33 @@ export default function NuevoDespacho() {
       .replace(/(\d)\s*(mt|kg|cm|mm|m)\b/g, '$1$2')
       .replace(/\s+/g, ' ').trim()
 
+  // Similitud por tokens: fracción de tokens del string más corto que aparecen en el más largo
+  // Ej: "hierro redondo 8mm" vs "hierro 8mm" → 2/2 = 1.0
+  // Ej: "chapa galv corrugada 050" vs "chapa galvanizada 050" → 2/3 ≈ 0.67 (por encima del umbral)
+  const tokenSim = (a: string, b: string): number => {
+    const ta = a.split(/\s+/).filter(t => t.length > 1)
+    const tb = b.split(/\s+/).filter(t => t.length > 1)
+    if (!ta.length || !tb.length) return 0
+    const [shorter, longer] = ta.length <= tb.length ? [ta, tb] : [tb, ta]
+    const hits = shorter.filter(t => longer.some(lt => lt === t || lt.startsWith(t) || t.startsWith(lt)))
+    return hits.length / shorter.length
+  }
+
   const productosConDatos = datos.productos.map((p: any) => {
     const nombrePDF = normalizar(p.descripcion)
-    // Preferir el match más específico (nombre más largo)
-    const candidatos = (todosMateriales ?? []).filter((m: any) => {
-      const nombreTabla = normalizar(m.nombre)
-      return nombreTabla === nombrePDF ||
-             nombreTabla.includes(nombrePDF) ||
-             nombrePDF.includes(nombreTabla)
-    }).sort((a: any, b: any) => b.nombre.length - a.nombre.length)
-    const material = candidatos[0] ?? null
+    // Scoring: exact=1.0 · includes=0.9 · similitud tokens≥0.6
+    const candidatos = (todosMateriales ?? [])
+      .map((m: any) => {
+        const nt = normalizar(m.nombre)
+        let score = 0
+        if (nt === nombrePDF) score = 1.0
+        else if (nt.includes(nombrePDF) || nombrePDF.includes(nt)) score = 0.9
+        else { const s = tokenSim(nombrePDF, nt); if (s >= 0.6) score = s }
+        return { m, score }
+      })
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || b.m.nombre.length - a.m.nombre.length)
+    const material = candidatos[0]?.m ?? null
     const pesoUnitario = material && material.cant_x_unid_log > 0
       ? material.peso_kg_x_posicion / material.cant_x_unid_log : 0
     const posiciones = material && material.cant_x_unid_log > 0
@@ -400,6 +417,13 @@ export default function NuevoDespacho() {
     toast('Solicitud de despacho guardada correctamente')
     if (userId) logAuditoria(userId, userNombre, 'Creó pedido', 'Despachos', { nv: form.nv, id_despacho: form.id_despacho, cliente: form.cliente, sucursal: form.sucursal, fecha_entrega: form.fecha_entrega, peso_total_kg: pesoTotal })
     setExito(true); setLoading(false)
+  }
+
+  // Permite corregir posiciones por producto cuando el match automático es incorrecto o nulo
+  function editarPosicionesItem(idx: number, valor: number) {
+    const nuevo = productosNV.map((p: any, i: number) => i === idx ? { ...p, posiciones: valor } : p)
+    setProductosNV(nuevo)
+    setPosicionesTotal(nuevo.reduce((a: number, p: any) => a + p.posiciones, 0))
   }
 
   const resetForm = () => {
@@ -753,16 +777,33 @@ export default function NuevoDespacho() {
             <h2 className="font-semibold text-sm mb-4" style={{ color: '#254A96' }}>📦 Productos del pedido</h2>
             <div className="space-y-2">
               {productosNV.map((p, i) => (
-                <div key={i} className="flex justify-between items-center text-sm py-2 border-b last:border-0" style={{ borderColor: '#f4f4f3' }}>
-                  <div>
+                <div key={i} className="flex justify-between items-start gap-3 text-sm py-2.5 border-b last:border-0" style={{ borderColor: '#f4f4f3' }}>
+                  <div className="flex-1 min-w-0">
                     <span className="font-medium" style={{ color: '#1a1a1a' }}>{p.descripcion}</span>
                     <span className="ml-2 text-xs" style={{ color: '#B9BBB7' }}>×{p.cantidad}</span>
+                    {!p.material && (
+                      <span className="ml-2 text-xs font-medium" style={{ color: '#f59e0b' }}>⚠ sin match en maestro</span>
+                    )}
                   </div>
-                  <div className="text-right text-xs" style={{ color: '#B9BBB7' }}>
-                    {p.material ? (
-                      <span>{p.posiciones.toFixed(1)} pos · {(p.peso / 1000).toFixed(1)} tn</span>
-                    ) : (
-                      <span style={{ color: '#E52322' }}>Sin datos logísticos</span>
+                  <div className="shrink-0 flex items-center gap-2">
+                    <div className="flex items-center gap-1" title="Posiciones logísticas — editá si el cálculo automático es incorrecto">
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={p.posiciones}
+                        onChange={e => editarPosicionesItem(i, parseFloat(e.target.value) || 0)}
+                        className="w-16 text-right border rounded-lg px-2 py-0.5 text-xs focus:outline-none"
+                        style={{
+                          borderColor: p.posiciones === 0 ? '#fca5a5' : '#e8edf8',
+                          color: p.posiciones === 0 ? '#E52322' : '#254A96',
+                          fontWeight: 600,
+                        }}
+                      />
+                      <span className="text-xs" style={{ color: '#B9BBB7' }}>pos</span>
+                    </div>
+                    {p.material && (
+                      <span className="text-xs" style={{ color: '#B9BBB7' }}>{(p.peso / 1000).toFixed(1)} tn</span>
                     )}
                   </div>
                 </div>

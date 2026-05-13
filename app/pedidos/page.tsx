@@ -106,6 +106,7 @@ export default function PedidosPage() {
   // Edición
   const [editando, setEditando] = useState<EditState | null>(null)
   const [guardando, setGuardando] = useState(false)
+  const [recalculando, setRecalculando] = useState(false)
 
   // Comentario rápido
   const [modalComentario, setModalComentario] = useState<Pedido | null>(null)
@@ -391,6 +392,36 @@ export default function PedidosPage() {
     setGuardando(false)
   }
 
+  async function recalcularPosiciones(pedidoId: string) {
+    setRecalculando(true)
+    const res = await fetch('/api/recalcular-posiciones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pedido_id: pedidoId }),
+    })
+    const data = await res.json()
+    if (data.error) {
+      showToast(`Error al recalcular: ${data.error}`, 'err')
+    } else {
+      const r = data.resultados?.[0]
+      if (r) {
+        setPedidos(prev => prev.map(p => p.id === pedidoId
+          ? { ...p, volumen_total_m3: r.posiciones, peso_total_kg: r.peso_kg }
+          : p
+        ))
+        const sinMatch = r.items_sin_match ?? []
+        if (sinMatch.length > 0) {
+          showToast(`Recalculado: ${r.posiciones} pos · ${sinMatch.length} sin match: ${sinMatch.slice(0,2).join(', ')}${sinMatch.length > 2 ? '…' : ''}`, 'err')
+        } else {
+          showToast(`Posiciones recalculadas: ${r.posiciones} pos · ${(r.peso_kg / 1000).toFixed(1)} tn`)
+        }
+        if (userId) logAuditoria(userId, userNombre, 'Recalculó posiciones', 'Pedidos', { pedido_id: pedidoId, posiciones: r.posiciones, items_sin_match: sinMatch })
+      }
+      setEditando(null)
+    }
+    setRecalculando(false)
+  }
+
   function abrirTransferencia(p: Pedido) {
     const items = itemsMap[p.id] ?? []
     // Pre-cargar items del pedido (excluir Logística)
@@ -635,7 +666,7 @@ export default function PedidosPage() {
               </div>
             </div>
             <div className="flex gap-2 mt-5">
-              <button onClick={guardar} disabled={guardando}
+              <button onClick={guardar} disabled={guardando || recalculando}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
                 style={{ background: '#254A96' }}>
                 {guardando ? 'Guardando...' : 'Guardar'}
@@ -646,6 +677,14 @@ export default function PedidosPage() {
                 Cancelar
               </button>
             </div>
+            <button
+              onClick={() => recalcularPosiciones(editando.id)}
+              disabled={recalculando || guardando}
+              className="w-full mt-2 py-2 rounded-xl text-xs font-medium disabled:opacity-50"
+              style={{ background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0' }}
+              title="Vuelve a calcular posiciones y peso desde los productos registrados en el pedido">
+              {recalculando ? '⏳ Recalculando...' : '♻️ Recalcular posiciones desde productos'}
+            </button>
           </div>
         </div>
       )}

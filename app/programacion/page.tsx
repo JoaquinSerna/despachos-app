@@ -825,6 +825,7 @@ function ProgramacionInner() {
   const [flotaSinRevisar, setFlotaSinRevisar] = useState(false)
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [modalRutas, setModalRutas] = useState(false)
+  const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const enrichGenRef = useRef(0)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
@@ -923,8 +924,65 @@ function ProgramacionInner() {
     })
     setFlotaSinRevisar(flotaSinRevisar)
 
+    // Cargar vueltas cerradas manualmente para esta fecha/sucursal
+    const { data: vcmData } = await supabase
+      .from('vueltas_cerradas_manual')
+      .select('vuelta')
+      .eq('fecha', fecha)
+      .eq('sucursal', sucursal)
+    setVultasCerradasManual(new Set((vcmData ?? []).map((r: any) => r.vuelta as number)))
+
+    // Calcular camiones a ocultar por distancia máxima en vueltas pasadas
+    let camsVisibles = cams
+    if (vueltaActiva > 1) {
+      const { data: pedPasados } = await supabase
+        .from('pedidos')
+        .select('camion_id, vuelta, latitud, longitud')
+        .eq('fecha_entrega', fecha)
+        .eq('sucursal', sucursal)
+        .eq('estado', 'programado')
+        .lt('vuelta', vueltaActiva)
+        .not('camion_id', 'is', null)
+
+      const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
+      const ocultos = new Set<string>()
+
+      if (pedPasados && pedPasados.length > 0) {
+        // Agrupar por camión y vuelta
+        const porCamionVuelta: Record<string, Record<number, { lat: number; lng: number }[]>> = {}
+        for (const p of pedPasados) {
+          if (!p.camion_id || !p.vuelta) continue
+          if (!porCamionVuelta[p.camion_id]) porCamionVuelta[p.camion_id] = {}
+          if (!porCamionVuelta[p.camion_id][p.vuelta]) porCamionVuelta[p.camion_id][p.vuelta] = []
+          if (p.latitud && p.longitud) {
+            porCamionVuelta[p.camion_id][p.vuelta].push({ lat: p.latitud, lng: p.longitud })
+          }
+        }
+        for (const [camionCod, vueltas] of Object.entries(porCamionVuelta)) {
+          for (const [vStr, coords] of Object.entries(vueltas)) {
+            const v = parseInt(vStr)
+            if (coords.length === 0) continue
+            const maxDist = Math.max(...coords.map(c => distanciaKm(deposito.lat, deposito.lng, c.lat, c.lng)))
+            const maxVueltas = maxVueltasPorDistancia(maxDist)
+            const vultasASkip = Math.ceil(5 / maxVueltas) - 1
+            if (vultasASkip > 0 && vueltaActiva <= v + vultasASkip) {
+              ocultos.add(camionCod)
+            }
+          }
+        }
+      }
+
+      // No ocultar camiones que ya tienen pedidos en esta vuelta
+      const camionesEnActualVuelta = new Set(todosConItems.filter((p: any) => p.camion_id).map((p: any) => p.camion_id as string))
+      for (const cod of [...ocultos]) {
+        if (camionesEnActualVuelta.has(cod)) ocultos.delete(cod)
+      }
+
+      camsVisibles = cams.filter(c => !ocultos.has(c.codigo))
+    }
+
     const conLocalidad = todosConItems.map((p: any) => ({ ...p, localidad: localidadDeDireccion(p.direccion) }))
-    setPedidos(conLocalidad); setCamiones(cams); construirColumnas(conLocalidad, cams); setCargando(false)
+    setPedidos(conLocalidad); setCamiones(camsVisibles); construirColumnas(conLocalidad, camsVisibles); setCargando(false)
     enrichLocalidades(conLocalidad)
   }
 
@@ -1200,6 +1258,24 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
+  async function handleToggleVueltaCerrada(vuelta: number) {
+    const estaCerrada = vultasCerradasManual.has(vuelta)
+    try {
+      if (estaCerrada) {
+        await supabase.from('vueltas_cerradas_manual')
+          .delete().eq('fecha', fecha).eq('sucursal', sucursal).eq('vuelta', vuelta)
+        setVultasCerradasManual(prev => { const s = new Set(prev); s.delete(vuelta); return s })
+        showToast(`Vuelta ${vuelta} abierta`)
+      } else {
+        await supabase.from('vueltas_cerradas_manual')
+          .insert({ fecha, sucursal, vuelta, cerrada_por: userId || null })
+        setVultasCerradasManual(prev => new Set([...prev, vuelta]))
+        showToast(`Vuelta ${vuelta} cerrada manualmente`)
+      }
+      if (userId) logAuditoria(userId, userNombre, estaCerrada ? 'Abrió vuelta manualmente' : 'Cerró vuelta manualmente', 'Programación', { fecha, sucursal, vuelta })
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+  }
+
   const totalAsig = pedidos.filter(p => p.camion_id).length
   const totalSin = pedidos.length - totalAsig
 
@@ -1284,27 +1360,43 @@ function ProgramacionInner() {
               </select>
             </div>
           </div>
-          <div className="flex gap-1.5 pb-3 flex-wrap">
+          <div className="flex gap-1.5 pb-3 flex-wrap items-center">
             {VUELTAS.map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
               const badge = esFuera && contadorSinVuelta > 0
+              const cerradaManual = !esFuera && vultasCerradasManual.has(v.num)
               return (
-                <button key={v.num} onClick={() => setVueltaActiva(v.num)}
-                  className="relative px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                  style={{
-                    background: activo ? '#254A96' : '#f4f4f3',
-                    color: activo ? 'white' : '#666',
-                  }}>
-                  {v.label}
-                  {v.horario && <span className="text-xs opacity-70 ml-1">{v.horario}</span>}
-                  {badge && (
-                    <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center rounded-full font-bold text-white"
-                      style={{ minWidth: 17, height: 17, fontSize: 9, padding: '0 3px', background: '#E52322' }}>
-                      {contadorSinVuelta}
-                    </span>
+                <div key={v.num} className="flex items-center gap-0.5">
+                  <button onClick={() => setVueltaActiva(v.num)}
+                    className="relative px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+                    style={{
+                      background: activo ? '#254A96' : cerradaManual ? '#fde8e8' : '#f4f4f3',
+                      color: activo ? 'white' : cerradaManual ? '#E52322' : '#666',
+                    }}>
+                    {v.label}
+                    {cerradaManual && <span className="ml-1 text-xs">🔒</span>}
+                    {v.horario && !cerradaManual && <span className="text-xs opacity-70 ml-1">{v.horario}</span>}
+                    {badge && (
+                      <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center rounded-full font-bold text-white"
+                        style={{ minWidth: 17, height: 17, fontSize: 9, padding: '0 3px', background: '#E52322' }}>
+                        {contadorSinVuelta}
+                      </span>
+                    )}
+                  </button>
+                  {puedeEditarProg && !esFuera && (
+                    <button
+                      onClick={() => handleToggleVueltaCerrada(v.num)}
+                      title={cerradaManual ? `Abrir vuelta ${v.num}` : `Cerrar vuelta ${v.num} manualmente`}
+                      className="px-1.5 py-1 rounded text-xs transition-colors"
+                      style={{
+                        color: cerradaManual ? '#E52322' : '#B9BBB7',
+                        background: cerradaManual ? '#fde8e8' : '#f4f4f3',
+                      }}>
+                      {cerradaManual ? '🔒' : '🔓'}
+                    </button>
                   )}
-                </button>
+                </div>
               )
             })}
           </div>

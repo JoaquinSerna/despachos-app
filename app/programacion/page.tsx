@@ -855,7 +855,7 @@ function ProgramacionInner() {
       .select('*, prioridad, barrio_cerrado')
       .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
       .in('estado', ['pendiente', 'programado']).order('cliente')
-    q = vueltaActiva === VUELTA_FUERA ? q.is('vuelta', null) : q.eq('vuelta', vueltaActiva)
+    q = vueltaActiva === VUELTA_FUERA ? q.eq('vuelta', 0) : q.eq('vuelta', vueltaActiva)
     const { data: pd } = await q
     const pedidosBase = pd ?? []
     // Fetch items via API (admin key, bypasses RLS)

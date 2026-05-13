@@ -53,10 +53,20 @@ async function runSQL(query) {
 async function copiarTabla(nombre) {
   console.log(`\n📦 Copiando tabla: ${nombre}`)
 
-  const { data, error } = await prod.from(nombre).select('*')
-  if (error) {
-    console.error(`  ❌ Error leyendo ${nombre}:`, error.message)
-    return
+  // Leer en páginas de 1000 para superar el límite de PostgREST
+  const PAGE = 1000
+  let data = []
+  let offset = 0
+  while (true) {
+    const { data: page, error } = await prod.from(nombre).select('*').range(offset, offset + PAGE - 1)
+    if (error) {
+      console.error(`  ❌ Error leyendo ${nombre} (offset ${offset}):`, error.message)
+      return
+    }
+    if (!page || page.length === 0) break
+    data = [...data, ...page]
+    if (page.length < PAGE) break
+    offset += PAGE
   }
   console.log(`  ✅ ${data.length} filas leídas de producción`)
   if (data.length === 0) { console.log(`  ⏭️  Tabla vacía`); return }

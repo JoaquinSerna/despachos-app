@@ -159,6 +159,7 @@ export default function MetricasPage() {
   const primerDiaMes = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01` }
   const [fechaExportDesde, setFechaExportDesde] = useState(primerDiaMes)
   const [fechaExportHasta, setFechaExportHasta] = useState(hoy)
+  const [exportSucursales, setExportSucursales] = useState<string[]>([])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
@@ -169,6 +170,7 @@ export default function MetricasPage() {
       if (!tieneAcceso(data?.permisos, data?.rol, 'metricas')) { router.push('/dashboard'); return }
       if (data?.sucursal) {
         setFiltroSucursal(data.sucursal)
+        setExportSucursales([data.sucursal])
         // Recargar con la sucursal del usuario (el useEffect inicial usó '')
         if (vista === 'diaria') cargarDiaria(data.sucursal)
         else cargarMensual(data.sucursal)
@@ -200,7 +202,7 @@ export default function MetricasPage() {
       let flotQ = supabase.from('flota_dia')
         .select('fecha, camion_codigo, sucursal, km_ruta')
         .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta).eq('activo', true)
-      if (filtroSucursal) { pedQ = pedQ.eq('sucursal', filtroSucursal); flotQ = flotQ.eq('sucursal', filtroSucursal) }
+      if (exportSucursales.length > 0) { pedQ = pedQ.in('sucursal', exportSucursales); flotQ = flotQ.in('sucursal', exportSucursales) }
 
       const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }] = await Promise.all([
         pedQ, flotQ,
@@ -319,7 +321,7 @@ export default function MetricasPage() {
         }))
       ), 'Por sucursal')
 
-      const suf = filtroSucursal ? `-${filtroSucursal}` : ''
+      const suf = exportSucursales.length === 1 ? `-${exportSucursales[0]}` : exportSucursales.length > 1 ? `-${exportSucursales.join('+')}` : ''
       const nombre = fechaExportDesde === fechaExportHasta
         ? `despachos-app-${fechaExportDesde}${suf}.xlsx`
         : `despachos-app-${fechaExportDesde}-${fechaExportHasta}${suf}.xlsx`
@@ -637,6 +639,36 @@ export default function MetricasPage() {
               <input type="date" value={fechaExportHasta} onChange={e => setFechaExportHasta(e.target.value)}
                 className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                 style={{ borderColor: '#e8edf8' }} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                Sucursales {exportSucursales.length === 0 && <span style={{ color: '#B9BBB7', fontWeight: 400 }}>(todas)</span>}
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {SUCURSALES.map(s => {
+                  const sel = exportSucursales.includes(s)
+                  return (
+                    <button key={s} type="button"
+                      onClick={() => setExportSucursales(prev => sel ? prev.filter(x => x !== s) : [...prev, s])}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                      style={{
+                        borderColor: sel ? '#254A96' : '#e8edf8',
+                        background: sel ? '#e8edf8' : 'white',
+                        color: sel ? '#254A96' : '#999',
+                      }}>
+                      {s}
+                    </button>
+                  )
+                })}
+                {exportSucursales.length > 0 && (
+                  <button type="button" onClick={() => setExportSucursales([])}
+                    className="px-2 py-1.5 rounded-lg text-xs border transition-colors"
+                    style={{ borderColor: '#e8edf8', color: '#B9BBB7', background: 'white' }}
+                    title="Limpiar filtro (exportar todas)">
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
             <button onClick={exportarExcel} disabled={exportando}
               className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"

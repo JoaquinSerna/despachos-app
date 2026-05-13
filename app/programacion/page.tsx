@@ -915,13 +915,15 @@ function ProgramacionInner() {
 
     const { data: cd } = todosCodigos.length > 0 ? await supabase.from('camiones_flota').select('*').in('codigo', todosCodigos).eq('activo', true) : { data: [] }
 
-    // Enriquecer con metadata de sucursal extra
-    const cams = (cd ?? []).map((c: any) => {
-      const extra = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
-      return extra
-        ? { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
-        : c
-    })
+    // Enriquecer con metadata de sucursal extra y ordenar por código
+    const cams = (cd ?? [])
+      .map((c: any) => {
+        const extra = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
+        return extra
+          ? { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
+          : c
+      })
+      .sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
     setFlotaSinRevisar(flotaSinRevisar)
 
     // Cargar vueltas cerradas manualmente para esta fecha/sucursal

@@ -137,6 +137,8 @@ interface DatosVuelta {
   distanciaKm: number
   kmReal: boolean          // true = calculado por Valhalla, false = estimado en línea recta
   tiempoTrasladoMin: number | null  // duración de ruta según Valhalla (null hasta que se calcule)
+  horaInicioVuelta: string | null   // desde vueltas_tiempos
+  horaFinVuelta: string | null      // desde vueltas_tiempos
   pedidosConUbicacion: number
   detalle: PedidoDetalle[]
 }
@@ -237,11 +239,19 @@ export default function MetricasPage() {
         .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta).eq('activo', true)
       if (exportSucursales.length > 0) { pedQ = pedQ.in('sucursal', exportSucursales); flotQ = flotQ.in('sucursal', exportSucursales) }
 
-      const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }, { data: matsExport }] = await Promise.all([
+      const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }, { data: matsExport }, { data: vueltasTiemposExport }] = await Promise.all([
         pedQ, flotQ,
         supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
         supabase.from('materiales').select('nombre, tipo_carga'),
+        supabase.from('vueltas_tiempos').select('camion_codigo, fecha, vuelta, hora_inicio, hora_fin')
+          .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta),
       ])
+
+      // Mapa: "camion|fecha|vuelta" → { hora_inicio, hora_fin }
+      const vueltaTimingExMap: Record<string, { hora_inicio: string | null; hora_fin: string | null }> = {}
+      for (const t of vueltasTiemposExport ?? []) {
+        vueltaTimingExMap[`${t.camion_codigo}|${t.fecha}|${t.vuelta}`] = { hora_inicio: t.hora_inicio ?? null, hora_fin: t.hora_fin ?? null }
+      }
 
       const camionMap: Record<string, any> = {}
       for (const c of camionesData ?? []) camionMap[c.codigo] = c
@@ -407,10 +417,18 @@ export default function MetricasPage() {
           const trasMin = distKmEx > 0 ? Math.round(distKmEx * 1.3 / 40 * 60) : 0
           const totalMin = trasMin + descMin
 
-          // Real a nivel día (hora_inicio = inicio V1, hora_fin = último cierre)
-          const hInicio = flota?.hora_inicio ? new Date(flota.hora_inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
-          const hFin = flota?.hora_fin ? new Date(flota.hora_fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
-          const durReal = flota?.hora_inicio && flota?.hora_fin
+          // Tiempos reales por vuelta (desde vueltas_tiempos)
+          const timingV = vueltaTimingExMap[`${g.camion}|${g.fecha}|${g.vuelta}`]
+          const hInicioV = timingV?.hora_inicio ? new Date(timingV.hora_inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const hFinV = timingV?.hora_fin ? new Date(timingV.hora_fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const durRealV = timingV?.hora_inicio && timingV?.hora_fin
+            ? Math.round((new Date(timingV.hora_fin).getTime() - new Date(timingV.hora_inicio).getTime()) / 60000)
+            : null
+
+          // Real a nivel día (para referencia)
+          const hInicioDia = flota?.hora_inicio ? new Date(flota.hora_inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const hFinDia = flota?.hora_fin ? new Date(flota.hora_fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const durRealDia = flota?.hora_inicio && flota?.hora_fin
             ? Math.round((new Date(flota.hora_fin).getTime() - new Date(flota.hora_inicio).getTime()) / 60000)
             : null
 
@@ -429,10 +447,13 @@ export default function MetricasPage() {
             'T. descarga est. (min)': descMin || '',
             'T. total est. (min)': totalMin || '',
             'T. total est.': totalMin > 0 ? formatMinutos(totalMin) : '',
-            'Inicio día (real)': hInicio,
-            'Fin día (real)': hFin,
-            'Duración día (min)': durReal ?? '',
-            'Duración día': durReal ? formatMinutos(durReal) : '',
+            'Inicio vuelta (real)': hInicioV,
+            'Fin vuelta (real)': hFinV,
+            'Duración vuelta (min)': durRealV ?? '',
+            'Duración vuelta': durRealV ? formatMinutos(durRealV) : '',
+            'Inicio día': hInicioDia,
+            'Fin día': hFinDia,
+            'Duración día (min)': durRealDia ?? '',
             'Km reales día': flota?.km_ruta ?? '',
           }
         })
@@ -454,13 +475,20 @@ export default function MetricasPage() {
     setLoading(true)
     const sucursal = sucursalParam !== undefined ? sucursalParam : filtroSucursal
 
-    const [{ data: flotaDia }, { data: pedidosData }, { data: camionesData }] = await Promise.all([
+    const [{ data: flotaDia }, { data: pedidosData }, { data: camionesData }, { data: vueltasTiemposData }] = await Promise.all([
       supabase.from('flota_dia').select('camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta').eq('fecha', fecha).eq('activo', true),
       supabase.from('pedidos')
         .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
       supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+      supabase.from('vueltas_tiempos').select('camion_codigo, vuelta, hora_inicio, hora_fin').eq('fecha', fecha),
     ])
+
+    // Mapa: "camion_codigo|vuelta" → { hora_inicio, hora_fin }
+    const vueltaTimingMap: Record<string, { hora_inicio: string | null; hora_fin: string | null }> = {}
+    for (const t of vueltasTiemposData ?? []) {
+      vueltaTimingMap[`${t.camion_codigo}|${t.vuelta}`] = { hora_inicio: t.hora_inicio ?? null, hora_fin: t.hora_fin ?? null }
+    }
 
     const choferIds = (flotaDia ?? []).filter((f: any) => f.chofer_id).map((f: any) => f.chofer_id)
     const pedidoIds = (pedidosData ?? []).map((p: any) => p.id)
@@ -532,6 +560,8 @@ export default function MetricasPage() {
           distanciaKm: dist,
           kmReal: false,
           tiempoTrasladoMin: null,
+          horaInicioVuelta: vueltaTimingMap[`${camionCodigo}|${v}`]?.hora_inicio ?? null,
+          horaFinVuelta: vueltaTimingMap[`${camionCodigo}|${v}`]?.hora_fin ?? null,
           pedidosConUbicacion: pv.filter((p: any) => p.latitud && p.longitud).length,
           detalle: pv
             .sort((a: any, b: any) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
@@ -1056,6 +1086,22 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                             <span style={{ color: '#f59e0b' }}>({v.pedidosConUbicacion}/{v.pedidos} con ubic.)</span>
                           )}
                         </div>
+                        {/* Tiempos reales de la vuelta */}
+                        {(v.horaInicioVuelta || v.horaFinVuelta) && (
+                          <div className="flex items-center justify-between text-xs pt-1" style={{ borderTop: '1px solid #e8edf8' }}>
+                            <span style={{ color: '#065f46', fontWeight: 600 }}>
+                              {v.horaInicioVuelta ? `▶ ${formatHora(v.horaInicioVuelta)}` : ''}
+                              {v.horaInicioVuelta && v.horaFinVuelta ? ' → ' : ''}
+                              {v.horaFinVuelta ? `⏹ ${formatHora(v.horaFinVuelta)}` : ''}
+                            </span>
+                            {v.horaInicioVuelta && v.horaFinVuelta && (
+                              <span style={{ color: '#065f46', fontWeight: 600 }}>
+                                {duracion(v.horaInicioVuelta, v.horaFinVuelta)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {/* Tiempo estimado */}
                         {(() => {
                           const esTrailer = /trailer|semi/i.test(d.tipo_unidad ?? '')

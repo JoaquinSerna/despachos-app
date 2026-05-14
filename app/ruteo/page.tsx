@@ -60,6 +60,7 @@ export default function RuteoPage() {
   const [horaInicio, setHoraInicio] = useState<string | null>(null)
   const [horaFin, setHoraFin] = useState<string | null>(null)
   const [vueltasIniciadas, setVueltasIniciadas] = useState<Set<number>>(new Set())
+  const [vueltasTimings, setVueltasTimings] = useState<Record<number, { hora_inicio: string | null; hora_fin: string | null }>>({})
   const [kmRuta, setKmRuta] = useState<number | null>(null)
   const [guardandoRuta, setGuardandoRuta] = useState(false)
 
@@ -196,15 +197,19 @@ export default function RuteoPage() {
 
   const cargarInfoRuta = async () => {
     if (!camionSeleccionado) return
-    const { data } = await supabase
-      .from('flota_dia')
-      .select('hora_inicio, hora_fin, km_ruta')
-      .eq('fecha', fecha)
-      .eq('camion_codigo', camionSeleccionado)
-      .single()
-    setHoraInicio(data?.hora_inicio ?? null)
-    setHoraFin(data?.hora_fin ?? null)
-    setKmRuta(data?.km_ruta ?? null)
+    const [{ data: flotaData }, { data: timingsData }] = await Promise.all([
+      supabase.from('flota_dia').select('hora_inicio, hora_fin, km_ruta').eq('fecha', fecha).eq('camion_codigo', camionSeleccionado).single(),
+      supabase.from('vueltas_tiempos').select('vuelta, hora_inicio, hora_fin').eq('fecha', fecha).eq('camion_codigo', camionSeleccionado),
+    ])
+    setHoraInicio(flotaData?.hora_inicio ?? null)
+    setHoraFin(flotaData?.hora_fin ?? null)
+    setKmRuta(flotaData?.km_ruta ?? null)
+    const timings: Record<number, { hora_inicio: string | null; hora_fin: string | null }> = {}
+    for (const t of timingsData ?? []) timings[t.vuelta] = { hora_inicio: t.hora_inicio ?? null, hora_fin: t.hora_fin ?? null }
+    setVueltasTimings(timings)
+    // Vueltas con hora_inicio ya registrada = iniciadas (para restablecer estado al recargar)
+    const conInicio = (timingsData ?? []).filter((t: any) => t.hora_inicio).map((t: any) => t.vuelta as number)
+    if (conInicio.length > 0) setVueltasIniciadas(prev => new Set([...prev, ...conInicio]))
   }
 
   const iniciarRuta = async () => {
@@ -212,13 +217,23 @@ export default function RuteoPage() {
     setGuardandoRuta(true)
     const ahora = new Date().toISOString()
 
-    // Solo guardar hora_inicio en flota_dia la primera vez (primera vuelta del día)
+    // Guardar hora_inicio en flota_dia solo la primera vez (primera vuelta del día)
     if (!horaInicio) {
       await supabase.from('flota_dia')
         .update({ hora_inicio: ahora })
         .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
       setHoraInicio(ahora)
     }
+
+    // Guardar hora_inicio en vueltas_tiempos para esta vuelta específica
+    await supabase.from('vueltas_tiempos').upsert(
+      { camion_codigo: camionSeleccionado, fecha, vuelta: vueltaActiva, hora_inicio: ahora },
+      { onConflict: 'camion_codigo,fecha,vuelta' }
+    )
+    setVueltasTimings(prev => ({
+      ...prev,
+      [vueltaActiva!]: { hora_inicio: ahora, hora_fin: prev[vueltaActiva!]?.hora_fin ?? null },
+    }))
 
     // Actualizar SOLO los pedidos de esta vuelta por ID — no bulk filter
     const aIniciar = pedidos.filter(p => p.vuelta === vueltaActiva && p.estado === 'programado')
@@ -248,12 +263,35 @@ export default function RuteoPage() {
     if (!camionSeleccionado) return
     setGuardandoRuta(true)
     const ahora = new Date().toISOString()
-    const { error } = await supabase.from('flota_dia')
-      .update({ hora_fin: ahora })
-      .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
-    if (!error) {
+    const vueltaCerrada = vueltaActiva
+
+    const [flotaResult, timingResult] = await Promise.all([
+      // Actualizar hora_fin en flota_dia (día completo — última vuelta sobreescribe)
+      supabase.from('flota_dia').update({ hora_fin: ahora }).eq('fecha', fecha).eq('camion_codigo', camionSeleccionado),
+      // Guardar hora_fin en vueltas_tiempos para esta vuelta específica
+      vueltaCerrada
+        ? supabase.from('vueltas_tiempos').upsert(
+            {
+              camion_codigo: camionSeleccionado,
+              fecha,
+              vuelta: vueltaCerrada,
+              hora_inicio: vueltasTimings[vueltaCerrada]?.hora_inicio ?? null,
+              hora_fin: ahora,
+            },
+            { onConflict: 'camion_codigo,fecha,vuelta' }
+          )
+        : Promise.resolve({ error: null }),
+    ])
+
+    if (!flotaResult.error) {
       setHoraFin(ahora)
-      showToast(vueltaActiva ? `Vuelta ${vueltaActiva} cerrada` : 'Ruta finalizada')
+      if (vueltaCerrada) {
+        setVueltasTimings(prev => ({
+          ...prev,
+          [vueltaCerrada]: { hora_inicio: prev[vueltaCerrada]?.hora_inicio ?? null, hora_fin: ahora },
+        }))
+      }
+      showToast(vueltaCerrada ? `Vuelta ${vueltaCerrada} cerrada` : 'Ruta finalizada')
     } else showToast('Error al finalizar ruta', 'err')
     setGuardandoRuta(false)
   }
@@ -263,9 +301,11 @@ export default function RuteoPage() {
   }
 
   function duracionRuta(): string | null {
-    if (!horaInicio) return null
-    const fin = horaFin ? new Date(horaFin) : new Date()
-    const min = Math.round((fin.getTime() - new Date(horaInicio).getTime()) / 60000)
+    const timingVuelta = vueltaActiva ? vueltasTimings[vueltaActiva] : null
+    const inicio = timingVuelta?.hora_inicio ?? horaInicio
+    if (!inicio) return null
+    const fin = timingVuelta?.hora_fin ? new Date(timingVuelta.hora_fin) : new Date()
+    const min = Math.round((fin.getTime() - new Date(inicio).getTime()) / 60000)
     const hs = Math.floor(min / 60); const m = min % 60
     return hs > 0 ? `${hs}h ${m}min` : `${m}min`
   }
@@ -1179,37 +1219,52 @@ export default function RuteoPage() {
                     ) : (
                       <div className="space-y-3">
                         <div className="grid grid-cols-3 gap-2 text-center">
-                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
-                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Inicio</p>
-                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{formatHora(horaInicio!)}</p>
-                          </div>
-                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
-                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Duración</p>
-                            <p className="font-bold text-sm" style={{ color: horaFin ? '#065f46' : '#254A96' }}>{duracionRuta()}</p>
-                          </div>
-                          <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
-                            <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Velocidad</p>
-                            <p className="font-bold text-sm" style={{ color: '#254A96' }}>{minPorKm() ?? '—'}</p>
-                          </div>
-                        </div>
-                        {horaFin && !vueltaActiva ? (
-                          <div className="text-center py-2 rounded-xl text-sm font-semibold" style={{ background: '#d1fae5', color: '#065f46' }}>
-                            ✓ Ruta finalizada a las {formatHora(horaFin)}
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            {horaFin && (
-                              <p className="text-xs text-center" style={{ color: '#B9BBB7' }}>
-                                Vuelta anterior cerrada a las {formatHora(horaFin)}
-                              </p>
-                            )}
-                            <button onClick={finalizarRuta} disabled={guardandoRuta}
-                              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-                              style={{ background: '#E52322' }}>
-                              {guardandoRuta ? 'Guardando...' : vueltaActiva ? `⏹ Cerrar vuelta ${vueltaActiva}` : '⏹ Finalizar ruta'}
-                            </button>
-                          </div>
-                        )}
+                          {(() => {
+                            const tvActiva = vueltaActiva ? vueltasTimings[vueltaActiva] : null
+                            const inicioMostrar = tvActiva?.hora_inicio ?? horaInicio
+                            const finMostrar = tvActiva?.hora_fin ?? null
+                            // Buscar vuelta anterior con fin registrado
+                            const vueltasConFin = Object.entries(vueltasTimings)
+                              .filter(([v, t]) => t.hora_fin && vueltaActiva && Number(v) < vueltaActiva)
+                              .sort((a, b) => Number(b[0]) - Number(a[0]))
+                            const prevVueltaFin = vueltasConFin[0]
+                            return (
+                              <>
+                                <div className="grid grid-cols-3 gap-2 text-center">
+                                  <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                                    <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Inicio V{vueltaActiva}</p>
+                                    <p className="font-bold text-sm" style={{ color: '#254A96' }}>{inicioMostrar ? formatHora(inicioMostrar) : '—'}</p>
+                                  </div>
+                                  <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                                    <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Duración</p>
+                                    <p className="font-bold text-sm" style={{ color: finMostrar ? '#065f46' : '#254A96' }}>{duracionRuta()}</p>
+                                  </div>
+                                  <div className="rounded-lg p-2" style={{ background: '#f4f4f3' }}>
+                                    <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>Velocidad</p>
+                                    <p className="font-bold text-sm" style={{ color: '#254A96' }}>{minPorKm() ?? '—'}</p>
+                                  </div>
+                                </div>
+                                {!vueltaActiva && horaFin ? (
+                                  <div className="text-center py-2 rounded-xl text-sm font-semibold" style={{ background: '#d1fae5', color: '#065f46' }}>
+                                    ✓ Ruta finalizada a las {formatHora(horaFin)}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1">
+                                    {prevVueltaFin && (
+                                      <p className="text-xs text-center" style={{ color: '#B9BBB7' }}>
+                                        V{prevVueltaFin[0]} cerrada a las {formatHora(prevVueltaFin[1].hora_fin!)}
+                                      </p>
+                                    )}
+                                    <button onClick={finalizarRuta} disabled={guardandoRuta}
+                                      className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                                      style={{ background: '#E52322' }}>
+                                      {guardandoRuta ? 'Guardando...' : vueltaActiva ? `⏹ Cerrar vuelta ${vueltaActiva}` : '⏹ Finalizar ruta'}
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )
+                          })()}
                       </div>
                     )}
                   </div>

@@ -525,34 +525,39 @@ export default function MetricasPage() {
 
     if (reqs.length === 0) return
 
-    // Secuencial para no saturar el servidor OSRM demo con N pedidos paralelos.
-    // Cada resultado actualiza la UI en cuanto llega (km en tiempo real).
+    // Secuencial para no saturar Valhalla. Cada resultado actualiza la UI en cuanto llega.
     for (const r of reqs) {
-      try {
-        const res = await fetch(`/api/km-ruta?coords=${encodeURIComponent(r.coords)}`)
-        if (!res.ok) continue
-        const json = await res.json()
-        const distM: number | null = json.distanciaM ?? null
-        const durMin: number | null = json.duracionMin ?? null
-        if (!distM) continue
+      let json: any = null
+      // Reintentar una vez si falla (Valhalla puede tener picos de latencia)
+      for (let intento = 0; intento < 2 && json === null; intento++) {
+        try {
+          if (intento > 0) await new Promise(res => setTimeout(res, 3000))
+          const res = await fetch(`/api/km-ruta?coords=${encodeURIComponent(r.coords)}`)
+          if (res.ok) json = await res.json()
+        } catch { /* ignorar, se reintentará */ }
+      }
+      if (!json) continue
 
-        setDatosDia(prev => {
-          const next = prev.map(d => ({
-            ...d,
-            vueltas: d.vueltas.map(v => ({ ...v })),
-          }))
-          const ci = next.findIndex(d => d.camion_codigo === r.camionCodigo)
-          if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
+      const distM: number | null = json.distanciaM ?? null
+      const durMin: number | null = json.duracionMin ?? null
+      if (!distM && durMin === null) continue   // nada útil
+
+      setDatosDia(prev => {
+        const next = prev.map(d => ({
+          ...d,
+          vueltas: d.vueltas.map(v => ({ ...v })),
+        }))
+        const ci = next.findIndex(d => d.camion_codigo === r.camionCodigo)
+        if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
+          if (distM) {
             next[ci].vueltas[r.vueltaIdx].distanciaKm = Math.round(distM / 1000)
             next[ci].vueltas[r.vueltaIdx].kmReal = true
-            if (durMin !== null) next[ci].vueltas[r.vueltaIdx].tiempoTrasladoMin = durMin
-            next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
           }
-          return next
-        })
-      } catch {
-        // ignorar fallos individuales, la estimación ~km permanece
-      }
+          if (durMin !== null) next[ci].vueltas[r.vueltaIdx].tiempoTrasladoMin = durMin
+          next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
+        }
+        return next
+      })
     }
   }
 
@@ -972,14 +977,23 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                           const esTrailer = /trailer|semi/i.test(d.tipo_unidad ?? '')
                           const descMin = calcularTiempoDescargaMin(v.detalle, esTrailer)
                           const trasMin = v.tiempoTrasladoMin
-                          if (descMin === 0 && trasMin === null) return null
-                          const totalMin = (trasMin ?? 0) + descMin
+                          // Fallback: estimación de traslado desde km en línea recta
+                          // (factor 1.3 de desvío de ruta × 40 km/h promedio)
+                          const trasEst = trasMin === null && v.distanciaKm > 0
+                            ? Math.round(v.distanciaKm * 1.3 / 40 * 60)
+                            : null
+                          const trasUsado = trasMin ?? trasEst
+                          if (descMin === 0 && trasUsado === null) return null
+                          const totalMin = (trasUsado ?? 0) + descMin
                           return (
                             <div className="text-xs pt-1" style={{ borderTop: '1px solid #e8edf8' }}>
                               <div className="flex items-center justify-between">
                                 <span style={{ color: '#7c3aed', fontWeight: 600 }}>⏱ Est: {formatMinutos(totalMin)}</span>
                                 <span style={{ color: '#B9BBB7', fontSize: 10 }}>
-                                  {trasMin !== null ? formatMinutos(trasMin) : '?'} traslado + {formatMinutos(descMin)} descarga
+                                  {trasUsado !== null
+                                    ? `${trasMin === null ? '~' : ''}${formatMinutos(trasUsado)} traslado + `
+                                    : ''
+                                  }{formatMinutos(descMin)} descarga
                                 </span>
                               </div>
                             </div>

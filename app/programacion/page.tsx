@@ -694,6 +694,12 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
             <div className="flex justify-between items-center mb-1">
               <span className="font-bold text-sm" style={{ color: '#254A96' }}>{camion.codigo}</span>
               <div className="flex gap-1 items-center">
+                {(camion as any)._en_ruta && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#fff3e0', color: '#e65100' }}
+                    title={`Posiblemente en ruta — salió en V${(camion as any)._en_ruta_desde_vuelta} con entrega a ~${(camion as any)._en_ruta_dist_km}km`}>
+                    🚛 V{(camion as any)._en_ruta_desde_vuelta} en ruta
+                  </span>
+                )}
                 {(camion as any)._desde_sucursal && (
                   <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#f5f3ff', color: '#7c3aed' }}
                     title={`Viene de ${(camion as any)._desde_sucursal}, disponible desde V${(camion as any)._disponible_desde_vuelta ?? 2}`}>
@@ -934,8 +940,8 @@ function ProgramacionInner() {
       .eq('sucursal', sucursal)
     setVultasCerradasManual(new Set((vcmData ?? []).map((r: any) => r.vuelta as number)))
 
-    // Calcular camiones a ocultar por distancia máxima en vueltas pasadas
-    let camsVisibles = cams
+    // Marcar camiones posiblemente en ruta según distancia máxima en vueltas pasadas
+    let camsConAviso = cams
     if (vueltaActiva > 1) {
       const { data: pedPasados } = await supabase
         .from('pedidos')
@@ -947,10 +953,10 @@ function ProgramacionInner() {
         .not('camion_id', 'is', null)
 
       const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
-      const ocultos = new Set<string>()
+      // cod → { vuelta, distKm } de la vuelta pasada más reciente que genera aviso
+      const enRuta: Record<string, { vuelta: number; distKm: number }> = {}
 
       if (pedPasados && pedPasados.length > 0) {
-        // Agrupar por camión y vuelta
         const porCamionVuelta: Record<string, Record<number, { lat: number; lng: number }[]>> = {}
         for (const p of pedPasados) {
           if (!p.camion_id || !p.vuelta) continue
@@ -968,23 +974,24 @@ function ProgramacionInner() {
             const maxVueltas = maxVueltasPorDistancia(maxDist)
             const vultasASkip = Math.ceil(5 / maxVueltas) - 1
             if (vultasASkip > 0 && vueltaActiva <= v + vultasASkip) {
-              ocultos.add(camionCod)
+              // Guardar la vuelta más reciente que genera el aviso
+              if (!enRuta[camionCod] || v > enRuta[camionCod].vuelta) {
+                enRuta[camionCod] = { vuelta: v, distKm: Math.round(maxDist) }
+              }
             }
           }
         }
       }
 
-      // No ocultar camiones que ya tienen pedidos en esta vuelta
-      const camionesEnActualVuelta = new Set(todosConItems.filter((p: any) => p.camion_id).map((p: any) => p.camion_id as string))
-      for (const cod of [...ocultos]) {
-        if (camionesEnActualVuelta.has(cod)) ocultos.delete(cod)
-      }
-
-      camsVisibles = cams.filter(c => !ocultos.has(c.codigo))
+      // Marcar camiones con aviso (siempre se muestran, nunca se ocultan)
+      camsConAviso = cams.map(c => enRuta[c.codigo]
+        ? { ...c, _en_ruta: true, _en_ruta_desde_vuelta: enRuta[c.codigo].vuelta, _en_ruta_dist_km: enRuta[c.codigo].distKm }
+        : c
+      )
     }
 
     const conLocalidad = todosConItems.map((p: any) => ({ ...p, localidad: localidadDeDireccion(p.direccion) }))
-    setPedidos(conLocalidad); setCamiones(camsVisibles); construirColumnas(conLocalidad, camsVisibles); setCargando(false)
+    setPedidos(conLocalidad); setCamiones(camsConAviso); construirColumnas(conLocalidad, camsConAviso); setCargando(false)
     enrichLocalidades(conLocalidad)
   }
 

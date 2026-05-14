@@ -227,23 +227,41 @@ export default function MetricasPage() {
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
 
-      // Queries paralelas: pedidos + flota + camiones para el intervalo
+      // Queries paralelas: pedidos + flota + camiones + materiales para el intervalo
       let pedQ = supabase.from('pedidos')
-        .select('nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud')
+        .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud, barrio_cerrado, orden_entrega')
         .gte('fecha_entrega', fechaExportDesde).lte('fecha_entrega', fechaExportHasta)
         .neq('estado', 'cancelado').order('fecha_entrega').order('sucursal').order('cliente')
       let flotQ = supabase.from('flota_dia')
-        .select('fecha, camion_codigo, sucursal, km_ruta')
+        .select('fecha, camion_codigo, sucursal, km_ruta, hora_inicio, hora_fin')
         .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta).eq('activo', true)
       if (exportSucursales.length > 0) { pedQ = pedQ.in('sucursal', exportSucursales); flotQ = flotQ.in('sucursal', exportSucursales) }
 
-      const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }] = await Promise.all([
+      const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }, { data: matsExport }] = await Promise.all([
         pedQ, flotQ,
         supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+        supabase.from('materiales').select('nombre, tipo_carga'),
       ])
 
       const camionMap: Record<string, any> = {}
       for (const c of camionesData ?? []) camionMap[c.codigo] = c
+
+      // Cargar pedido_items para detectar hierros
+      const pedidoIdsExport = (pedidosData ?? []).map((p: any) => p.id)
+      const { data: itemsExport } = pedidoIdsExport.length > 0
+        ? await supabase.from('pedido_items').select('pedido_id, nombre').in('pedido_id', pedidoIdsExport)
+        : { data: [] as any[] }
+
+      const matTipoMapEx: Record<string, string> = {}
+      for (const m of matsExport ?? []) matTipoMapEx[m.nombre] = m.tipo_carga
+      const pedidoEsHierrosEx: Record<string, boolean> = {}
+      for (const item of itemsExport ?? []) {
+        if (TIPOS_CARGA_HIERRO.has(matTipoMapEx[item.nombre] ?? '')) pedidoEsHierrosEx[item.pedido_id] = true
+      }
+
+      // Mapa flota: "camion|fecha" → { hora_inicio, hora_fin, km_ruta }
+      const flotaMapEx: Record<string, any> = {}
+      for (const f of flotaData ?? []) flotaMapEx[`${f.camion_codigo}|${f.fecha}`] = f
 
       // Hoja 1: Pedidos detalle
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
@@ -353,6 +371,72 @@ export default function MetricasPage() {
           'Kg totales': Math.round(d.kg), 'Posiciones': Math.round(d.pos),
         }))
       ), 'Por sucursal')
+
+      // Hoja 5: Por vuelta — estimación de tiempos
+      const vueltaGroupsEx: Record<string, { camion: string; fecha: string; vuelta: number; peds: any[] }> = {}
+      for (const p of pedidosData ?? []) {
+        if (!p.camion_id) continue
+        const key = `${p.camion_id}|${p.fecha_entrega}|${p.vuelta ?? 0}`
+        if (!vueltaGroupsEx[key]) vueltaGroupsEx[key] = { camion: p.camion_id, fecha: p.fecha_entrega, vuelta: p.vuelta ?? 0, peds: [] }
+        vueltaGroupsEx[key].peds.push(p)
+      }
+      const porVueltaRows = Object.values(vueltaGroupsEx)
+        .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion.localeCompare(b.camion) || a.vuelta - b.vuelta)
+        .map(g => {
+          const cam = camionMap[g.camion]
+          const flota = flotaMapEx[`${g.camion}|${g.fecha}`]
+          const esTrailerEx = /trailer|semi/i.test(cam?.tipo_unidad ?? '')
+          const depot = DEPOSITOS[cam?.sucursal ?? ''] ?? { lat: -34.9205, lng: -57.9536 }
+
+          const kg = g.peds.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
+          const pos = g.peds.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
+          const distKmEx = calcularDistanciaRuta(
+            g.peds.map((p: any) => ({ latitud: p.latitud, longitud: p.longitud, orden_entrega: p.orden_entrega })),
+            depot
+          )
+
+          const detEx: PedidoDetalle[] = g.peds.map((p: any) => ({
+            id: p.id, nv: p.nv, cliente: p.cliente, direccion: p.direccion,
+            sucursal: p.sucursal, estado: p.estado, estado_pago: p.estado_pago ?? null,
+            notas: p.notas ?? null, tipo: p.tipo ?? null,
+            peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
+            orden_entrega: p.orden_entrega ?? null, latitud: p.latitud ?? null, longitud: p.longitud ?? null,
+            barrio_cerrado: p.barrio_cerrado ?? null, esHierros: pedidoEsHierrosEx[p.id] ?? false,
+          }))
+          const descMin = calcularTiempoDescargaMin(detEx, esTrailerEx)
+          const trasMin = distKmEx > 0 ? Math.round(distKmEx * 1.3 / 40 * 60) : 0
+          const totalMin = trasMin + descMin
+
+          // Real a nivel día (hora_inicio = inicio V1, hora_fin = último cierre)
+          const hInicio = flota?.hora_inicio ? new Date(flota.hora_inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const hFin = flota?.hora_fin ? new Date(flota.hora_fin).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : ''
+          const durReal = flota?.hora_inicio && flota?.hora_fin
+            ? Math.round((new Date(flota.hora_fin).getTime() - new Date(flota.hora_inicio).getTime()) / 60000)
+            : null
+
+          return {
+            'Camión': g.camion,
+            'Tipo': cam?.tipo_unidad ?? '',
+            'Sucursal': cam?.sucursal ?? '',
+            'Fecha': g.fecha,
+            'Día': new Date(g.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
+            'Vuelta': g.vuelta === 0 ? 'Fuera prog.' : `V${g.vuelta}`,
+            'Pedidos': g.peds.length,
+            'Kg': Math.round(kg),
+            'Posiciones': Math.round(pos),
+            'Km est. ruta': distKmEx || '',
+            'T. traslado est. (min)': trasMin || '',
+            'T. descarga est. (min)': descMin || '',
+            'T. total est. (min)': totalMin || '',
+            'T. total est.': totalMin > 0 ? formatMinutos(totalMin) : '',
+            'Inicio día (real)': hInicio,
+            'Fin día (real)': hFin,
+            'Duración día (min)': durReal ?? '',
+            'Duración día': durReal ? formatMinutos(durReal) : '',
+            'Km reales día': flota?.km_ruta ?? '',
+          }
+        })
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porVueltaRows), 'Por vuelta')
 
       const suf = exportSucursales.length === 1 ? `-${exportSucursales[0]}` : exportSucursales.length > 1 ? `-${exportSucursales.join('+')}` : ''
       const nombre = fechaExportDesde === fechaExportHasta

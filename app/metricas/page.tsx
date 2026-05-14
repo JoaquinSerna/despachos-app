@@ -78,6 +78,35 @@ function calcularDistanciaRuta(pedidos: { latitud: number | null; longitud: numb
   return Math.round(dist)
 }
 
+function formatMinutos(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = Math.round(min % 60)
+  if (h > 0) return m > 0 ? `${h}h ${m}min` : `${h}h`
+  return `${m}min`
+}
+
+function calcularTiempoDescargaMin(pedidos: PedidoDetalle[], esTrailer: boolean): number {
+  if (pedidos.length === 0) return 0
+  const totalKg = pedidos.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0)
+  const totalPos = pedidos.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
+  // Hierros/perfilería: densidad kg/posición > 350 → descarga única 20 min
+  if (totalPos > 0 && totalKg / totalPos > 350) return 20
+  // Pallets/bolsones: 3 min/pos por pedido, con reglas de barrio cerrado
+  let total = 0
+  for (const p of pedidos) {
+    const pos = p.volumen_total_m3 ?? 0
+    if (pos <= 0) continue
+    if (p.barrio_cerrado) {
+      const nIngresos = Math.ceil(pos / 3)
+      const esperaPorIngreso = esTrailer ? 15 : 10   // +5 por desenganche si trailer
+      total += nIngresos * esperaPorIngreso + pos * 3
+    } else {
+      total += pos * 3
+    }
+  }
+  return Math.round(total)
+}
+
 interface PedidoDetalle {
   id: string
   nv: string
@@ -93,6 +122,7 @@ interface PedidoDetalle {
   orden_entrega: number | null
   latitud: number | null
   longitud: number | null
+  barrio_cerrado: boolean | null
 }
 
 interface DatosVuelta {
@@ -103,7 +133,8 @@ interface DatosVuelta {
   pctPos: number
   pctKg: number
   distanciaKm: number
-  kmReal: boolean          // true = calculado por OSRM, false = estimado en línea recta
+  kmReal: boolean          // true = calculado por Valhalla, false = estimado en línea recta
+  tiempoTrasladoMin: number | null  // duración de ruta según Valhalla (null hasta que se calcule)
   pedidosConUbicacion: number
   detalle: PedidoDetalle[]
 }
@@ -340,7 +371,7 @@ export default function MetricasPage() {
     const [{ data: flotaDia }, { data: pedidosData }, { data: camionesData }] = await Promise.all([
       supabase.from('flota_dia').select('camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta').eq('fecha', fecha).eq('activo', true),
       supabase.from('pedidos')
-        .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud')
+        .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
       supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
     ])
@@ -393,6 +424,7 @@ export default function MetricasPage() {
           pctPos: pct(pos, camion.posiciones_total),
           distanciaKm: dist,
           kmReal: false,
+          tiempoTrasladoMin: null,
           pedidosConUbicacion: pv.filter((p: any) => p.latitud && p.longitud).length,
           detalle: pv
             .sort((a: any, b: any) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
@@ -403,6 +435,7 @@ export default function MetricasPage() {
               peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
               orden_entrega: p.orden_entrega,
               latitud: p.latitud ?? null, longitud: p.longitud ?? null,
+              barrio_cerrado: p.barrio_cerrado ?? null,
             })),
         }
       })
@@ -476,6 +509,7 @@ export default function MetricasPage() {
         if (!res.ok) continue
         const json = await res.json()
         const distM: number | null = json.distanciaM ?? null
+        const durMin: number | null = json.duracionMin ?? null
         if (!distM) continue
 
         setDatosDia(prev => {
@@ -487,6 +521,7 @@ export default function MetricasPage() {
           if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
             next[ci].vueltas[r.vueltaIdx].distanciaKm = Math.round(distM / 1000)
             next[ci].vueltas[r.vueltaIdx].kmReal = true
+            if (durMin !== null) next[ci].vueltas[r.vueltaIdx].tiempoTrasladoMin = durMin
             next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
           }
           return next
@@ -908,6 +943,24 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                             <span style={{ color: '#f59e0b' }}>({v.pedidosConUbicacion}/{v.pedidos} con ubic.)</span>
                           )}
                         </div>
+                        {/* Tiempo estimado */}
+                        {(() => {
+                          const esTrailer = /trailer|semi/i.test(d.tipo_unidad ?? '')
+                          const descMin = calcularTiempoDescargaMin(v.detalle, esTrailer)
+                          const trasMin = v.tiempoTrasladoMin
+                          if (descMin === 0 && trasMin === null) return null
+                          const totalMin = (trasMin ?? 0) + descMin
+                          return (
+                            <div className="text-xs pt-1" style={{ borderTop: '1px solid #e8edf8' }}>
+                              <div className="flex items-center justify-between">
+                                <span style={{ color: '#7c3aed', fontWeight: 600 }}>⏱ Est: {formatMinutos(totalMin)}</span>
+                                <span style={{ color: '#B9BBB7', fontSize: 10 }}>
+                                  {trasMin !== null ? formatMinutos(trasMin) : '?'} traslado + {formatMinutos(descMin)} descarga
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })()}
                       </div>
                     ))}
                   </div>
@@ -921,7 +974,7 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                     { label: 'Inicio', value: formatHora(d.hora_inicio) },
                     { label: 'Fin', value: formatHora(d.hora_fin) },
                     { label: 'Duración', value: duracion(d.hora_inicio, d.hora_fin) },
-                    { label: 'Min/km', value: minKm(d.hora_inicio, d.hora_fin, d.km_ruta) + (minKm(d.hora_inicio, d.hora_fin, d.km_ruta) !== '—' ? ' min/km' : '') },
+                    { label: 'Min/km', value: (() => { const km = d.km_ruta ?? (d.distanciaTotalKm > 0 ? d.distanciaTotalKm : null); const v = minKm(d.hora_inicio, d.hora_fin, km); return v !== '—' ? `${v} min/km${!d.km_ruta ? ' ~' : ''}` : '—' })() },
                   ].map(item => (
                     <div key={item.label} className="rounded-lg p-2 text-center" style={{ background: '#f4f4f3' }}>
                       <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{item.label}</p>

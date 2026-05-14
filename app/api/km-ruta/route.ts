@@ -40,10 +40,12 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await res.json()
-    // trip.summary.length está en km (porque pedimos units:"km")
+    // trip.summary.length en km, trip.summary.time en segundos
     const distanciaKm: number | null = data.trip?.summary?.length ?? null
     const distanciaM = distanciaKm !== null ? Math.round(distanciaKm * 1000) : null
-    return NextResponse.json({ distanciaM })
+    const duracionSeg: number | null = data.trip?.summary?.time ?? null
+    const duracionMin = duracionSeg !== null ? Math.round(duracionSeg / 60) : null
+    return NextResponse.json({ distanciaM, duracionMin })
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'timeout' }, { status: 502 })
   }

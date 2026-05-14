@@ -938,7 +938,8 @@ function ProgramacionInner() {
       .select('vuelta')
       .eq('fecha', fecha)
       .eq('sucursal', sucursal)
-    setVultasCerradasManual(new Set((vcmData ?? []).map((r: any) => r.vuelta as number)))
+    // vuelta=0 en DB = VUELTA_FUERA (-1) en UI
+    setVultasCerradasManual(new Set((vcmData ?? []).map((r: any) => r.vuelta === 0 ? VUELTA_FUERA : r.vuelta as number)))
 
     // Marcar camiones posiblemente en ruta según distancia máxima en vueltas pasadas
     let camsConAviso = cams
@@ -1267,21 +1268,24 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
-  async function handleToggleVueltaCerrada(vuelta: number) {
-    const estaCerrada = vultasCerradasManual.has(vuelta)
+  async function handleToggleVueltaCerrada(vueltaUI: number) {
+    // En la UI "Fuera de prog." es -1, en la DB se guarda como 0 (igual que los pedidos)
+    const vueltaDB = vueltaUI === VUELTA_FUERA ? 0 : vueltaUI
+    const label = vueltaUI === VUELTA_FUERA ? 'Fuera de prog.' : `Vuelta ${vueltaUI}`
+    const estaCerrada = vultasCerradasManual.has(vueltaUI)
     try {
       if (estaCerrada) {
         await supabase.from('vueltas_cerradas_manual')
-          .delete().eq('fecha', fecha).eq('sucursal', sucursal).eq('vuelta', vuelta)
-        setVultasCerradasManual(prev => { const s = new Set(prev); s.delete(vuelta); return s })
-        showToast(`Vuelta ${vuelta} abierta`)
+          .delete().eq('fecha', fecha).eq('sucursal', sucursal).eq('vuelta', vueltaDB)
+        setVultasCerradasManual(prev => { const s = new Set(prev); s.delete(vueltaUI); return s })
+        showToast(`${label} abierta`)
       } else {
         await supabase.from('vueltas_cerradas_manual')
-          .insert({ fecha, sucursal, vuelta, cerrada_por: userId || null })
-        setVultasCerradasManual(prev => new Set([...prev, vuelta]))
-        showToast(`Vuelta ${vuelta} cerrada manualmente`)
+          .insert({ fecha, sucursal, vuelta: vueltaDB, cerrada_por: userId || null })
+        setVultasCerradasManual(prev => new Set([...prev, vueltaUI]))
+        showToast(`${label} cerrada manualmente`)
       }
-      if (userId) logAuditoria(userId, userNombre, estaCerrada ? 'Abrió vuelta manualmente' : 'Cerró vuelta manualmente', 'Programación', { fecha, sucursal, vuelta })
+      if (userId) logAuditoria(userId, userNombre, estaCerrada ? 'Abrió vuelta manualmente' : 'Cerró vuelta manualmente', 'Programación', { fecha, sucursal, vuelta: vueltaDB })
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
@@ -1393,10 +1397,12 @@ function ProgramacionInner() {
                       </span>
                     )}
                   </button>
-                  {puedeEditarProg && !esFuera && (
+                  {puedeEditarProg && (
                     <button
                       onClick={() => handleToggleVueltaCerrada(v.num)}
-                      title={cerradaManual ? `Abrir vuelta ${v.num}` : `Cerrar vuelta ${v.num} manualmente`}
+                      title={cerradaManual
+                        ? `Abrir ${esFuera ? 'Fuera de prog.' : `vuelta ${v.num}`}`
+                        : `Cerrar ${esFuera ? 'Fuera de prog.' : `vuelta ${v.num}`} manualmente`}
                       className="px-1.5 py-1 rounded text-xs transition-colors"
                       style={{
                         color: cerradaManual ? '#E52322' : '#B9BBB7',

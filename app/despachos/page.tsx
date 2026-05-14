@@ -57,6 +57,7 @@ export default function NuevoDespacho() {
   const [cuposDisponibles, setCuposDisponibles] = useState<number[]>([])
   const [vueltasSinCupoConFlota, setVueltasSinCupoConFlota] = useState<number[]>([])
   const [vueltasCerradas, setVueltasCerradas] = useState<number[]>([])
+  const [fueraProgramacionCerrada, setFueraProgramacionCerrada] = useState(false)
   const [flotaSinRevisar, setFlotaSinRevisar] = useState(false)
   const [maxCamionPosiciones, setMaxCamionPosiciones] = useState(0)
   const [pedidoGrande, setPedidoGrande] = useState(false)
@@ -183,11 +184,16 @@ export default function NuevoDespacho() {
       .eq('fecha', form.fecha_entrega)
       .eq('sucursal', form.sucursal)
     const cerradasManual = (vcmData ?? []).map((r: any) => r.vuelta as number)
-    const cerradas = [...new Set([...cerradasHorario, ...cerradasManual])]
+    // vuelta=0 en DB = "fuera de programación"
+    const fueraCerrada = cerradasManual.includes(0)
+    setFueraProgramacionCerrada(fueraCerrada)
+    const cerradas = [...new Set([...cerradasHorario, ...cerradasManual.filter(v => v !== 0)])]
     setVueltasCerradas(cerradas)
-    // Si todas las vueltas cerraron, auto-seleccionar "fuera de programación"
-    if (cerradas.length === FRANJAS.length) {
+    // Si todas las vueltas cerraron, auto-seleccionar "fuera de prog" solo si no está cerrada también
+    if (cerradas.length === FRANJAS.length && !fueraCerrada) {
       setForm(prev => ({ ...prev, vuelta: 'fuera_prog' }))
+    } else if (fueraCerrada && form.vuelta === 'fuera_prog') {
+      setForm(prev => ({ ...prev, vuelta: '' }))
     } else if (form.vuelta && form.vuelta !== 'fuera_prog') {
       // Si la vuelta ya seleccionada quedó cerrada, resetearla
       const vueltaSeleccionada = parseInt(form.vuelta)
@@ -390,6 +396,13 @@ export default function NuevoDespacho() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('')
+
+    // Validar que "fuera de programación" no esté cerrada manualmente
+    if (form.vuelta === 'fuera_prog' && fueraProgramacionCerrada) {
+      setError('La carga de pedidos fuera de programación está cerrada para esta fecha y sucursal.')
+      setLoading(false)
+      return
+    }
 
     // Validar que la vuelta seleccionada no esté cerrada (por horario o manualmente)
     if (form.vuelta && form.vuelta !== 'fuera_prog') {
@@ -962,7 +975,9 @@ export default function NuevoDespacho() {
                       if (tieneFlota) return <option key={vuelta} value={vuelta}>{label} — ⚠️ Sin cupo (cargar igual)</option>
                       return <option key={vuelta} value={vuelta} disabled>{label} — Sin cupo</option>
                     })}
-                    <option value="fuera_prog">Pedido fuera de programación</option>
+                    <option value="fuera_prog" disabled={fueraProgramacionCerrada}>
+                      {fueraProgramacionCerrada ? 'Fuera de prog. — 🔒 Cerrado' : 'Pedido fuera de programación'}
+                    </option>
                   </select>
 
                   {/* Aviso todas las vueltas cerradas */}

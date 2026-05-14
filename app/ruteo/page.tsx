@@ -245,14 +245,16 @@ export default function RuteoPage() {
   }
 
   const finalizarRuta = async () => {
-    if (!camionSeleccionado || horaFin) return
+    if (!camionSeleccionado) return
     setGuardandoRuta(true)
     const ahora = new Date().toISOString()
     const { error } = await supabase.from('flota_dia')
       .update({ hora_fin: ahora })
       .eq('fecha', fecha).eq('camion_codigo', camionSeleccionado)
-    if (!error) { setHoraFin(ahora); showToast('Ruta finalizada') }
-    else showToast('Error al finalizar ruta', 'err')
+    if (!error) {
+      setHoraFin(ahora)
+      showToast(vueltaActiva ? `Vuelta ${vueltaActiva} cerrada` : 'Ruta finalizada')
+    } else showToast('Error al finalizar ruta', 'err')
     setGuardandoRuta(false)
   }
 
@@ -1190,16 +1192,23 @@ export default function RuteoPage() {
                             <p className="font-bold text-sm" style={{ color: '#254A96' }}>{minPorKm() ?? '—'}</p>
                           </div>
                         </div>
-                        {horaFin ? (
+                        {horaFin && !vueltaActiva ? (
                           <div className="text-center py-2 rounded-xl text-sm font-semibold" style={{ background: '#d1fae5', color: '#065f46' }}>
                             ✓ Ruta finalizada a las {formatHora(horaFin)}
                           </div>
                         ) : (
-                          <button onClick={finalizarRuta} disabled={guardandoRuta}
-                            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-                            style={{ background: '#E52322' }}>
-                            {guardandoRuta ? 'Guardando...' : '⏹ Finalizar ruta'}
-                          </button>
+                          <div className="space-y-1">
+                            {horaFin && (
+                              <p className="text-xs text-center" style={{ color: '#B9BBB7' }}>
+                                Vuelta anterior cerrada a las {formatHora(horaFin)}
+                              </p>
+                            )}
+                            <button onClick={finalizarRuta} disabled={guardandoRuta}
+                              className="w-full py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                              style={{ background: '#E52322' }}>
+                              {guardandoRuta ? 'Guardando...' : vueltaActiva ? `⏹ Cerrar vuelta ${vueltaActiva}` : '⏹ Finalizar ruta'}
+                            </button>
+                          </div>
                         )}
                       </div>
                     )}

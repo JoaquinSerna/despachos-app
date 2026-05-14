@@ -85,26 +85,27 @@ function formatMinutos(min: number): string {
   return `${m}min`
 }
 
+const TIPOS_CARGA_HIERRO = new Set(['hierro_suelto', 'chapa', 'pretensado'])
+
 function calcularTiempoDescargaMin(pedidos: PedidoDetalle[], esTrailer: boolean): number {
   if (pedidos.length === 0) return 0
-  const totalKg = pedidos.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0)
-  const totalPos = pedidos.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
-  // Hierros/perfilería: densidad kg/posición > 350 → descarga única 20 min
-  if (totalPos > 0 && totalKg / totalPos > 350) return 20
+  // Hierros (barras, chapas, pretensado): descarga única 20 min para todos los hierros de la vuelta
+  const tieneHierros = pedidos.some(p => p.esHierros)
+  const hierrosMin = tieneHierros ? 20 : 0
   // Pallets/bolsones: 3 min/pos por pedido, con reglas de barrio cerrado
-  let total = 0
-  for (const p of pedidos) {
+  let palletMin = 0
+  for (const p of pedidos.filter(q => !q.esHierros)) {
     const pos = p.volumen_total_m3 ?? 0
     if (pos <= 0) continue
     if (p.barrio_cerrado) {
       const nIngresos = Math.ceil(pos / 3)
       const esperaPorIngreso = esTrailer ? 15 : 10   // +5 por desenganche si trailer
-      total += nIngresos * esperaPorIngreso + pos * 3
+      palletMin += nIngresos * esperaPorIngreso + pos * 3
     } else {
-      total += pos * 3
+      palletMin += pos * 3
     }
   }
-  return Math.round(total)
+  return Math.round(hierrosMin + palletMin)
 }
 
 interface PedidoDetalle {
@@ -123,6 +124,7 @@ interface PedidoDetalle {
   latitud: number | null
   longitud: number | null
   barrio_cerrado: boolean | null
+  esHierros: boolean
 }
 
 interface DatosVuelta {
@@ -377,9 +379,30 @@ export default function MetricasPage() {
     ])
 
     const choferIds = (flotaDia ?? []).filter((f: any) => f.chofer_id).map((f: any) => f.chofer_id)
-    const { data: choferes } = choferIds.length > 0
-      ? await supabase.from('usuarios').select('id, nombre').in('id', choferIds)
-      : { data: [] }
+    const pedidoIds = (pedidosData ?? []).map((p: any) => p.id)
+
+    // Cargar choferes + items de pedidos + catálogo de materiales en paralelo
+    const [
+      { data: choferes },
+      { data: itemsData },
+      { data: materialesData },
+    ] = await Promise.all([
+      choferIds.length > 0 ? supabase.from('usuarios').select('id, nombre').in('id', choferIds) : Promise.resolve({ data: [] as any[] }),
+      pedidoIds.length > 0 ? supabase.from('pedido_items').select('pedido_id, nombre').in('pedido_id', pedidoIds) : Promise.resolve({ data: [] as any[] }),
+      supabase.from('materiales').select('nombre, tipo_carga'),
+    ])
+
+    // Mapa nombre_material → tipo_carga
+    const matTipoMap: Record<string, string> = {}
+    for (const m of materialesData ?? []) matTipoMap[m.nombre] = m.tipo_carga
+
+    // Determinar si cada pedido es de hierros (hierro_suelto, chapa, pretensado)
+    const pedidoEsHierros: Record<string, boolean> = {}
+    for (const item of itemsData ?? []) {
+      if (TIPOS_CARGA_HIERRO.has(matTipoMap[item.nombre] ?? '')) {
+        pedidoEsHierros[item.pedido_id] = true
+      }
+    }
 
     const choferMap: Record<string, string> = {}
     ;(choferes ?? []).forEach((c: any) => { choferMap[c.id] = c.nombre })
@@ -436,6 +459,7 @@ export default function MetricasPage() {
               orden_entrega: p.orden_entrega,
               latitud: p.latitud ?? null, longitud: p.longitud ?? null,
               barrio_cerrado: p.barrio_cerrado ?? null,
+              esHierros: pedidoEsHierros[p.id] ?? false,
             })),
         }
       })

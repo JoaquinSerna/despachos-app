@@ -714,7 +714,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -730,6 +730,8 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   deposito?: { lat: number; lng: number }
   soloVer?: boolean
+  bloqueado?: boolean
+  onToggleLock?: () => void
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
   const [manualExpanded, setManualExpanded] = useState(false)
@@ -752,9 +754,9 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
         width: w, minWidth: w,
-        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : '#f0f0f0'}`,
-        background: isDragOver ? '#e8edf8' : '#f9f9f9',
-        boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : 'none',
+        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : '#f0f0f0'}`,
+        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : '#f9f9f9',
+        boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : bloqueado ? '0 0 0 2px rgba(245,158,11,0.15)' : 'none',
       }}>
       <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
@@ -786,6 +788,12 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                 )}
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
                 {camion.volcador && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#fef3c7', color: '#d97706' }}>Volc.</span>}
+                {onToggleLock && (
+                  <button onClick={onToggleLock} className="text-xs px-1.5 py-0.5 rounded" title={bloqueado ? 'Desbloqueado para sugerencia' : 'Bloquear: excluir de la sugerencia'}
+                    style={{ background: bloqueado ? '#fef3c7' : '#f0f0f0', color: bloqueado ? '#d97706' : '#B9BBB7' }}>
+                    {bloqueado ? '🔒' : '🔓'}
+                  </button>
+                )}
                 <button onClick={() => setManualExpanded(e => !e)} className="text-xs px-1.5 py-0.5 rounded ml-1" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={isExpanded ? 'Contraer' : 'Expandir'}>
                   {isExpanded ? '◀' : '▶'}
                 </button>
@@ -910,6 +918,7 @@ function ProgramacionInner() {
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
+  const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(new Set())
   const enrichGenRef = useRef(0)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
@@ -1116,7 +1125,8 @@ function ProgramacionInner() {
   function handleSugerir() {
     const sin = pedidos.filter(p => !p.camion_id)
     if (!sin.length) return
-    const asigs = sugerirAsignacion(sin, camiones, pedidos.filter(p => p.camion_id), sucursal)
+    const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
+    const asigs = sugerirAsignacion(sin, camionesLibres, pedidos.filter(p => p.camion_id), sucursal)
     const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))
     setPedidos(act); construirColumnas(act, camiones)
     // Detectar overflow (no entraron en ningún camión)
@@ -1706,7 +1716,13 @@ function ProgramacionInner() {
                     onIncidenciaStock={handleIncidenciaStock}
                     onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                     deposito={DEPOSITOS[sucursal]}
-                    soloVer={!puedeEditarProg} />
+                    soloVer={!puedeEditarProg}
+                    bloqueado={camionesBlockeados.has(col.camion.codigo)}
+                    onToggleLock={puedeEditarProg ? () => setCamionesBlockeados(prev => {
+                      const s = new Set(prev)
+                      s.has(col.camion.codigo) ? s.delete(col.camion.codigo) : s.add(col.camion.codigo)
+                      return s
+                    }) : undefined} />
                 ))}
               </div>
             </div>

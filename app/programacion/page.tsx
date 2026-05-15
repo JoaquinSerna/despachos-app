@@ -100,7 +100,14 @@ function localidadDeDireccion(dir: string): string {
 // Agrupa pedidos por proximidad geográfica (< 15 km), mismo cliente o misma dirección.
 // Se usa tanto en el algoritmo como en el UI para mostrar feedback al usuario.
 function buildClusters(pedidos: Pedido[]): Pedido[][] {
-  const norm = (d: string) => d.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  // Normaliza tildes ("Martín" → "martin"), puntuación y espacios
+  const normStr = (s: string) => s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  // Para clientes también quita puntos en siglas: "S.R.L." → "srl"
+  const normCliente = (c: string) => c.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
   const n = pedidos.length
   const parent = Array.from({ length: n }, (_, i) => i)
   function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
@@ -108,11 +115,11 @@ function buildClusters(pedidos: Pedido[]): Pedido[][] {
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const a = pedidos[i], b = pedidos[j]
-      // Misma dirección normalizada → siempre juntos
-      if (a.direccion && b.direccion && norm(a.direccion) === norm(b.direccion)) { union(i, j); continue }
-      // Mismo cliente Y coordenadas a < 2 km → obras distintas del mismo cliente NO se juntan
+      // Misma dirección normalizada (incluyendo tildes) → siempre juntos
+      if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
+      // Mismo cliente (normalizado) → juntar solo si están a < 2 km entre sí
       const tienenCoords = a.latitud && a.longitud && b.latitud && b.longitud
-      if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) {
+      if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {
         if (tienenCoords && distanciaKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
         continue
       }
@@ -156,9 +163,9 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     })
   }
 
-  // Normalizar dirección para comparación (quita puntuación/tildes menores, lowercase)
+  // Normalizar dirección/texto (quita tildes, puntuación y espacios extra)
   function normDir(dir: string): string {
-    return dir.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+    return dir.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
   }
 
   // ¿Dos pedidos van al mismo lugar? (misma dirección normalizada O coords a < 300 m)

@@ -91,13 +91,18 @@ export async function POST(request: NextRequest) {
       const parent = Array.from({ length: n }, (_, i) => i)
       function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
       function union(i: number, j: number) { parent[find(i)] = find(j) }
-      const normDir = (d: string) => d.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+      const normStr = (s: string) => s.toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+      const normCliente = (c: string) => c.toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
           const a = ps[i], b = ps[j]
-          if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) { union(i, j); continue }
+          if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
           const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
-          if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) {
+          if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {
             if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
             continue
           }

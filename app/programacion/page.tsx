@@ -1141,14 +1141,35 @@ function ProgramacionInner() {
     }
   }
 
-  function handleSugerir() {
+  async function handleSugerir() {
     const sin = pedidos.filter(p => !p.camion_id)
     if (!sin.length) return
     const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
-    const asigs = sugerirAsignacion(sin, camionesLibres, pedidos.filter(p => p.camion_id), sucursal)
+    const ya = pedidos.filter(p => p.camion_id)
+    const asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
+
+    // Revisión con IA: Haiku corrige agrupaciones que el algoritmo no detecta
+    setCargando(true)
+    try {
+      const res = await fetch('/api/sugerir-asignacion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedidos: sin, camiones: camionesLibres, ya_asignados: ya, sugerencia: asigs, sucursal }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.asignacion) {
+          Object.assign(asigs, data.asignacion)
+          if (data.cambios?.length) {
+            showToast(`🤖 IA corrigió ${data.cambios.length} asignación${data.cambios.length > 1 ? 'es' : ''}`)
+          }
+        }
+      }
+    } catch { /* si la IA falla, usamos la sugerencia del algoritmo igual */ }
+    setCargando(false)
+
     const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))
     setPedidos(act); construirColumnas(act, camiones)
-    // Detectar overflow (no entraron en ningún camión)
     const overflow = act.filter(p => asigs[p.id] === null)
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
   }

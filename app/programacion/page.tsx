@@ -7,7 +7,7 @@ import { puedeEditar } from '@/app/lib/permisos'
 import { logAuditoria } from '@/app/lib/auditoria'
 
 interface Pedido {
-  id: string; nv: string; cliente: string; direccion: string; sucursal: string
+  id: string; nv: string; id_despacho?: string | null; cliente: string; direccion: string; sucursal: string
   fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
   volumen_total_m3: number | null; pedido_grande?: boolean; tipo?: string
   notas: string | null; camion_id: string | null; orden_entrega: number | null
@@ -97,6 +97,43 @@ function localidadDeDireccion(dir: string): string {
   return ''
 }
 
+// Agrupa pedidos por proximidad geográfica (< 15 km), mismo cliente o misma dirección.
+// Se usa tanto en el algoritmo como en el UI para mostrar feedback al usuario.
+function buildClusters(pedidos: Pedido[]): Pedido[][] {
+  // Normaliza tildes ("Martín" → "martin"), puntuación y espacios
+  const normStr = (s: string) => s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  // Para clientes también quita puntos en siglas: "S.R.L." → "srl"
+  const normCliente = (c: string) => c.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  const n = pedidos.length
+  const parent = Array.from({ length: n }, (_, i) => i)
+  function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
+  function union(i: number, j: number) { parent[find(i)] = find(j) }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = pedidos[i], b = pedidos[j]
+      // Misma dirección normalizada (incluyendo tildes) → siempre juntos
+      if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
+      // Mismo cliente (normalizado) → juntar solo si están a < 2 km entre sí
+      const tienenCoords = a.latitud && a.longitud && b.latitud && b.longitud
+      if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {
+        if (tienenCoords && distanciaKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
+        continue
+      }
+      // Coordenadas a < 15 km → misma zona/ciudad
+      if (tienenCoords && distanciaKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 15) union(i, j)
+    }
+  }
+  const groups = new Map<number, Pedido[]>()
+  for (let i = 0; i < n; i++) {
+    const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r)!.push(pedidos[i])
+  }
+  return Array.from(groups.values())
+}
+
 function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucursal: string): Record<string, string | null> {
   const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
   const acum: Record<string, number> = {}
@@ -109,110 +146,240 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   // Tracking por camión: true = tiene pedidos "largo" (chapa/perfil/tubo/caño), false = tiene pedidos no-largo, undefined = vacío
   // Hierro normal (barra/malla/vigueta) NO es "largo" y puede mezclarse libremente con pallets/bolsones
   const camionTieneLargo: Record<string, boolean | undefined> = {}
+  // Zonas (localidades) que ya tiene cada camión: { camionCodigo: { localidad: cantPedidos } }
+  const camionZonas: Record<string, Record<string, number>> = {}
 
   const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
-  // Materiales largos que NO se pueden mezclar con pallets/bolsones
+  // Materiales largos que NO se pueden mezclar con pallets/bolsones (estructurales/metálicos)
   const LARGO_KEYWORDS = ['chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
+  // Excluir cañerías sanitarias/pluviales de PVC: físicamente son largas pero viajan con cualquier material
+  const LARGO_EXCL = ['cloacal', 'pluvial', 'sanitario', 'desague', 'desagüe']
 
   function esLargoPedido(items: { nombre: string }[]) {
-    return items.length > 0 && items.some(it => LARGO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+    return items.length > 0 && items.some(it => {
+      const nombre = it.nombre.toLowerCase()
+      if (LARGO_EXCL.some(ex => nombre.includes(ex))) return false
+      return LARGO_KEYWORDS.some(kw => nombre.includes(kw))
+    })
+  }
+
+  // Normalizar dirección/texto (quita tildes, puntuación y espacios extra)
+  function normDir(dir: string): string {
+    return dir.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+
+  // ¿Dos pedidos van al mismo lugar? (misma dirección normalizada O coords a < 300 m)
+  function sonColocados(a: Pedido, b: Pedido): boolean {
+    if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) return true
+    if (a.latitud && a.longitud && b.latitud && b.longitud) {
+      return distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) < 0.3
+    }
+    return false
+  }
+
+  // Zona de un pedido (localidad ya precalculada o extraída de la dirección)
+  function zonaPedido(p: Pedido): string {
+    return p.localidad || localidadDeDireccion(p.direccion) || '__sin_zona__'
   }
 
   // Pre-clasificar camiones que ya tienen pedidos asignados
   camiones.forEach(c => {
     const yaEnCamion = ya.filter(p => p.camion_id === c.codigo)
+    camionZonas[c.codigo] = {}
     if (yaEnCamion.length === 0) { camionTieneLargo[c.codigo] = undefined; return }
     const tieneLargo = yaEnCamion.some(p => esLargoPedido(p.items ?? []))
     const tieneNoLargo = yaEnCamion.some(p => !esLargoPedido(p.items ?? []))
     // Si tiene ambos (mezcla ya existente), lo dejamos como undefined para no bloquear más
     camionTieneLargo[c.codigo] = tieneLargo && !tieneNoLargo ? true : (!tieneLargo && tieneNoLargo ? false : undefined)
+    // Inicializar conteo de zonas con los pedidos ya asignados
+    yaEnCamion.forEach(p => {
+      const z = zonaPedido(p)
+      if (z !== '__sin_zona__') camionZonas[c.codigo][z] = (camionZonas[c.codigo][z] || 0) + 1
+    })
   })
 
-  // Ordenar: prioridades primero, luego por distancia al depósito (cercanos primero → se agrupan geográficamente)
-  const ordenados = [...sin].sort((a, b) => {
-    if (a.prioridad && !b.prioridad) return -1
-    if (!a.prioridad && b.prioridad) return 1
-    const dA = a.latitud && a.longitud ? distanciaKm(deposito.lat, deposito.lng, a.latitud, a.longitud) : 9999
-    const dB = b.latitud && b.longitud ? distanciaKm(deposito.lat, deposito.lng, b.latitud, b.longitud) : 9999
-    return dA - dB
-  })
+  // ── Registrar asignación de un pedido a un camión ─────────────────────────
+  function registrarAsignacion(p: Pedido, c: Camion) {
+    asigs[p.id] = c.codigo
+    acum[c.codigo] += p.peso_total_kg ?? 0
+    acumPos[c.codigo] += p.volumen_total_m3 ?? 0
+    const loc = zonaPedido(p)
+    if (loc !== '__sin_zona__') camionZonas[c.codigo][loc] = (camionZonas[c.codigo][loc] || 0) + 1
+    const pedidoEsLargo = esLargoPedido(p.items ?? [])
+    const tipoAnterior = camionTieneLargo[c.codigo]
+    if (tipoAnterior === undefined) {
+      camionTieneLargo[c.codigo] = pedidoEsLargo
+    } else if (tipoAnterior !== pedidoEsLargo) {
+      camionTieneLargo[c.codigo] = undefined
+    }
+  }
 
-  for (const p of ordenados) {
+  // ── Buscar el mejor camión para un pedido individual ──────────────────────
+  function mejorCamionParaPedido(p: Pedido): Camion | null {
     const peso = p.peso_total_kg ?? 0
     const pos = p.volumen_total_m3 ?? 0
     const esVolcador = p.requiere_volcador === true
-
-    // ¿El pedido es solo hierro (para determinar si necesita grúa)?
-    const itemsDelPedido = p.items ?? []
-    const soloHierro = itemsDelPedido.length > 0 &&
-      itemsDelPedido.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+    const items = p.items ?? []
+    const soloHierro = items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
     const requiereGrua = !esVolcador && !soloHierro
+    const pedidoEsLargo = esLargoPedido(items)
+    const locPedido = zonaPedido(p)
 
-    // ¿El pedido tiene materiales largos (chapas/perfiles/tubos) que no pueden mezclarse?
-    const pedidoEsLargo = esLargoPedido(itemsDelPedido)
-
-    // Filtrar por capacidad, tipo de camión y anti-mezcla largo/no-largo
     const elegibles = camiones.filter(c => {
       if (acum[c.codigo] + peso > c.tonelaje_max_kg) return false
       if (c.posiciones_total > 0 && pos > 0 && acumPos[c.codigo] + pos > c.posiciones_total) return false
       if (esVolcador && !c.volcador) return false
       if (requiereGrua && !c.grua_hidraulica) return false
-      // Anti-mezcla: chapas/perfiles/tubos no van con pallets/bolsones
-      const tipoActual = camionTieneLargo[c.codigo]
-      if (tipoActual !== undefined) {
-        if (pedidoEsLargo && tipoActual === false) return false   // camión tiene no-largos
-        if (!pedidoEsLargo && tipoActual === true) return false   // camión tiene largos
+      const tipo = camionTieneLargo[c.codigo]
+      if (tipo !== undefined) {
+        if (pedidoEsLargo && tipo === false) return false
+        if (!pedidoEsLargo && tipo === true) return false
       }
       return true
     })
+    if (elegibles.length === 0) return null
 
-    if (elegibles.length === 0) { asigs[p.id] = null; continue }
-
-    // Afinidad geográfica + agrupación por cliente
     let mejor: Camion | null = null
     let mejorScore = Infinity
 
     for (const c of elegibles) {
-      const todosPedidosCamion = [
+      const todosEnCamion = [
         ...ya.filter(pp => pp.camion_id === c.codigo),
         ...Object.entries(asigs).filter(([, cod]) => cod === c.codigo).map(([id]) => sin.find(pp => pp.id === id)).filter(Boolean) as Pedido[],
       ]
-      const yaAsignados = todosPedidosCamion.filter(pp => pp.latitud && pp.longitud)
+      if (todosEnCamion.some(pp => sonColocados(pp, p))) return c
+      if (todosEnCamion.some(pp => pp.cliente === p.cliente)) return c
 
-      // Prioridad máxima: mismo cliente ya asignado a este camión
-      const mismoCliente = todosPedidosCamion.some(pp => pp.cliente === p.cliente)
-      if (mismoCliente) { mejor = c; break }
-
+      const yaConCoords = todosEnCamion.filter(pp => pp.latitud && pp.longitud)
       let score: number
-      if (p.latitud && p.longitud && yaAsignados.length > 0) {
-        // Distancia al centroide de los pedidos ya asignados al camión
-        const avgLat = yaAsignados.reduce((s, pp) => s + pp.latitud!, 0) / yaAsignados.length
-        const avgLng = yaAsignados.reduce((s, pp) => s + pp.longitud!, 0) / yaAsignados.length
+      if (p.latitud && p.longitud && yaConCoords.length > 0) {
+        const avgLat = yaConCoords.reduce((s, pp) => s + pp.latitud!, 0) / yaConCoords.length
+        const avgLng = yaConCoords.reduce((s, pp) => s + pp.longitud!, 0) / yaConCoords.length
         score = distanciaKm(p.latitud, p.longitud, avgLat, avgLng)
       } else if (p.latitud && p.longitud) {
-        // Camión sin pedidos aún: distancia al depósito (penalty leve para que los con pedidos tengan prioridad)
         score = distanciaKm(deposito.lat, deposito.lng, p.latitud, p.longitud) + 500
       } else {
-        // Sin coordenadas: best-fit por capacidad restante
         score = c.tonelaje_max_kg - acum[c.codigo]
       }
+      const tieneZonaTexto = locPedido !== '__sin_zona__' && (camionZonas[c.codigo]?.[locPedido] ?? 0) > 0
+      const tieneZonaCoords = p.latitud != null && p.longitud != null && todosEnCamion.some(pp =>
+        pp.latitud != null && pp.longitud != null &&
+        distanciaKm(p.latitud!, p.longitud!, pp.latitud!, pp.longitud!) < 8
+      )
+      if (tieneZonaTexto || tieneZonaCoords) score *= 0.25
+      if (score < mejorScore) { mejorScore = score; mejor = c }
+    }
+    return mejor
+  }
+
+  // ── Asignación cluster por cluster ────────────────────────────────────────
+  const clusters = buildClusters(sin)
+
+  // Ordenar clusters: prioridad > volumen total desc (FFD) > distancia al depósito desc
+  clusters.sort((ca, cb) => {
+    const prioA = ca.some(p => p.prioridad) ? 1 : 0
+    const prioB = cb.some(p => p.prioridad) ? 1 : 0
+    if (prioA !== prioB) return prioB - prioA
+    const posA = ca.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    const posB = cb.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    if (Math.abs(posA - posB) > 2) return posB - posA
+    const conCoordsA = ca.filter(p => p.latitud && p.longitud)
+    const conCoordsB = cb.filter(p => p.latitud && p.longitud)
+    const distA = conCoordsA.length > 0 ? conCoordsA.reduce((s, p) => s + distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!), 0) / conCoordsA.length : 0
+    const distB = conCoordsB.length > 0 ? conCoordsB.reduce((s, p) => s + distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!), 0) / conCoordsB.length : 0
+    return distB - distA
+  })
+
+  for (const cluster of clusters) {
+    cluster.sort((a, b) => {
+      if (a.prioridad && !b.prioridad) return -1
+      if (!a.prioridad && b.prioridad) return 1
+      return (b.volumen_total_m3 ?? 0) - (a.volumen_total_m3 ?? 0)
+    })
+
+    if (cluster.length === 1) {
+      const c = mejorCamionParaPedido(cluster[0])
+      if (c) registrarAsignacion(cluster[0], c)
+      else asigs[cluster[0].id] = null
+      continue
+    }
+
+    // Cluster multi-pedido: buscar camión que aguante TODOS juntos
+    const pesoTotal = cluster.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+    const posTotal = cluster.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    const necesitaVolcador = cluster.some(p => p.requiere_volcador === true)
+    const clusterEsLargo = cluster.some(p => esLargoPedido(p.items ?? []))
+    const clusterEsNoLargo = cluster.some(p => !esLargoPedido(p.items ?? []))
+    const necesitaGrua = cluster.some(p => {
+      const items = p.items ?? []
+      const soloHierro = items.length > 0 && items.every(it => HIERRO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+      return !p.requiere_volcador && !soloHierro
+    })
+
+    let mejor: Camion | null = null
+    let mejorScore = Infinity
+
+    for (const c of camiones) {
+      if (acum[c.codigo] + pesoTotal > c.tonelaje_max_kg) continue
+      if (c.posiciones_total > 0 && posTotal > 0 && acumPos[c.codigo] + posTotal > c.posiciones_total) continue
+      if (necesitaVolcador && !c.volcador) continue
+      if (necesitaGrua && !c.grua_hidraulica) continue
+      const tipo = camionTieneLargo[c.codigo]
+      if (tipo === true && clusterEsNoLargo && !clusterEsLargo) continue
+      if (tipo === false && clusterEsLargo && !clusterEsNoLargo) continue
+
+      const todosEnCamion = [
+        ...ya.filter(pp => pp.camion_id === c.codigo),
+        ...Object.entries(asigs).filter(([, cod]) => cod === c.codigo).map(([id]) => sin.find(pp => pp.id === id)).filter(Boolean) as Pedido[],
+      ]
+
+      // P1: algún pedido del cluster coincide con dirección/cliente ya en el camión
+      if (cluster.some(p => todosEnCamion.some(pp => sonColocados(pp, p) || pp.cliente === p.cliente))) {
+        mejor = c; break
+      }
+
+      // Scoring: centroide del cluster vs centroide del camión
+      const ccCoords = cluster.filter(p => p.latitud && p.longitud)
+      const tcCoords = todosEnCamion.filter(pp => pp.latitud && pp.longitud)
+      let score: number
+      if (ccCoords.length > 0 && tcCoords.length > 0) {
+        const avgCLat = ccCoords.reduce((s, p) => s + p.latitud!, 0) / ccCoords.length
+        const avgCLng = ccCoords.reduce((s, p) => s + p.longitud!, 0) / ccCoords.length
+        const avgTLat = tcCoords.reduce((s, pp) => s + pp.latitud!, 0) / tcCoords.length
+        const avgTLng = tcCoords.reduce((s, pp) => s + pp.longitud!, 0) / tcCoords.length
+        score = distanciaKm(avgCLat, avgCLng, avgTLat, avgTLng)
+      } else if (ccCoords.length > 0) {
+        const avgCLat = ccCoords.reduce((s, p) => s + p.latitud!, 0) / ccCoords.length
+        const avgCLng = ccCoords.reduce((s, p) => s + p.longitud!, 0) / ccCoords.length
+        score = distanciaKm(deposito.lat, deposito.lng, avgCLat, avgCLng) + 500
+      } else {
+        score = c.tonelaje_max_kg - acum[c.codigo]
+      }
+
+      // Bonus zona: si algún pedido del cluster tiene afinidad de zona con el camión
+      const tieneZona = cluster.some(p => {
+        const loc = zonaPedido(p)
+        const tieneTexto = loc !== '__sin_zona__' && (camionZonas[c.codigo]?.[loc] ?? 0) > 0
+        const tieneCoords = p.latitud != null && p.longitud != null && todosEnCamion.some(pp =>
+          pp.latitud != null && pp.longitud != null &&
+          distanciaKm(p.latitud!, p.longitud!, pp.latitud!, pp.longitud!) < 8
+        )
+        return tieneTexto || tieneCoords
+      })
+      if (tieneZona) score *= 0.25
 
       if (score < mejorScore) { mejorScore = score; mejor = c }
     }
 
     if (mejor) {
-      asigs[p.id] = mejor.codigo
-      acum[mejor.codigo] += peso
-      acumPos[mejor.codigo] += pos
-      // Actualizar tipo de camión para anti-mezcla en próximos pedidos
-      const tipoAnterior = camionTieneLargo[mejor.codigo]
-      if (tipoAnterior === undefined) {
-        camionTieneLargo[mejor.codigo] = pedidoEsLargo
-      } else if (tipoAnterior !== pedidoEsLargo) {
-        camionTieneLargo[mejor.codigo] = undefined // mixto (no debería pasar)
-      }
+      for (const p of cluster) registrarAsignacion(p, mejor)
     } else {
-      asigs[p.id] = null
+      // Fallback: no hay camión que aguante el cluster completo → asignar individualmente
+      for (const p of cluster) {
+        const c = mejorCamionParaPedido(p)
+        if (c) registrarAsignacion(p, c)
+        else asigs[p.id] = null
+      }
     }
   }
   return asigs
@@ -636,7 +803,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -652,6 +819,8 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   deposito?: { lat: number; lng: number }
   soloVer?: boolean
+  bloqueado?: boolean
+  onToggleLock?: () => void
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
   const [manualExpanded, setManualExpanded] = useState(false)
@@ -674,9 +843,9 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
         width: w, minWidth: w,
-        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : '#f0f0f0'}`,
-        background: isDragOver ? '#e8edf8' : '#f9f9f9',
-        boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : 'none',
+        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : '#f0f0f0'}`,
+        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : '#f9f9f9',
+        boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : bloqueado ? '0 0 0 2px rgba(245,158,11,0.15)' : 'none',
       }}>
       <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
@@ -708,6 +877,12 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                 )}
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
                 {camion.volcador && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#fef3c7', color: '#d97706' }}>Volc.</span>}
+                {onToggleLock && (
+                  <button onClick={onToggleLock} className="text-xs px-1.5 py-0.5 rounded" title={bloqueado ? 'Desbloqueado para sugerencia' : 'Bloquear: excluir de la sugerencia'}
+                    style={{ background: bloqueado ? '#fef3c7' : '#f0f0f0', color: bloqueado ? '#d97706' : '#B9BBB7' }}>
+                    {bloqueado ? '🔒' : '🔓'}
+                  </button>
+                )}
                 <button onClick={() => setManualExpanded(e => !e)} className="text-xs px-1.5 py-0.5 rounded ml-1" style={{ color: '#B9BBB7', background: '#f0f0f0' }} title={isExpanded ? 'Contraer' : 'Expandir'}>
                   {isExpanded ? '◀' : '▶'}
                 </button>
@@ -832,6 +1007,12 @@ function ProgramacionInner() {
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
+  const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('camionesBlockeados')
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>()
+    } catch { return new Set<string>() }
+  })
   const enrichGenRef = useRef(0)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
@@ -1035,15 +1216,65 @@ function ProgramacionInner() {
     }
   }
 
-  function handleSugerir() {
+  async function handleSugerir() {
     const sin = pedidos.filter(p => !p.camion_id)
     if (!sin.length) return
-    const asigs = sugerirAsignacion(sin, camiones, pedidos.filter(p => p.camion_id), sucursal)
+    const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
+    const ya = pedidos.filter(p => p.camion_id)
+
+    // Mostrar clusters detectados para feedback visual
+    const clusters = buildClusters(sin).filter(c => c.length > 1)
+    if (clusters.length > 0) {
+      const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
+      showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
+    }
+
+    const asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
+
+    // Revisión con IA: Haiku corrige agrupaciones que el algoritmo no detecta
+    setCargando(true)
+    try {
+      const res = await fetch('/api/sugerir-asignacion', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedidos: sin, camiones: camionesLibres, ya_asignados: ya, sugerencia: asigs, sucursal }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.asignacion) {
+          Object.assign(asigs, data.asignacion)
+          if (data.cambios?.length) {
+            showToast(`🤖 IA corrigió ${data.cambios.length} asignación${data.cambios.length > 1 ? 'es' : ''}`)
+          }
+        }
+      }
+    } catch { /* si la IA falla, usamos la sugerencia del algoritmo igual */ }
+    setCargando(false)
+
     const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))
     setPedidos(act); construirColumnas(act, camiones)
-    // Detectar overflow (no entraron en ningún camión)
     const overflow = act.filter(p => asigs[p.id] === null)
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
+  }
+
+  async function handleLimpiar() {
+    const conAsignacion = pedidos.filter(p => p.camion_id)
+    // Limpiar estado local inmediatamente
+    const limpio = pedidos.map(p => ({ ...p, camion_id: null }))
+    setPedidos(limpio); construirColumnas(limpio, camiones); setConfirmado(false)
+    // Limpiar DB si había algo confirmado
+    if (conAsignacion.length > 0) {
+      setGuardando(true)
+      try {
+        await Promise.all(conAsignacion.map(p =>
+          supabase.from('pedidos').update({ camion_id: null, estado: 'pendiente', orden_entrega: null }).eq('id', p.id)
+        ))
+      } catch (e: any) {
+        showToast(`Error al limpiar: ${e.message}`, 'err')
+      } finally {
+        setGuardando(false)
+      }
+    }
   }
 
   async function handleMoverOverflow() {
@@ -1433,7 +1664,7 @@ function ProgramacionInner() {
               🗺️ Ver rutas
             </button>
             {puedeEditarProg && vueltaActiva !== VUELTA_FUERA && <>
-              <button onClick={() => { const l = pedidos.map(p => ({ ...p, camion_id: null })); setPedidos(l); construirColumnas(l, camiones); setConfirmado(false) }}
+              <button onClick={handleLimpiar}
                 disabled={cargando || guardando}
                 className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
                 style={{ borderColor: '#e8edf8', color: '#666' }}>Limpiar</button>
@@ -1628,7 +1859,14 @@ function ProgramacionInner() {
                     onIncidenciaStock={handleIncidenciaStock}
                     onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                     deposito={DEPOSITOS[sucursal]}
-                    soloVer={!puedeEditarProg} />
+                    soloVer={!puedeEditarProg}
+                    bloqueado={camionesBlockeados.has(col.camion.codigo)}
+                    onToggleLock={puedeEditarProg ? () => setCamionesBlockeados(prev => {
+                      const s = new Set(prev)
+                      s.has(col.camion.codigo) ? s.delete(col.camion.codigo) : s.add(col.camion.codigo)
+                      try { localStorage.setItem('camionesBlockeados', JSON.stringify([...s])) } catch {}
+                      return s
+                    }) : undefined} />
                 ))}
               </div>
             </div>
@@ -1661,12 +1899,15 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
   const mapRef = useRef<HTMLDivElement>(null)
   const leafletRef = useRef<any>(null)
 
+  // Filtrar SOLO camiones con al menos un pedido geocodificado — se usa para mapa Y leyenda (índices consistentes)
+  const colsConPedidos = columnas.filter(c => c.pedidos.some(p => p.latitud && p.longitud))
+  const sinAsignarConCoords = sinAsignar.filter(p => p.latitud && p.longitud)
+  const totalConCoords = colsConPedidos.reduce((a, c) => a + c.pedidos.filter(p => p.latitud && p.longitud).length, 0) + sinAsignarConCoords.length
+
   useEffect(() => {
-    // Inject Leaflet CSS once
     if (!document.getElementById('leaflet-css')) {
       const link = document.createElement('link')
-      link.id = 'leaflet-css'
-      link.rel = 'stylesheet'
+      link.id = 'leaflet-css'; link.rel = 'stylesheet'
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
       document.head.appendChild(link)
     }
@@ -1674,7 +1915,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
     function initMap() {
       if (!mapRef.current) return
       const L = (window as any).L
-
       if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
 
       const depot = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
@@ -1684,59 +1924,97 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         maxZoom: 18,
       }).addTo(map)
 
-      // Depot marker
       L.marker([depot.lat, depot.lng], {
         icon: L.divIcon({
           html: `<div style="background:#1a1a1a;color:white;padding:3px 7px;border-radius:6px;font-size:11px;font-weight:bold;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4)">🏭 ${sucursal}</div>`,
-          className: '',
-          iconSize: [90, 24],
-          iconAnchor: [45, 12],
+          className: '', iconSize: [90, 24], iconAnchor: [45, 12],
         })
       }).addTo(map)
 
       const boundsPoints: [number, number][] = [[depot.lat, depot.lng]]
 
-      // Routes per truck
-      columnas.forEach((col, idx) => {
+      // Agrupar pedidos por ubicación exacta (4 decimales ≈ 11m) para no superponer marcadores
+      function locKey(p: Pedido) { return `${Math.round(p.latitud! * 1e4)},${Math.round(p.longitud! * 1e4)}` }
+
+      // Offset para marcadores de distintos camiones que caen en el mismo punto
+      // Cada camión que pase por una posición ocupada se desplaza ~25m
+      const ocupados = new Map<string, number>() // locKey → cantidad de camiones ya puestos ahí
+      const OFFSETS: [number, number][] = [[0,0],[0.00023,0],[-0.00023,0],[0,0.00035],[0,-0.00035],[0.00023,0.00035],[-0.00023,-0.00035]]
+      function posicionConOffset(lat: number, lng: number, camionIdx: number): [number, number] {
+        const k = locKey({ latitud: lat, longitud: lng } as Pedido)
+        const slot = ocupados.get(k) ?? 0
+        if (slot === 0) ocupados.set(k, 1)
+        else ocupados.set(k, slot + 1)
+        const off = OFFSETS[camionIdx % OFFSETS.length]
+        return [lat + (slot > 0 ? off[0] : 0), lng + (slot > 0 ? off[1] : 0)]
+      }
+
+      // Popup completo para uno o varios pedidos en la misma ubicación
+      function buildPopup(color: string, camion: string, peds: Pedido[], ordenes: number[]) {
+        return peds.map((p, gi) => {
+          const itemsHtml = p.items && p.items.length > 0
+            ? `<div style="margin-top:4px;border-top:1px solid #f0f0f0;padding-top:4px">${p.items.map(it =>
+                `<div style="font-size:11px;color:#555">• ${it.nombre} × ${it.cantidad} ${it.unidad}</div>`
+              ).join('')}</div>`
+            : ''
+          return `<div style="min-width:220px;max-width:280px${gi > 0 ? ';border-top:2px solid #e5e7eb;margin-top:10px;padding-top:10px' : ''}">
+            <div style="font-weight:700;color:${color};font-size:13px">${camion} · Parada ${ordenes[gi]}</div>
+            <div style="font-weight:700;font-size:13px;margin-top:3px">${p.cliente}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:1px">NV ${p.nv}${p.id_despacho ? ` · SD ${p.id_despacho}` : ''}</div>
+            <div style="font-size:11px;color:#374151;margin-top:3px">${p.direccion}</div>
+            ${p.localidad ? `<div style="font-size:11px;color:#1e40af;margin-top:1px">📍 ${p.localidad}</div>` : ''}
+            ${itemsHtml}
+            <div style="font-size:11px;color:#9ca3af;margin-top:4px">${p.peso_total_kg ?? '?'} kg · ${p.volumen_total_m3 ?? '?'} pos</div>
+          </div>`
+        }).join('')
+      }
+
+      // Iterar colsConPedidos (ya filtrado) — mismo índice que la leyenda → colores consistentes
+      colsConPedidos.forEach((col, idx) => {
         const color = TRUCK_COLORS[idx % TRUCK_COLORS.length]
         const peds = col.pedidos
           .filter(p => p.latitud && p.longitud)
           .sort((a, b) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
-        if (peds.length === 0) return
 
-        // Dashed polyline: depot → stops → depot
         L.polyline(
           [[depot.lat, depot.lng], ...peds.map(p => [p.latitud!, p.longitud!] as [number, number]), [depot.lat, depot.lng]],
           { color, weight: 3, opacity: 0.85, dashArray: '8,5' }
         ).addTo(map)
 
-        // Numbered markers
+        // Agrupar por ubicación para mostrar todos los pedidos en un solo marcador
+        const grupos = new Map<string, { peds: Pedido[]; ordenes: number[] }>()
         peds.forEach((p, i) => {
-          L.marker([p.latitud!, p.longitud!], {
+          const k = locKey(p)
+          if (!grupos.has(k)) grupos.set(k, { peds: [], ordenes: [] })
+          grupos.get(k)!.peds.push(p)
+          grupos.get(k)!.ordenes.push(i + 1)
+        })
+
+        grupos.forEach(({ peds: gp, ordenes }) => {
+          const label = ordenes.join('·')
+          const w = Math.max(26, 14 + label.length * 8)
+          const [mLat, mLng] = posicionConOffset(gp[0].latitud!, gp[0].longitud!, idx)
+          L.marker([mLat, mLng], {
             icon: L.divIcon({
-              html: `<div style="background:${color};color:white;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.35)">${i + 1}</div>`,
-              className: '',
-              iconSize: [26, 26],
-              iconAnchor: [13, 13],
+              html: `<div style="background:${color};color:white;min-width:${w}px;height:26px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.35);padding:0 5px">${label}</div>`,
+              className: '', iconSize: [w, 26], iconAnchor: [w / 2, 13],
             })
           })
-            .bindPopup(`<b style="color:${color}">${col.camion.codigo}</b><br><b>${p.cliente}</b><br><small style="color:#666">${p.direccion}</small>${p.localidad ? `<br><small style="color:#1e40af">📍 ${p.localidad}</small>` : ''}<br><small>${p.peso_total_kg ?? '?'} kg · ${p.volumen_total_m3 ?? '?'} pos</small>`)
+            .bindPopup(buildPopup(color, col.camion.codigo, gp, ordenes), { maxWidth: 300 })
             .addTo(map)
-          boundsPoints.push([p.latitud!, p.longitud!])
+          boundsPoints.push([mLat, mLng])
         })
       })
 
-      // Sin asignar — gray markers
-      sinAsignar.filter(p => p.latitud && p.longitud).forEach(p => {
+      // Sin asignar
+      sinAsignarConCoords.forEach(p => {
         L.marker([p.latitud!, p.longitud!], {
           icon: L.divIcon({
             html: `<div style="background:#9ca3af;color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)">?</div>`,
-            className: '',
-            iconSize: [22, 22],
-            iconAnchor: [11, 11],
+            className: '', iconSize: [22, 22], iconAnchor: [11, 11],
           })
         })
-          .bindPopup(`<b>Sin asignar</b><br>${p.cliente}<br><small style="color:#666">${p.direccion}</small>`)
+          .bindPopup(`<div style="min-width:180px"><b>Sin asignar</b><br><b>${p.cliente}</b><br><span style="font-size:11px;color:#6b7280">NV ${p.nv}${p.id_despacho ? ` · SD ${p.id_despacho}` : ''}</span><br><span style="font-size:11px;color:#374151">${p.direccion}</span></div>`)
           .addTo(map)
         boundsPoints.push([p.latitud!, p.longitud!])
       })
@@ -1745,27 +2023,18 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
       leafletRef.current = map
     }
 
-    if ((window as any).L) {
-      setTimeout(initMap, 50)
-    } else {
+    if ((window as any).L) { setTimeout(initMap, 50) }
+    else {
       const script = document.createElement('script')
       script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
       script.onload = () => setTimeout(initMap, 50)
       document.body.appendChild(script)
     }
-
-    return () => {
-      if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
-    }
-  }, [columnas, sinAsignar, sucursal])
-
-  const colsConPedidos = columnas.filter(c => c.pedidos.filter(p => p.latitud && p.longitud).length > 0)
-  const sinAsignarConCoords = sinAsignar.filter(p => p.latitud && p.longitud)
-  const totalConCoords = columnas.reduce((a, c) => a + c.pedidos.filter(p => p.latitud && p.longitud).length, 0) + sinAsignarConCoords.length
+    return () => { if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null } }
+  }, [columnas, sinAsignar, sucursal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" style={{ fontFamily: 'Barlow, sans-serif' }}>
-      {/* Header */}
       <div className="px-5 py-3 flex items-center justify-between gap-4 shrink-0 border-b" style={{ borderColor: '#f0f0f0' }}>
         <div>
           <p className="font-bold text-sm" style={{ color: '#254A96' }}>🗺️ Previsualización de rutas</p>
@@ -1773,7 +2042,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
             {totalConCoords} paradas con ubicación · líneas de puntos = ruta en orden de entrega
           </p>
         </div>
-        {/* Legend */}
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 flex-1 justify-center">
           {colsConPedidos.map((col, idx) => (
             <div key={col.camion.codigo} className="flex items-center gap-1.5">
@@ -1794,7 +2062,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         </div>
         <button onClick={onClose} className="text-2xl leading-none px-2 shrink-0" style={{ color: '#B9BBB7' }}>×</button>
       </div>
-      {/* Map container */}
       <div ref={mapRef} style={{ flex: 1, minHeight: 0 }} />
     </div>
   )

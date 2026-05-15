@@ -118,15 +118,15 @@ export default function RuteoPage() {
 
       // Si es chofer, buscar el camión asignado para HOY en flota_dia
       if (userData?.rol === 'chofer') {
-        const { data: asignacion } = await supabase
+        const { data: asignaciones } = await supabase
           .from('flota_dia')
           .select('camion_codigo')
           .eq('fecha', hoy())
           .eq('chofer_id', user.id)
-          .single()
-        if (asignacion?.camion_codigo) {
-          setCamionSeleccionado(asignacion.camion_codigo)
-        }
+          .eq('activo', true)
+        // Tomar el primer camión activo asignado (no usar .single() para no romper con >1 resultado)
+        const camion = asignaciones?.[0]?.camion_codigo
+        if (camion) setCamionSeleccionado(camion)
       }
 
       setCargando(false)

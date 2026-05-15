@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
           if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) { union(i, j); continue }
           if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) { union(i, j); continue }
           if (a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null) {
-            if (distKm(a.latitud, a.longitud, b.latitud, b.longitud) < 6) union(i, j)
+            if (distKm(a.latitud, a.longitud, b.latitud, b.longitud) < 15) union(i, j)
           }
         }
       }

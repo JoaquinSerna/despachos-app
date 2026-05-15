@@ -97,6 +97,30 @@ function localidadDeDireccion(dir: string): string {
   return ''
 }
 
+// Agrupa pedidos por proximidad geográfica (< 15 km), mismo cliente o misma dirección.
+// Se usa tanto en el algoritmo como en el UI para mostrar feedback al usuario.
+function buildClusters(pedidos: Pedido[]): Pedido[][] {
+  const norm = (d: string) => d.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  const n = pedidos.length
+  const parent = Array.from({ length: n }, (_, i) => i)
+  function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
+  function union(i: number, j: number) { parent[find(i)] = find(j) }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const a = pedidos[i], b = pedidos[j]
+      if (a.direccion && b.direccion && norm(a.direccion) === norm(b.direccion)) { union(i, j); continue }
+      if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) { union(i, j); continue }
+      if (a.latitud && a.longitud && b.latitud && b.longitud &&
+        distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) < 15) union(i, j)
+    }
+  }
+  const groups = new Map<number, Pedido[]>()
+  for (let i = 0; i < n; i++) {
+    const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r)!.push(pedidos[i])
+  }
+  return Array.from(groups.values())
+}
+
 function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucursal: string): Record<string, string | null> {
   const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
   const acum: Record<string, number> = {}
@@ -160,38 +184,6 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
       if (z !== '__sin_zona__') camionZonas[c.codigo][z] = (camionZonas[c.codigo][z] || 0) + 1
     })
   })
-
-  // ── Pre-computar clusters geográficos (Union-Find) ────────────────────────
-  // Pedidos a < 6 km, mismo cliente o misma dirección → cluster atómico.
-  // El algoritmo asigna clusters enteros a un camión: jamás separa dos pedidos
-  // del mismo cluster si caben juntos en algún camión disponible.
-  function buildClusters(pedidos: Pedido[]): Pedido[][] {
-    const n = pedidos.length
-    const parent = Array.from({ length: n }, (_, i) => i)
-    function find(i: number): number {
-      if (parent[i] !== i) parent[i] = find(parent[i])
-      return parent[i]
-    }
-    function union(i: number, j: number) { parent[find(i)] = find(j) }
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const a = pedidos[i], b = pedidos[j]
-        let linked = false
-        if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) linked = true
-        else if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) linked = true
-        else if (a.latitud && a.longitud && b.latitud && b.longitud &&
-          distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) < 6) linked = true
-        if (linked) union(i, j)
-      }
-    }
-    const groups = new Map<number, Pedido[]>()
-    for (let i = 0; i < n; i++) {
-      const root = find(i)
-      if (!groups.has(root)) groups.set(root, [])
-      groups.get(root)!.push(pedidos[i])
-    }
-    return Array.from(groups.values())
-  }
 
   // ── Registrar asignación de un pedido a un camión ─────────────────────────
   function registrarAsignacion(p: Pedido, c: Camion) {
@@ -1211,6 +1203,14 @@ function ProgramacionInner() {
     if (!sin.length) return
     const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
     const ya = pedidos.filter(p => p.camion_id)
+
+    // Mostrar clusters detectados para feedback visual
+    const clusters = buildClusters(sin).filter(c => c.length > 1)
+    if (clusters.length > 0) {
+      const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
+      showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
+    }
+
     const asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
 
     // Revisión con IA: Haiku corrige agrupaciones que el algoritmo no detecta

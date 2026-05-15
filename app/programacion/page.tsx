@@ -1886,12 +1886,15 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
   const mapRef = useRef<HTMLDivElement>(null)
   const leafletRef = useRef<any>(null)
 
+  // Filtrar SOLO camiones con al menos un pedido geocodificado — se usa para mapa Y leyenda (índices consistentes)
+  const colsConPedidos = columnas.filter(c => c.pedidos.some(p => p.latitud && p.longitud))
+  const sinAsignarConCoords = sinAsignar.filter(p => p.latitud && p.longitud)
+  const totalConCoords = colsConPedidos.reduce((a, c) => a + c.pedidos.filter(p => p.latitud && p.longitud).length, 0) + sinAsignarConCoords.length
+
   useEffect(() => {
-    // Inject Leaflet CSS once
     if (!document.getElementById('leaflet-css')) {
       const link = document.createElement('link')
-      link.id = 'leaflet-css'
-      link.rel = 'stylesheet'
+      link.id = 'leaflet-css'; link.rel = 'stylesheet'
       link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
       document.head.appendChild(link)
     }
@@ -1899,7 +1902,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
     function initMap() {
       if (!mapRef.current) return
       const L = (window as any).L
-
       if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
 
       const depot = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
@@ -1909,59 +1911,83 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         maxZoom: 18,
       }).addTo(map)
 
-      // Depot marker
       L.marker([depot.lat, depot.lng], {
         icon: L.divIcon({
           html: `<div style="background:#1a1a1a;color:white;padding:3px 7px;border-radius:6px;font-size:11px;font-weight:bold;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4)">🏭 ${sucursal}</div>`,
-          className: '',
-          iconSize: [90, 24],
-          iconAnchor: [45, 12],
+          className: '', iconSize: [90, 24], iconAnchor: [45, 12],
         })
       }).addTo(map)
 
       const boundsPoints: [number, number][] = [[depot.lat, depot.lng]]
 
-      // Routes per truck
-      columnas.forEach((col, idx) => {
+      // Agrupar pedidos por ubicación exacta (4 decimales ≈ 11m) para no superponer marcadores
+      function locKey(p: Pedido) { return `${Math.round(p.latitud! * 1e4)},${Math.round(p.longitud! * 1e4)}` }
+
+      // Popup completo para uno o varios pedidos en la misma ubicación
+      function buildPopup(color: string, camion: string, peds: Pedido[], ordenes: number[]) {
+        return peds.map((p, gi) => {
+          const itemsHtml = p.items && p.items.length > 0
+            ? `<div style="margin-top:4px;border-top:1px solid #f0f0f0;padding-top:4px">${p.items.map(it =>
+                `<div style="font-size:11px;color:#555">• ${it.nombre} × ${it.cantidad} ${it.unidad}</div>`
+              ).join('')}</div>`
+            : ''
+          return `<div style="min-width:220px;max-width:280px${gi > 0 ? ';border-top:2px solid #e5e7eb;margin-top:10px;padding-top:10px' : ''}">
+            <div style="font-weight:700;color:${color};font-size:13px">${camion} · Parada ${ordenes[gi]}</div>
+            <div style="font-weight:700;font-size:13px;margin-top:3px">${p.cliente}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:1px">NV ${p.nv}</div>
+            <div style="font-size:11px;color:#374151;margin-top:3px">${p.direccion}</div>
+            ${p.localidad ? `<div style="font-size:11px;color:#1e40af;margin-top:1px">📍 ${p.localidad}</div>` : ''}
+            ${itemsHtml}
+            <div style="font-size:11px;color:#9ca3af;margin-top:4px">${p.peso_total_kg ?? '?'} kg · ${p.volumen_total_m3 ?? '?'} pos</div>
+          </div>`
+        }).join('')
+      }
+
+      // Iterar colsConPedidos (ya filtrado) — mismo índice que la leyenda → colores consistentes
+      colsConPedidos.forEach((col, idx) => {
         const color = TRUCK_COLORS[idx % TRUCK_COLORS.length]
         const peds = col.pedidos
           .filter(p => p.latitud && p.longitud)
           .sort((a, b) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
-        if (peds.length === 0) return
 
-        // Dashed polyline: depot → stops → depot
         L.polyline(
           [[depot.lat, depot.lng], ...peds.map(p => [p.latitud!, p.longitud!] as [number, number]), [depot.lat, depot.lng]],
           { color, weight: 3, opacity: 0.85, dashArray: '8,5' }
         ).addTo(map)
 
-        // Numbered markers
+        // Agrupar por ubicación para mostrar todos los pedidos en un solo marcador
+        const grupos = new Map<string, { peds: Pedido[]; ordenes: number[] }>()
         peds.forEach((p, i) => {
-          L.marker([p.latitud!, p.longitud!], {
+          const k = locKey(p)
+          if (!grupos.has(k)) grupos.set(k, { peds: [], ordenes: [] })
+          grupos.get(k)!.peds.push(p)
+          grupos.get(k)!.ordenes.push(i + 1)
+        })
+
+        grupos.forEach(({ peds: gp, ordenes }) => {
+          const label = ordenes.join('·')
+          const w = Math.max(26, 14 + label.length * 8)
+          L.marker([gp[0].latitud!, gp[0].longitud!], {
             icon: L.divIcon({
-              html: `<div style="background:${color};color:white;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.35)">${i + 1}</div>`,
-              className: '',
-              iconSize: [26, 26],
-              iconAnchor: [13, 13],
+              html: `<div style="background:${color};color:white;min-width:${w}px;height:26px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.35);padding:0 5px">${label}</div>`,
+              className: '', iconSize: [w, 26], iconAnchor: [w / 2, 13],
             })
           })
-            .bindPopup(`<b style="color:${color}">${col.camion.codigo}</b><br><b>${p.cliente}</b><br><small style="color:#666">${p.direccion}</small>${p.localidad ? `<br><small style="color:#1e40af">📍 ${p.localidad}</small>` : ''}<br><small>${p.peso_total_kg ?? '?'} kg · ${p.volumen_total_m3 ?? '?'} pos</small>`)
+            .bindPopup(buildPopup(color, col.camion.codigo, gp, ordenes), { maxWidth: 300 })
             .addTo(map)
-          boundsPoints.push([p.latitud!, p.longitud!])
+          boundsPoints.push([gp[0].latitud!, gp[0].longitud!])
         })
       })
 
-      // Sin asignar — gray markers
-      sinAsignar.filter(p => p.latitud && p.longitud).forEach(p => {
+      // Sin asignar
+      sinAsignarConCoords.forEach(p => {
         L.marker([p.latitud!, p.longitud!], {
           icon: L.divIcon({
             html: `<div style="background:#9ca3af;color:white;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:bold;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,0.3)">?</div>`,
-            className: '',
-            iconSize: [22, 22],
-            iconAnchor: [11, 11],
+            className: '', iconSize: [22, 22], iconAnchor: [11, 11],
           })
         })
-          .bindPopup(`<b>Sin asignar</b><br>${p.cliente}<br><small style="color:#666">${p.direccion}</small>`)
+          .bindPopup(`<div style="min-width:180px"><b>Sin asignar</b><br><b>${p.cliente}</b><br><span style="font-size:11px;color:#6b7280">NV ${p.nv}</span><br><span style="font-size:11px;color:#374151">${p.direccion}</span></div>`)
           .addTo(map)
         boundsPoints.push([p.latitud!, p.longitud!])
       })
@@ -1970,27 +1996,18 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
       leafletRef.current = map
     }
 
-    if ((window as any).L) {
-      setTimeout(initMap, 50)
-    } else {
+    if ((window as any).L) { setTimeout(initMap, 50) }
+    else {
       const script = document.createElement('script')
       script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
       script.onload = () => setTimeout(initMap, 50)
       document.body.appendChild(script)
     }
-
-    return () => {
-      if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
-    }
-  }, [columnas, sinAsignar, sucursal])
-
-  const colsConPedidos = columnas.filter(c => c.pedidos.filter(p => p.latitud && p.longitud).length > 0)
-  const sinAsignarConCoords = sinAsignar.filter(p => p.latitud && p.longitud)
-  const totalConCoords = columnas.reduce((a, c) => a + c.pedidos.filter(p => p.latitud && p.longitud).length, 0) + sinAsignarConCoords.length
+    return () => { if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null } }
+  }, [columnas, sinAsignar, sucursal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white" style={{ fontFamily: 'Barlow, sans-serif' }}>
-      {/* Header */}
       <div className="px-5 py-3 flex items-center justify-between gap-4 shrink-0 border-b" style={{ borderColor: '#f0f0f0' }}>
         <div>
           <p className="font-bold text-sm" style={{ color: '#254A96' }}>🗺️ Previsualización de rutas</p>
@@ -1998,7 +2015,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
             {totalConCoords} paradas con ubicación · líneas de puntos = ruta en orden de entrega
           </p>
         </div>
-        {/* Legend */}
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 flex-1 justify-center">
           {colsConPedidos.map((col, idx) => (
             <div key={col.camion.codigo} className="flex items-center gap-1.5">
@@ -2019,7 +2035,6 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         </div>
         <button onClick={onClose} className="text-2xl leading-none px-2 shrink-0" style={{ color: '#B9BBB7' }}>×</button>
       </div>
-      {/* Map container */}
       <div ref={mapRef} style={{ flex: 1, minHeight: 0 }} />
     </div>
   )

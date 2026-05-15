@@ -38,58 +38,67 @@ export async function POST(request: NextRequest) {
       sucursal: string
     }
 
-    // Calcular capacidad usada incluyendo ya_asignados + sugerencia actual
-    const kgUsados: Record<string, number> = {}
-    const posUsados: Record<string, number> = {}
-    camiones.forEach(c => { kgUsados[c.codigo] = 0; posUsados[c.codigo] = 0 })
+    // Construir el estado completo de cada camión DESPUÉS de aplicar la sugerencia del algoritmo
+    const pedidosPorCamion: Record<string, PedidoInput[]> = {}
+    camiones.forEach(c => { pedidosPorCamion[c.codigo] = [] })
 
     ya_asignados.forEach(p => {
-      if (p.camion_id && kgUsados[p.camion_id] !== undefined) {
-        kgUsados[p.camion_id] += p.peso_total_kg ?? 0
-        posUsados[p.camion_id] += p.volumen_total_m3 ?? 0
+      if (p.camion_id && pedidosPorCamion[p.camion_id]) {
+        pedidosPorCamion[p.camion_id].push(p)
+      }
+    })
+    pedidos.forEach(p => {
+      const cam = sugerencia[p.id]
+      if (cam && pedidosPorCamion[cam]) {
+        pedidosPorCamion[cam].push(p)
       }
     })
 
-    // Construir resumen legible para el prompt
+    const sinAsignar = pedidos.filter(p => sugerencia[p.id] === null || sugerencia[p.id] === undefined)
+
+    // Resumen de camiones con carga real post-sugerencia
     const camionesStr = camiones.map(c => {
-      const kg = kgUsados[c.codigo] ?? 0
-      const pos = posUsados[c.codigo] ?? 0
-      return `${c.codigo} (${c.tipo_unidad}): cap ${c.tonelaje_max_kg}kg/${c.posiciones_total}pos, usado ${kg}kg/${pos}pos, grua=${c.grua_hidraulica}, volcador=${c.volcador}`
-    }).join('\n')
+      const ps = pedidosPorCamion[c.codigo]
+      const kgUsado = ps.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+      const posUsado = ps.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+      const listaStr = ps.length
+        ? ps.map(p => `NV${p.nv}(${p.cliente.substring(0, 15)},${p.volumen_total_m3 ?? 0}pos,${p.peso_total_kg ?? 0}kg)`).join(' | ')
+        : 'vacío'
+      return `${c.codigo} [${c.tipo_unidad}, grua=${c.grua_hidraulica ? 'SÍ' : 'NO'}, volcador=${c.volcador ? 'SÍ' : 'NO'}]\n  Máx: ${c.tonelaje_max_kg}kg / ${c.posiciones_total}pos\n  Usado: ${kgUsado}kg / ${posUsado}pos\n  Libre: ${c.tonelaje_max_kg - kgUsado}kg / ${c.posiciones_total - posUsado}pos\n  Pedidos: ${listaStr}`
+    }).join('\n\n')
 
-    const pedidosStr = pedidos.map(p => {
-      const camionSugerido = sugerencia[p.id] ?? 'SIN_ASIGNAR'
-      const loc = p.localidad || ''
-      const coords = p.latitud && p.longitud ? `(${p.latitud.toFixed(4)},${p.longitud.toFixed(4)})` : 'sin_coords'
-      const items = (p.items ?? []).map(i => i.nombre).join(', ')
-      return `ID:${p.id} NV:${p.nv} | ${p.cliente} | ${p.direccion}${loc ? ' [' + loc + ']' : ''} ${coords} | ${p.peso_total_kg ?? 0}kg ${p.volumen_total_m3 ?? 0}pos | items:${items || '-'} | sugerido:${camionSugerido}`
-    }).join('\n')
+    const sinAsignarStr = sinAsignar.length
+      ? sinAsignar.map(p => `NV${p.nv}(${p.cliente},${p.volumen_total_m3 ?? 0}pos,${p.peso_total_kg ?? 0}kg)`).join(', ')
+      : 'ninguno'
 
-    const prompt = `Sos un asistente de logística para una empresa de materiales de construcción en Argentina (sucursal ${sucursal}).
+    const prompt = `Sos un asistente de logística para ${sucursal}, empresa de materiales de construcción en Argentina.
 
-Un algoritmo ya hizo una asignación de pedidos a camiones. Revisá la asignación y corregí SOLO los casos claramente malos.
+El algoritmo ya generó una asignación. Revisala y corregí SOLO los problemas claros de agrupación.
 
-CAMIONES DISPONIBLES (con capacidad restante después de ya_asignados):
+ESTADO DE CAMIONES (con la asignación actual del algoritmo):
 ${camionesStr}
 
-PEDIDOS A ASIGNAR (con asignación actual del algoritmo):
-${pedidosStr}
+SIN ASIGNAR: ${sinAsignarStr}
 
-REGLAS que debés respetar:
-1. Mismo cliente + misma dirección → mismo camión (siempre)
-2. Pedidos a la misma ciudad/zona geográfica → mismo camión cuando sea posible
-3. No superar tonelaje_max_kg ni posiciones_total de ningún camión (sumá kg/pos de todos los pedidos asignados)
-4. Si un pedido dice requiere_volcador=true → solo camiones con volcador=true
-5. Materiales sueltos (arena, piedra, ladrillo, cemento, cal) necesitan grua=true para descarga. Hierro puro (barras/mallas) puede ir en camión sin grúa.
-6. No asignés a SIN_ASIGNAR si hay camión con capacidad disponible
+REGLAS ESTRICTAS que no podés violar:
+- No superes el máximo de kg ni de posiciones de ningún camión
+- Pedidos que requieren grua → solo camiones con grua=SÍ
+- Pedidos que requieren volcador → solo camiones con volcador=SÍ
 
-Respondé SOLO con JSON válido, sin texto adicional:
+PROBLEMAS A CORREGIR (en orden de prioridad):
+1. Mismo cliente + misma dirección en camiones distintos → unificar en un mismo camión
+2. Pedidos del mismo cliente en camiones distintos → unificar si entra la capacidad
+3. Pedidos a ciudades/zonas claramente cercanas (ej: ambos en Buenos Aires, ambos en Lanús) que están separados → agrupar si hay capacidad
+
+IMPORTANTE: Solo hacé cambios si mejoran la agrupación Y la capacidad lo permite. Si para agrupar A con B necesitás mover C a otro lugar, hacelo, pero verificá que todo entre.
+
+Respondé ÚNICAMENTE con JSON válido:
 {
-  "asignacion": { "<pedido_id>": "<camion_codigo o null>" },
-  "cambios": [{ "nv": "<nv>", "de": "<camion_anterior>", "a": "<camion_nuevo>", "motivo": "<motivo breve>" }]
+  "asignacion": { "<id_pedido>": "<codigo_camion_o_null>" },
+  "cambios": [{ "nv": "<nv>", "de": "<camion_anterior_o_SIN_ASIGNAR>", "a": "<camion_nuevo_o_SIN_ASIGNAR>", "motivo": "<motivo>" }]
 }
 
-Si la asignación del algoritmo ya es correcta, devolvé la misma asignación con "cambios": [].`
+La "asignacion" debe incluir TODOS los pedidos de la lista, no solo los que cambiaste.`
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -98,15 +107,54 @@ Si la asignación del algoritmo ya es correcta, devolvé la misma asignación co
     })
 
     const text = (response.content[0] as { type: string; text: string }).text.trim()
-
-    // Extraer JSON de la respuesta
     const jsonMatch = text.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
-      return NextResponse.json({ error: 'Respuesta IA no tiene JSON válido', raw: text }, { status: 500 })
+      return NextResponse.json({ error: 'Respuesta IA sin JSON', raw: text }, { status: 500 })
     }
 
     const result = JSON.parse(jsonMatch[0])
-    return NextResponse.json({ ...result, tokens: response.usage })
+
+    // Validar que los cambios no desborden capacidad
+    const asignacionFinal: Record<string, string | null> = { ...sugerencia }
+    const cambiosValidos: typeof result.cambios = []
+
+    if (result.asignacion && typeof result.asignacion === 'object') {
+      // Recalcular carga con la propuesta de la IA
+      const kgProp: Record<string, number> = {}
+      const posProp: Record<string, number> = {}
+      camiones.forEach(c => {
+        kgProp[c.codigo] = ya_asignados
+          .filter(p => p.camion_id === c.codigo)
+          .reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+        posProp[c.codigo] = ya_asignados
+          .filter(p => p.camion_id === c.codigo)
+          .reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+      })
+
+      for (const [pedidoId, camCod] of Object.entries(result.asignacion)) {
+        const p = pedidos.find(x => x.id === pedidoId)
+        if (!p || !camCod) continue
+        const c = camiones.find(x => x.codigo === camCod)
+        if (!c) continue
+        kgProp[camCod] = (kgProp[camCod] ?? 0) + (p.peso_total_kg ?? 0)
+        posProp[camCod] = (posProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
+      }
+
+      let valido = true
+      for (const c of camiones) {
+        if ((kgProp[c.codigo] ?? 0) > c.tonelaje_max_kg || (posProp[c.codigo] ?? 0) > c.posiciones_total) {
+          valido = false
+          break
+        }
+      }
+
+      if (valido) {
+        Object.assign(asignacionFinal, result.asignacion)
+        cambiosValidos.push(...(result.cambios ?? []))
+      }
+    }
+
+    return NextResponse.json({ asignacion: asignacionFinal, cambios: cambiosValidos, tokens: response.usage })
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

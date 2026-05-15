@@ -280,8 +280,13 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
         score = c.tonelaje_max_kg - acum[c.codigo]
       }
 
-      // Bonus de zona: si el camión ya tiene pedidos en la misma localidad, reducir score fuertemente
-      if (locPedido !== '__sin_zona__' && (camionZonas[c.codigo]?.[locPedido] ?? 0) > 0) {
+      // Bonus de zona: misma localidad O pedidos cercanos (< 8 km) — cubre barrios distintos de la misma ciudad
+      const tieneZonaTexto = locPedido !== '__sin_zona__' && (camionZonas[c.codigo]?.[locPedido] ?? 0) > 0
+      const tieneZonaCoords = p.latitud != null && p.longitud != null && todosEnCamion.some(pp =>
+        pp.latitud != null && pp.longitud != null &&
+        distanciaKm(p.latitud!, p.longitud!, pp.latitud!, pp.longitud!) < 8
+      )
+      if (tieneZonaTexto || tieneZonaCoords) {
         score *= 0.25
       }
 

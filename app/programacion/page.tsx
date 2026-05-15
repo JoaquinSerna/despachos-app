@@ -109,6 +109,8 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   // Tracking por camión: true = tiene pedidos "largo" (chapa/perfil/tubo/caño), false = tiene pedidos no-largo, undefined = vacío
   // Hierro normal (barra/malla/vigueta) NO es "largo" y puede mezclarse libremente con pallets/bolsones
   const camionTieneLargo: Record<string, boolean | undefined> = {}
+  // Zonas (localidades) que ya tiene cada camión: { camionCodigo: { localidad: cantPedidos } }
+  const camionZonas: Record<string, Record<string, number>> = {}
 
   const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
   // Materiales largos que NO se pueden mezclar con pallets/bolsones
@@ -118,24 +120,69 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     return items.length > 0 && items.some(it => LARGO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
   }
 
+  // Normalizar dirección para comparación (quita puntuación/tildes menores, lowercase)
+  function normDir(dir: string): string {
+    return dir.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+
+  // ¿Dos pedidos van al mismo lugar? (misma dirección normalizada O coords a < 300 m)
+  function sonColocados(a: Pedido, b: Pedido): boolean {
+    if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) return true
+    if (a.latitud && a.longitud && b.latitud && b.longitud) {
+      return distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) < 0.3
+    }
+    return false
+  }
+
+  // Zona de un pedido (localidad ya precalculada o extraída de la dirección)
+  function zonaPedido(p: Pedido): string {
+    return p.localidad || localidadDeDireccion(p.direccion) || '__sin_zona__'
+  }
+
   // Pre-clasificar camiones que ya tienen pedidos asignados
   camiones.forEach(c => {
     const yaEnCamion = ya.filter(p => p.camion_id === c.codigo)
+    camionZonas[c.codigo] = {}
     if (yaEnCamion.length === 0) { camionTieneLargo[c.codigo] = undefined; return }
     const tieneLargo = yaEnCamion.some(p => esLargoPedido(p.items ?? []))
     const tieneNoLargo = yaEnCamion.some(p => !esLargoPedido(p.items ?? []))
     // Si tiene ambos (mezcla ya existente), lo dejamos como undefined para no bloquear más
     camionTieneLargo[c.codigo] = tieneLargo && !tieneNoLargo ? true : (!tieneLargo && tieneNoLargo ? false : undefined)
+    // Inicializar conteo de zonas con los pedidos ya asignados
+    yaEnCamion.forEach(p => {
+      const z = zonaPedido(p)
+      if (z !== '__sin_zona__') camionZonas[c.codigo][z] = (camionZonas[c.codigo][z] || 0) + 1
+    })
   })
 
-  // Ordenar: prioridades primero, luego por distancia al depósito (cercanos primero → se agrupan geográficamente)
-  const ordenados = [...sin].sort((a, b) => {
-    if (a.prioridad && !b.prioridad) return -1
-    if (!a.prioridad && b.prioridad) return 1
-    const dA = a.latitud && a.longitud ? distanciaKm(deposito.lat, deposito.lng, a.latitud, a.longitud) : 9999
-    const dB = b.latitud && b.longitud ? distanciaKm(deposito.lat, deposito.lng, b.latitud, b.longitud) : 9999
-    return dA - dB
+  // ── Ordenar por zona primero, luego por prioridad y distancia ──────────────
+  // Agrupar pedidos por zona → procesar zonas más grandes primero para que cada
+  // zona "reclame" su camión antes de que otra zona se mezcle en él.
+  const zonaGrupos: Record<string, Pedido[]> = {}
+  sin.forEach(p => {
+    const z = zonaPedido(p)
+    if (!zonaGrupos[z]) zonaGrupos[z] = []
+    zonaGrupos[z].push(p)
   })
+  const zonasOrdenadas = Object.keys(zonaGrupos).sort((zA, zB) => {
+    // Zonas con pedidos prioritarios van primero
+    const prioA = zonaGrupos[zA].filter(p => p.prioridad).length
+    const prioB = zonaGrupos[zB].filter(p => p.prioridad).length
+    if (prioA !== prioB) return prioB - prioA
+    // Luego por cantidad de pedidos (zonas grandes primero)
+    return zonaGrupos[zB].length - zonaGrupos[zA].length
+  })
+  const ordenados: Pedido[] = []
+  for (const z of zonasOrdenadas) {
+    const grupo = [...zonaGrupos[z]].sort((a, b) => {
+      if (a.prioridad && !b.prioridad) return -1
+      if (!a.prioridad && b.prioridad) return 1
+      const dA = a.latitud && a.longitud ? distanciaKm(deposito.lat, deposito.lng, a.latitud, a.longitud) : 9999
+      const dB = b.latitud && b.longitud ? distanciaKm(deposito.lat, deposito.lng, b.latitud, b.longitud) : 9999
+      return dA - dB
+    })
+    ordenados.push(...grupo)
+  }
 
   for (const p of ordenados) {
     const peso = p.peso_total_kg ?? 0
@@ -168,26 +215,31 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
 
     if (elegibles.length === 0) { asigs[p.id] = null; continue }
 
-    // Afinidad geográfica + agrupación por cliente
+    // ── Scoring: mismo lugar > mismo cliente > afinidad de zona > centroide ──
     let mejor: Camion | null = null
     let mejorScore = Infinity
+    const locPedido = zonaPedido(p)
 
     for (const c of elegibles) {
-      const todosPedidosCamion = [
+      const todosEnCamion = [
         ...ya.filter(pp => pp.camion_id === c.codigo),
         ...Object.entries(asigs).filter(([, cod]) => cod === c.codigo).map(([id]) => sin.find(pp => pp.id === id)).filter(Boolean) as Pedido[],
       ]
-      const yaAsignados = todosPedidosCamion.filter(pp => pp.latitud && pp.longitud)
 
-      // Prioridad máxima: mismo cliente ya asignado a este camión
-      const mismoCliente = todosPedidosCamion.some(pp => pp.cliente === p.cliente)
+      // P1: mismo lugar (misma dirección normalizada o coords < 300 m) → forzar este camión
+      const mismaDireccion = todosEnCamion.some(pp => sonColocados(pp, p))
+      if (mismaDireccion) { mejor = c; break }
+
+      // P2: mismo cliente → forzar este camión
+      const mismoCliente = todosEnCamion.some(pp => pp.cliente === p.cliente)
       if (mismoCliente) { mejor = c; break }
 
+      const yaConCoords = todosEnCamion.filter(pp => pp.latitud && pp.longitud)
       let score: number
-      if (p.latitud && p.longitud && yaAsignados.length > 0) {
+      if (p.latitud && p.longitud && yaConCoords.length > 0) {
         // Distancia al centroide de los pedidos ya asignados al camión
-        const avgLat = yaAsignados.reduce((s, pp) => s + pp.latitud!, 0) / yaAsignados.length
-        const avgLng = yaAsignados.reduce((s, pp) => s + pp.longitud!, 0) / yaAsignados.length
+        const avgLat = yaConCoords.reduce((s, pp) => s + pp.latitud!, 0) / yaConCoords.length
+        const avgLng = yaConCoords.reduce((s, pp) => s + pp.longitud!, 0) / yaConCoords.length
         score = distanciaKm(p.latitud, p.longitud, avgLat, avgLng)
       } else if (p.latitud && p.longitud) {
         // Camión sin pedidos aún: distancia al depósito (penalty leve para que los con pedidos tengan prioridad)
@@ -197,6 +249,11 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
         score = c.tonelaje_max_kg - acum[c.codigo]
       }
 
+      // Bonus de zona: si el camión ya tiene pedidos en la misma localidad, reducir score fuertemente
+      if (locPedido !== '__sin_zona__' && (camionZonas[c.codigo]?.[locPedido] ?? 0) > 0) {
+        score *= 0.25
+      }
+
       if (score < mejorScore) { mejorScore = score; mejor = c }
     }
 
@@ -204,6 +261,10 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
       asigs[p.id] = mejor.codigo
       acum[mejor.codigo] += peso
       acumPos[mejor.codigo] += pos
+      // Actualizar zona del camión para los pedidos que siguen
+      if (locPedido !== '__sin_zona__') {
+        camionZonas[mejor.codigo][locPedido] = (camionZonas[mejor.codigo][locPedido] || 0) + 1
+      }
       // Actualizar tipo de camión para anti-mezcla en próximos pedidos
       const tipoAnterior = camionTieneLargo[mejor.codigo]
       if (tipoAnterior === undefined) {

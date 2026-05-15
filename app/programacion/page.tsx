@@ -177,16 +177,26 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     return conCoords.reduce((s, p) => s + distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!), 0) / conCoords.length
   }
 
+  function maxPosPedido(z: string): number {
+    return Math.max(0, ...zonaGrupos[z].map(p => p.volumen_total_m3 ?? 0))
+  }
+
   const zonasOrdenadas = Object.keys(zonaGrupos).sort((zA, zB) => {
     // 1. Zonas con pedidos prioritarios primero
     const prioA = zonaGrupos[zA].filter(p => p.prioridad).length
     const prioB = zonaGrupos[zB].filter(p => p.prioridad).length
     if (prioA !== prioB) return prioB - prioA
-    // 2. Zonas más lejanas primero (Capital antes que Guernica local)
+    // 2. Zonas con pedidos grandes primero: tienen menos camiones elegibles (bin-packing FFD)
+    const maxA = maxPosPedido(zA)
+    const maxB = maxPosPedido(zB)
+    if (maxA >= 10 || maxB >= 10) {
+      if (Math.abs(maxA - maxB) > 2) return maxB - maxA
+    }
+    // 3. Zonas más lejanas primero
     const dA = distMediaZona(zA)
     const dB = distMediaZona(zB)
     if (Math.abs(dA - dB) > 3) return dB - dA
-    // 3. Desempate: zonas más grandes primero
+    // 4. Desempate: zonas más grandes primero
     return zonaGrupos[zB].length - zonaGrupos[zA].length
   })
   const ordenados: Pedido[] = []
@@ -194,6 +204,10 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
     const grupo = [...zonaGrupos[z]].sort((a, b) => {
       if (a.prioridad && !b.prioridad) return -1
       if (!a.prioridad && b.prioridad) return 1
+      // Pedidos más grandes primero dentro de la zona
+      const posA = a.volumen_total_m3 ?? 0
+      const posB = b.volumen_total_m3 ?? 0
+      if (Math.abs(posA - posB) > 2) return posB - posA
       const dA = a.latitud && a.longitud ? distanciaKm(deposito.lat, deposito.lng, a.latitud, a.longitud) : 9999
       const dB = b.latitud && b.longitud ? distanciaKm(deposito.lat, deposito.lng, b.latitud, b.longitud) : 9999
       return dA - dB

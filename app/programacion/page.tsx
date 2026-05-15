@@ -1239,6 +1239,26 @@ function ProgramacionInner() {
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
   }
 
+  async function handleLimpiar() {
+    const conAsignacion = pedidos.filter(p => p.camion_id)
+    // Limpiar estado local inmediatamente
+    const limpio = pedidos.map(p => ({ ...p, camion_id: null }))
+    setPedidos(limpio); construirColumnas(limpio, camiones); setConfirmado(false)
+    // Limpiar DB si había algo confirmado
+    if (conAsignacion.length > 0) {
+      setGuardando(true)
+      try {
+        await Promise.all(conAsignacion.map(p =>
+          supabase.from('pedidos').update({ camion_id: null, estado: 'pendiente', orden_entrega: null }).eq('id', p.id)
+        ))
+      } catch (e: any) {
+        showToast(`Error al limpiar: ${e.message}`, 'err')
+      } finally {
+        setGuardando(false)
+      }
+    }
+  }
+
   async function handleMoverOverflow() {
     const nextVuelta = vueltaActiva + 1
     try {
@@ -1626,7 +1646,7 @@ function ProgramacionInner() {
               🗺️ Ver rutas
             </button>
             {puedeEditarProg && vueltaActiva !== VUELTA_FUERA && <>
-              <button onClick={() => { const l = pedidos.map(p => ({ ...p, camion_id: null })); setPedidos(l); construirColumnas(l, camiones); setConfirmado(false) }}
+              <button onClick={handleLimpiar}
                 disabled={cargando || guardando}
                 className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
                 style={{ borderColor: '#e8edf8', color: '#666' }}>Limpiar</button>

@@ -994,7 +994,12 @@ function ProgramacionInner() {
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
-  const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(new Set())
+  const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('camionesBlockeados')
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>()
+    } catch { return new Set<string>() }
+  })
   const enrichGenRef = useRef(0)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
@@ -1846,6 +1851,7 @@ function ProgramacionInner() {
                     onToggleLock={puedeEditarProg ? () => setCamionesBlockeados(prev => {
                       const s = new Set(prev)
                       s.has(col.camion.codigo) ? s.delete(col.camion.codigo) : s.add(col.camion.codigo)
+                      try { localStorage.setItem('camionesBlockeados', JSON.stringify([...s])) } catch {}
                       return s
                     }) : undefined} />
                 ))}

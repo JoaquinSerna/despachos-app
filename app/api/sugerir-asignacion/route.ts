@@ -138,7 +138,7 @@ La "asignacion" debe incluir TODOS los ids de la lista.`
           .reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
       })
 
-      for (const [pedidoId, camCod] of Object.entries(result.asignacion)) {
+      for (const [pedidoId, camCod] of Object.entries(result.asignacion as Record<string, string | null>)) {
         const p = pedidos.find(x => x.id === pedidoId)
         if (!p || !camCod) continue
         const c = camiones.find(x => x.codigo === camCod)

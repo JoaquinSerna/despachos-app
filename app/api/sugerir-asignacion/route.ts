@@ -3,6 +3,14 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const client = new Anthropic()
 
+function distKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 interface PedidoInput {
   id: string
   nv: string
@@ -76,6 +84,43 @@ export async function POST(request: NextRequest) {
       ? sinAsignar.map(p => `  - ${descPedido(p)}`).join('\n')
       : '  (ninguno)'
 
+    // Pre-computar clusters geográficos entre todos los pedidos (sin asignar)
+    // para mostrárselos explícitamente a la IA
+    function computarClusters(ps: PedidoInput[]): PedidoInput[][] {
+      const n = ps.length
+      const parent = Array.from({ length: n }, (_, i) => i)
+      function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
+      function union(i: number, j: number) { parent[find(i)] = find(j) }
+      const normDir = (d: string) => d.toLowerCase().replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+      for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+          const a = ps[i], b = ps[j]
+          if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) { union(i, j); continue }
+          if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) { union(i, j); continue }
+          if (a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null) {
+            if (distKm(a.latitud, a.longitud, b.latitud, b.longitud) < 6) union(i, j)
+          }
+        }
+      }
+      const groups = new Map<number, PedidoInput[]>()
+      for (let i = 0; i < n; i++) {
+        const r = find(i)
+        if (!groups.has(r)) groups.set(r, [])
+        groups.get(r)!.push(ps[i])
+      }
+      return Array.from(groups.values()).filter(g => g.length > 1)
+    }
+
+    const clusters = computarClusters(pedidos)
+    const clustersStr = clusters.length > 0
+      ? clusters.map((g, i) => {
+          const dist = g.length === 2 && g[0].latitud && g[1].latitud
+            ? ` (${distKm(g[0].latitud!, g[0].longitud!, g[1].latitud!, g[1].longitud!).toFixed(1)} km entre sí)`
+            : ''
+          return `  Grupo ${i + 1}: ${g.map(p => `NV${p.nv} (${p.cliente})`).join(' + ')}${dist}`
+        }).join('\n')
+      : '  (ninguno — todos a distancias distintas)'
+
     const pedidosIds = pedidos.map(p => `"${p.id}": NV${p.nv}`).join(', ')
 
     const prompt = `Sos un asistente de logística para ${sucursal}, empresa de materiales de construcción en Argentina.
@@ -88,15 +133,19 @@ ${sinAsignarStr}
 
 IDs de los pedidos a incluir en la respuesta: ${pedidosIds}
 
+GRUPOS GEOGRÁFICOS PRE-COMPUTADOS (pedidos a < 6 km o mismo cliente/dirección — DEBEN ir en el mismo camión):
+${clustersStr}
+
 REGLAS QUE NO PODÉS VIOLAR:
 - Nunca superes kg ni posiciones máximas de un camión
 - requiere grua → solo camiones con grua=SÍ
 - requiere volcador → solo camiones con volcador=SÍ
+- Los pedidos de cada GRUPO GEOGRÁFICO deben quedar en el MISMO camión (prioridad máxima)
 
-TU TAREA: corregí agrupaciones malas. Los pedidos incluyen dirección completa — usá ese conocimiento geográfico:
-1. Misma dirección o mismo cliente en camiones distintos → moverlos al mismo camión
-2. Pedidos a la misma ciudad o zona (ej: ambos en Buenos Aires capital, ambos en Lanús/Gerli, ambos en Merlo) → agruparlos en el mismo camión si hay capacidad
-3. Si para agrupar A y B necesitás mover C a otro lado, hacelo — pero verificá que C entre en el nuevo camión
+TU TAREA:
+1. Para cada Grupo Geográfico: si sus pedidos están en camiones distintos → unificálos al camión que tenga más capacidad libre, siempre que entren juntos
+2. Misma dirección o mismo cliente en camiones distintos → moverlos al mismo camión
+3. Si para unificar A y B necesitás mover C a otro lado, hacelo — verificá que C entre en el nuevo camión
 4. Pedidos sin asignar: asignarlos si hay camión con capacidad
 
 Respondé ÚNICAMENTE con JSON válido, sin texto antes ni después:

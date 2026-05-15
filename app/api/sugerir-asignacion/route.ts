@@ -96,10 +96,12 @@ export async function POST(request: NextRequest) {
         for (let j = i + 1; j < n; j++) {
           const a = ps[i], b = ps[j]
           if (a.direccion && b.direccion && normDir(a.direccion) === normDir(b.direccion)) { union(i, j); continue }
-          if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) { union(i, j); continue }
-          if (a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null) {
-            if (distKm(a.latitud, a.longitud, b.latitud, b.longitud) < 15) union(i, j)
+          const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
+          if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) {
+            if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
+            continue
           }
+          if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 15) union(i, j)
         }
       }
       const groups = new Map<number, PedidoInput[]>()

@@ -48,3 +48,4 @@ next-env.d.ts
 query_bolsas.py
 update_tipo_carga.py
 app/api/temp-migrate/
+scripts/copy-to-staging.mjs

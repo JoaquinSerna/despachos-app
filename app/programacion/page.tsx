@@ -7,7 +7,7 @@ import { puedeEditar } from '@/app/lib/permisos'
 import { logAuditoria } from '@/app/lib/auditoria'
 
 interface Pedido {
-  id: string; nv: string; cliente: string; direccion: string; sucursal: string
+  id: string; nv: string; id_despacho?: string | null; cliente: string; direccion: string; sucursal: string
   fecha_entrega: string; vuelta: number; estado: string; estado_pago: string; peso_total_kg: number | null
   volumen_total_m3: number | null; pedido_grande?: boolean; tipo?: string
   notas: string | null; camion_id: string | null; orden_entrega: number | null
@@ -108,10 +108,16 @@ function buildClusters(pedidos: Pedido[]): Pedido[][] {
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const a = pedidos[i], b = pedidos[j]
+      // Misma dirección normalizada → siempre juntos
       if (a.direccion && b.direccion && norm(a.direccion) === norm(b.direccion)) { union(i, j); continue }
-      if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) { union(i, j); continue }
-      if (a.latitud && a.longitud && b.latitud && b.longitud &&
-        distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) < 15) union(i, j)
+      // Mismo cliente Y coordenadas a < 2 km → obras distintas del mismo cliente NO se juntan
+      const tienenCoords = a.latitud && a.longitud && b.latitud && b.longitud
+      if (a.cliente && b.cliente && a.cliente.toLowerCase().trim() === b.cliente.toLowerCase().trim()) {
+        if (tienenCoords && distanciaKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
+        continue
+      }
+      // Coordenadas a < 15 km → misma zona/ciudad
+      if (tienenCoords && distanciaKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 15) union(i, j)
     }
   }
   const groups = new Map<number, Pedido[]>()
@@ -1923,6 +1929,19 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
       // Agrupar pedidos por ubicación exacta (4 decimales ≈ 11m) para no superponer marcadores
       function locKey(p: Pedido) { return `${Math.round(p.latitud! * 1e4)},${Math.round(p.longitud! * 1e4)}` }
 
+      // Offset para marcadores de distintos camiones que caen en el mismo punto
+      // Cada camión que pase por una posición ocupada se desplaza ~25m
+      const ocupados = new Map<string, number>() // locKey → cantidad de camiones ya puestos ahí
+      const OFFSETS: [number, number][] = [[0,0],[0.00023,0],[-0.00023,0],[0,0.00035],[0,-0.00035],[0.00023,0.00035],[-0.00023,-0.00035]]
+      function posicionConOffset(lat: number, lng: number, camionIdx: number): [number, number] {
+        const k = locKey({ latitud: lat, longitud: lng } as Pedido)
+        const slot = ocupados.get(k) ?? 0
+        if (slot === 0) ocupados.set(k, 1)
+        else ocupados.set(k, slot + 1)
+        const off = OFFSETS[camionIdx % OFFSETS.length]
+        return [lat + (slot > 0 ? off[0] : 0), lng + (slot > 0 ? off[1] : 0)]
+      }
+
       // Popup completo para uno o varios pedidos en la misma ubicación
       function buildPopup(color: string, camion: string, peds: Pedido[], ordenes: number[]) {
         return peds.map((p, gi) => {
@@ -1934,7 +1953,7 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
           return `<div style="min-width:220px;max-width:280px${gi > 0 ? ';border-top:2px solid #e5e7eb;margin-top:10px;padding-top:10px' : ''}">
             <div style="font-weight:700;color:${color};font-size:13px">${camion} · Parada ${ordenes[gi]}</div>
             <div style="font-weight:700;font-size:13px;margin-top:3px">${p.cliente}</div>
-            <div style="font-size:11px;color:#6b7280;margin-top:1px">NV ${p.nv}</div>
+            <div style="font-size:11px;color:#6b7280;margin-top:1px">NV ${p.nv}${p.id_despacho ? ` · SD ${p.id_despacho}` : ''}</div>
             <div style="font-size:11px;color:#374151;margin-top:3px">${p.direccion}</div>
             ${p.localidad ? `<div style="font-size:11px;color:#1e40af;margin-top:1px">📍 ${p.localidad}</div>` : ''}
             ${itemsHtml}
@@ -1967,7 +1986,8 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         grupos.forEach(({ peds: gp, ordenes }) => {
           const label = ordenes.join('·')
           const w = Math.max(26, 14 + label.length * 8)
-          L.marker([gp[0].latitud!, gp[0].longitud!], {
+          const [mLat, mLng] = posicionConOffset(gp[0].latitud!, gp[0].longitud!, idx)
+          L.marker([mLat, mLng], {
             icon: L.divIcon({
               html: `<div style="background:${color};color:white;min-width:${w}px;height:26px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;border:2px solid white;box-shadow:0 1px 5px rgba(0,0,0,0.35);padding:0 5px">${label}</div>`,
               className: '', iconSize: [w, 26], iconAnchor: [w / 2, 13],
@@ -1975,7 +1995,7 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
           })
             .bindPopup(buildPopup(color, col.camion.codigo, gp, ordenes), { maxWidth: 300 })
             .addTo(map)
-          boundsPoints.push([gp[0].latitud!, gp[0].longitud!])
+          boundsPoints.push([mLat, mLng])
         })
       })
 
@@ -1987,7 +2007,7 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
             className: '', iconSize: [22, 22], iconAnchor: [11, 11],
           })
         })
-          .bindPopup(`<div style="min-width:180px"><b>Sin asignar</b><br><b>${p.cliente}</b><br><span style="font-size:11px;color:#6b7280">NV ${p.nv}</span><br><span style="font-size:11px;color:#374151">${p.direccion}</span></div>`)
+          .bindPopup(`<div style="min-width:180px"><b>Sin asignar</b><br><b>${p.cliente}</b><br><span style="font-size:11px;color:#6b7280">NV ${p.nv}${p.id_despacho ? ` · SD ${p.id_despacho}` : ''}</span><br><span style="font-size:11px;color:#374151">${p.direccion}</span></div>`)
           .addTo(map)
         boundsPoints.push([p.latitud!, p.longitud!])
       })

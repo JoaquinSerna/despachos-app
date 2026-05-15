@@ -56,49 +56,56 @@ export async function POST(request: NextRequest) {
 
     const sinAsignar = pedidos.filter(p => sugerencia[p.id] === null || sugerencia[p.id] === undefined)
 
+    function descPedido(p: PedidoInput) {
+      const loc = p.localidad ? `[${p.localidad}]` : ''
+      return `NV${p.nv} | ${p.cliente} | "${p.direccion}" ${loc} | ${p.volumen_total_m3 ?? 0}pos ${p.peso_total_kg ?? 0}kg`
+    }
+
     // Resumen de camiones con carga real post-sugerencia
     const camionesStr = camiones.map(c => {
       const ps = pedidosPorCamion[c.codigo]
       const kgUsado = ps.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
       const posUsado = ps.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
       const listaStr = ps.length
-        ? ps.map(p => `NV${p.nv}(${p.cliente.substring(0, 15)},${p.volumen_total_m3 ?? 0}pos,${p.peso_total_kg ?? 0}kg)`).join(' | ')
-        : 'vacío'
-      return `${c.codigo} [${c.tipo_unidad}, grua=${c.grua_hidraulica ? 'SÍ' : 'NO'}, volcador=${c.volcador ? 'SÍ' : 'NO'}]\n  Máx: ${c.tonelaje_max_kg}kg / ${c.posiciones_total}pos\n  Usado: ${kgUsado}kg / ${posUsado}pos\n  Libre: ${c.tonelaje_max_kg - kgUsado}kg / ${c.posiciones_total - posUsado}pos\n  Pedidos: ${listaStr}`
+        ? ps.map(p => `    - ${descPedido(p)}`).join('\n')
+        : '    (vacío)'
+      return `${c.codigo} [${c.tipo_unidad}, grua=${c.grua_hidraulica ? 'SÍ' : 'NO'}, volcador=${c.volcador ? 'SÍ' : 'NO'}] Máx:${c.tonelaje_max_kg}kg/${c.posiciones_total}pos — Libre:${c.tonelaje_max_kg - kgUsado}kg/${c.posiciones_total - posUsado}pos\n${listaStr}`
     }).join('\n\n')
 
     const sinAsignarStr = sinAsignar.length
-      ? sinAsignar.map(p => `NV${p.nv}(${p.cliente},${p.volumen_total_m3 ?? 0}pos,${p.peso_total_kg ?? 0}kg)`).join(', ')
-      : 'ninguno'
+      ? sinAsignar.map(p => `  - ${descPedido(p)}`).join('\n')
+      : '  (ninguno)'
+
+    const pedidosIds = pedidos.map(p => `"${p.id}": NV${p.nv}`).join(', ')
 
     const prompt = `Sos un asistente de logística para ${sucursal}, empresa de materiales de construcción en Argentina.
 
-El algoritmo ya generó una asignación. Revisala y corregí SOLO los problemas claros de agrupación.
-
-ESTADO DE CAMIONES (con la asignación actual del algoritmo):
+CAMIONES Y ASIGNACIÓN ACTUAL DEL ALGORITMO:
 ${camionesStr}
 
-SIN ASIGNAR: ${sinAsignarStr}
+SIN ASIGNAR:
+${sinAsignarStr}
 
-REGLAS ESTRICTAS que no podés violar:
-- No superes el máximo de kg ni de posiciones de ningún camión
-- Pedidos que requieren grua → solo camiones con grua=SÍ
-- Pedidos que requieren volcador → solo camiones con volcador=SÍ
+IDs de los pedidos a incluir en la respuesta: ${pedidosIds}
 
-PROBLEMAS A CORREGIR (en orden de prioridad):
-1. Mismo cliente + misma dirección en camiones distintos → unificar en un mismo camión
-2. Pedidos del mismo cliente en camiones distintos → unificar si entra la capacidad
-3. Pedidos a ciudades/zonas claramente cercanas (ej: ambos en Buenos Aires, ambos en Lanús) que están separados → agrupar si hay capacidad
+REGLAS QUE NO PODÉS VIOLAR:
+- Nunca superes kg ni posiciones máximas de un camión
+- requiere grua → solo camiones con grua=SÍ
+- requiere volcador → solo camiones con volcador=SÍ
 
-IMPORTANTE: Solo hacé cambios si mejoran la agrupación Y la capacidad lo permite. Si para agrupar A con B necesitás mover C a otro lugar, hacelo, pero verificá que todo entre.
+TU TAREA: corregí agrupaciones malas. Los pedidos incluyen dirección completa — usá ese conocimiento geográfico:
+1. Misma dirección o mismo cliente en camiones distintos → moverlos al mismo camión
+2. Pedidos a la misma ciudad o zona (ej: ambos en Buenos Aires capital, ambos en Lanús/Gerli, ambos en Merlo) → agruparlos en el mismo camión si hay capacidad
+3. Si para agrupar A y B necesitás mover C a otro lado, hacelo — pero verificá que C entre en el nuevo camión
+4. Pedidos sin asignar: asignarlos si hay camión con capacidad
 
-Respondé ÚNICAMENTE con JSON válido:
+Respondé ÚNICAMENTE con JSON válido, sin texto antes ni después:
 {
   "asignacion": { "<id_pedido>": "<codigo_camion_o_null>" },
-  "cambios": [{ "nv": "<nv>", "de": "<camion_anterior_o_SIN_ASIGNAR>", "a": "<camion_nuevo_o_SIN_ASIGNAR>", "motivo": "<motivo>" }]
+  "cambios": [{ "nv": "<nv>", "de": "<anterior>", "a": "<nuevo>", "motivo": "<motivo breve>" }]
 }
 
-La "asignacion" debe incluir TODOS los pedidos de la lista, no solo los que cambiaste.`
+La "asignacion" debe incluir TODOS los ids de la lista.`
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',

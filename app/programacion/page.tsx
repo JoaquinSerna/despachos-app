@@ -156,20 +156,31 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   })
 
   // ── Ordenar por zona primero, luego por prioridad y distancia ──────────────
-  // Agrupar pedidos por zona → procesar zonas más grandes primero para que cada
-  // zona "reclame" su camión antes de que otra zona se mezcle en él.
+  // Zonas lejanas al depósito van primero: tienen menos opciones de camión y
+  // necesitan reclamar capacidad antes de que los pedidos locales llenen los camiones.
   const zonaGrupos: Record<string, Pedido[]> = {}
   sin.forEach(p => {
     const z = zonaPedido(p)
     if (!zonaGrupos[z]) zonaGrupos[z] = []
     zonaGrupos[z].push(p)
   })
+
+  function distMediaZona(z: string): number {
+    const conCoords = zonaGrupos[z].filter(p => p.latitud && p.longitud)
+    if (conCoords.length === 0) return 0
+    return conCoords.reduce((s, p) => s + distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!), 0) / conCoords.length
+  }
+
   const zonasOrdenadas = Object.keys(zonaGrupos).sort((zA, zB) => {
-    // Zonas con pedidos prioritarios van primero
+    // 1. Zonas con pedidos prioritarios primero
     const prioA = zonaGrupos[zA].filter(p => p.prioridad).length
     const prioB = zonaGrupos[zB].filter(p => p.prioridad).length
     if (prioA !== prioB) return prioB - prioA
-    // Luego por cantidad de pedidos (zonas grandes primero)
+    // 2. Zonas más lejanas primero (Capital antes que Guernica local)
+    const dA = distMediaZona(zA)
+    const dB = distMediaZona(zB)
+    if (Math.abs(dA - dB) > 3) return dB - dA
+    // 3. Desempate: zonas más grandes primero
     return zonaGrupos[zB].length - zonaGrupos[zA].length
   })
   const ordenados: Pedido[] = []

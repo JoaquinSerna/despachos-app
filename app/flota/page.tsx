@@ -414,7 +414,9 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
         ...c,
         sucursal_dia: diaConfig ? diaConfig.sucursal : c.sucursal,
         activo_dia: diaConfig ? diaConfig.activo : true,
-        chofer_id: diaConfig?.chofer_id ?? c.chofer_id_default ?? '',
+        // Si ya existe una fila en flota_dia, respetar su chofer (aunque sea null).
+        // Solo usar el default de flota_base si NO hay fila guardada para ese día.
+        chofer_id: diaConfig ? (diaConfig.chofer_id ?? '') : (c.chofer_id_default ?? ''),
         sucursal_extra: diaConfig?.sucursal_extra ?? '',
         sucursal_extra_desde_vuelta: diaConfig?.sucursal_extra_desde_vuelta ?? 2,
       }
@@ -450,6 +452,17 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
   }
 
   const guardarFlota = async () => {
+    // Validar que no haya dos camiones activos con el mismo chofer
+    const choferesActivos = camiones
+      .filter(c => c.activo_dia && c.chofer_id)
+      .map(c => c.chofer_id as string)
+    const duplicados = choferesActivos.filter((id, i) => choferesActivos.indexOf(id) !== i)
+    if (duplicados.length > 0) {
+      const nombres = duplicados.map(id => choferes.find(ch => ch.id === id)?.nombre ?? id)
+      showToast(`⚠️ Chofer asignado a más de un camión: ${nombres.join(', ')}`, 'err')
+      return
+    }
+
     setGuardando(true)
     try {
       const resultados = await Promise.all(

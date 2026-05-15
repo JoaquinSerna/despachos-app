@@ -1265,6 +1265,7 @@ export default function RuteoPage() {
                               </>
                             )
                           })()}
+                        </div>
                       </div>
                     )}
                   </div>

@@ -125,6 +125,7 @@ interface PedidoDetalle {
   longitud: number | null
   barrio_cerrado: boolean | null
   esHierros: boolean
+  hora_entregado: string | null
 }
 
 interface DatosVuelta {
@@ -231,7 +232,7 @@ export default function MetricasPage() {
 
       // Queries paralelas: pedidos + flota + camiones + materiales para el intervalo
       let pedQ = supabase.from('pedidos')
-        .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud, barrio_cerrado, orden_entrega')
+        .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud, barrio_cerrado, orden_entrega, hora_entregado')
         .gte('fecha_entrega', fechaExportDesde).lte('fecha_entrega', fechaExportHasta)
         .neq('estado', 'cancelado').order('fecha_entrega').order('sucursal').order('cliente')
       let flotQ = supabase.from('flota_dia')
@@ -412,6 +413,7 @@ export default function MetricasPage() {
             peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
             orden_entrega: p.orden_entrega ?? null, latitud: p.latitud ?? null, longitud: p.longitud ?? null,
             barrio_cerrado: p.barrio_cerrado ?? null, esHierros: pedidoEsHierrosEx[p.id] ?? false,
+            hora_entregado: p.hora_entregado ?? null,
           }))
           const descMin = calcularTiempoDescargaMin(detEx, esTrailerEx)
           const trasMin = distKmEx > 0 ? Math.round(distKmEx * 1.3 / 40 * 60) : 0
@@ -478,7 +480,7 @@ export default function MetricasPage() {
     const [{ data: flotaDia }, { data: pedidosData }, { data: camionesData }, { data: vueltasTiemposData }] = await Promise.all([
       supabase.from('flota_dia').select('camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta').eq('fecha', fecha).eq('activo', true),
       supabase.from('pedidos')
-        .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado')
+        .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado, hora_entregado')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
       supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
       supabase.from('vueltas_tiempos').select('camion_codigo, vuelta, hora_inicio, hora_fin').eq('fecha', fecha),
@@ -574,6 +576,7 @@ export default function MetricasPage() {
               latitud: p.latitud ?? null, longitud: p.longitud ?? null,
               barrio_cerrado: p.barrio_cerrado ?? null,
               esHierros: pedidoEsHierros[p.id] ?? false,
+              hora_entregado: p.hora_entregado ?? null,
             })),
         }
       })
@@ -1102,6 +1105,28 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                           </div>
                         )}
 
+                        {/* Horas de entrega por pedido */}
+                        {(() => {
+                          const entregas = v.detalle
+                            .filter(p => p.hora_entregado)
+                            .sort((a, b) => new Date(a.hora_entregado!).getTime() - new Date(b.hora_entregado!).getTime())
+                          if (entregas.length === 0) return null
+                          return (
+                            <div className="text-xs pt-1" style={{ borderTop: '1px solid #e8edf8' }}>
+                              <div className="flex flex-wrap gap-x-2 gap-y-0.5" style={{ color: '#B9BBB7' }}>
+                                <span style={{ color: '#254A96', fontWeight: 600 }}>📦</span>
+                                {entregas.map((p, i) => (
+                                  <span key={p.id}>
+                                    <span style={{ color: '#1a1a1a', fontWeight: 500 }}>{formatHora(p.hora_entregado)}</span>
+                                    <span style={{ color: '#B9BBB7' }}> {p.estado === 'rechazado' ? '✕' : p.estado === 'entregado_parcial' ? '½' : '✓'}</span>
+                                    {i < entregas.length - 1 && <span style={{ color: '#d1d5db' }}> ·</span>}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })()}
+
                         {/* Tiempo estimado */}
                         {(() => {
                           const esTrailer = /trailer|semi/i.test(d.tipo_unidad ?? '')
@@ -1218,7 +1243,7 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
               <table className="w-full text-sm" style={{ minWidth: 700 }}>
                 <thead>
                   <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
-                    {['#', 'NV', 'Cliente', 'Kg', 'Pos', 'Estado', 'Pago', ''].map(h => (
+                    {['#', 'NV', 'Cliente', 'Kg', 'Pos', 'Estado', 'Pago', 'Hora entrega', ''].map(h => (
                       <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
                     ))}
                   </tr>
@@ -1270,6 +1295,9 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                               </span>
                             : <span style={{ color: '#ddd' }}>—</span>
                           }
+                        </td>
+                        <td className="px-4 py-2.5 text-xs whitespace-nowrap" style={{ color: p.hora_entregado ? '#065f46' : '#ddd', fontWeight: p.hora_entregado ? 600 : 400 }}>
+                          {p.hora_entregado ? formatHora(p.hora_entregado) : '—'}
                         </td>
                         <td className="px-3 py-2.5">
                           <button

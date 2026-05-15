@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Actualizar estado del pedido
-    const updates: Record<string, any> = { estado }
+    const updates: Record<string, any> = { estado, hora_entregado: new Date().toISOString() }
     if (estado === 'rechazado' && motivoRechazo) {
       // Guardar motivo de rechazo en notas (no existe columna separada)
       updates.notas = nota ? `${nota} | ✕ ${motivoRechazo}` : `✕ ${motivoRechazo}`

@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
     await admin.from('pedidos').update({
       estado: 'entregado_parcial',
       notas: notaFinal,
+      hora_entregado: new Date().toISOString(),
     }).eq('id', pedidoId)
 
     // Create saldo pedido (always, even when items_pendientes is empty)

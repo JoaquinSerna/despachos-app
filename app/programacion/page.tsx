@@ -113,11 +113,17 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
   const camionZonas: Record<string, Record<string, number>> = {}
 
   const HIERRO_KEYWORDS = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
-  // Materiales largos que NO se pueden mezclar con pallets/bolsones
+  // Materiales largos que NO se pueden mezclar con pallets/bolsones (estructurales/metálicos)
   const LARGO_KEYWORDS = ['chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'ángulo', 'zingueria', 'upn', 'ipn']
+  // Excluir cañerías sanitarias/pluviales de PVC: físicamente son largas pero viajan con cualquier material
+  const LARGO_EXCL = ['cloacal', 'pluvial', 'sanitario', 'desague', 'desagüe']
 
   function esLargoPedido(items: { nombre: string }[]) {
-    return items.length > 0 && items.some(it => LARGO_KEYWORDS.some(kw => it.nombre.toLowerCase().includes(kw)))
+    return items.length > 0 && items.some(it => {
+      const nombre = it.nombre.toLowerCase()
+      if (LARGO_EXCL.some(ex => nombre.includes(ex))) return false
+      return LARGO_KEYWORDS.some(kw => nombre.includes(kw))
+    })
   }
 
   // Normalizar dirección para comparación (quita puntuación/tildes menores, lowercase)

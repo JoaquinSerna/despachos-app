@@ -22,6 +22,7 @@ interface PedidoInput {
   peso_total_kg: number | null
   volumen_total_m3: number | null
   requiere_volcador?: boolean
+  barrio_cerrado?: boolean
   camion_id?: string | null
   items?: { nombre: string }[]
 }
@@ -97,9 +98,22 @@ export async function POST(request: NextRequest) {
       const normCliente = (c: string) => c.toLowerCase()
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+      function nombreBarrio(dir: string): string {
+        if (!dir) return ''
+        const SKIP = /^(buenos aires|córdoba|cordoba|santa fe|mendoza|prov\.|pcia\.|argentina|bs\.? ?as?\.?)$/i
+        const parts = dir.split(',').map(s => s.trim()).filter(Boolean)
+        const candidates = parts.filter(p => !/\d/.test(p) && !SKIP.test(p) && p.length > 2 && p.length < 50)
+        const raw = candidates.length >= 2 ? candidates[candidates.length - 2] : candidates[candidates.length - 1]
+        if (!raw) return ''
+        return raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+      }
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
           const a = ps[i], b = ps[j]
+          if (a.barrio_cerrado && b.barrio_cerrado) {
+            const ba = nombreBarrio(a.direccion), bb = nombreBarrio(b.direccion)
+            if (ba && bb && ba === bb) { union(i, j); continue }
+          }
           if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
           const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
           if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {

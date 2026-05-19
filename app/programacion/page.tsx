@@ -97,7 +97,23 @@ function localidadDeDireccion(dir: string): string {
   return ''
 }
 
-// Agrupa pedidos por proximidad geográfica (< 15 km), mismo cliente o misma dirección.
+// Extrae el nombre del barrio cerrado de una dirección.
+// Ej: "Calle Los Aromos 123, San Jorge, Canning, Buenos Aires" → "san jorge"
+// Busca el segmento sin número que NO sea la última parte (que suele ser ciudad/provincia).
+function nombreBarrioCerrado(dir: string): string {
+  if (!dir) return ''
+  const SKIP = /^(buenos aires|córdoba|cordoba|santa fe|mendoza|prov\.|pcia\.|argentina|bs\.? ?as?\.?)$/i
+  const parts = dir.split(',').map(s => s.trim()).filter(Boolean)
+  // Candidatos: segmentos sin números, no provincia/país, longitud razonable
+  const candidates = parts.filter(p => !/\d/.test(p) && !SKIP.test(p) && p.length > 2 && p.length < 50)
+  // El nombre del barrio suele ser el penúltimo segmento (antes de la ciudad)
+  // Si hay al menos 2 candidatos tomamos el anteúltimo; si hay 1 lo usamos igual
+  const raw = candidates.length >= 2 ? candidates[candidates.length - 2] : candidates[candidates.length - 1]
+  if (!raw) return ''
+  return raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+// Agrupa pedidos por proximidad geográfica (< 15 km), mismo cliente, misma dirección o mismo barrio cerrado.
 // Se usa tanto en el algoritmo como en el UI para mostrar feedback al usuario.
 function buildClusters(pedidos: Pedido[]): Pedido[][] {
   // Normaliza tildes ("Martín" → "martin"), puntuación y espacios
@@ -115,6 +131,13 @@ function buildClusters(pedidos: Pedido[]): Pedido[][] {
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const a = pedidos[i], b = pedidos[j]
+      // Mismo barrio cerrado (nombre extraído de la dirección) → siempre juntos
+      // "San Jorge, Canning" ≠ "Saint Thomas, Canning" → no se mezclan
+      if (a.barrio_cerrado && b.barrio_cerrado) {
+        const ba = nombreBarrioCerrado(a.direccion)
+        const bb = nombreBarrioCerrado(b.direccion)
+        if (ba && bb && ba === bb) { union(i, j); continue }
+      }
       // Misma dirección normalizada (incluyendo tildes) → siempre juntos
       if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
       // Mismo cliente (normalizado) → juntar solo si están a < 2 km entre sí

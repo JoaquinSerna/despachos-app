@@ -31,8 +31,10 @@ const VUELTAS = [
   { num: 4,  label: 'V4',             horario: '15:00–17:00' },
   { num: 5,  label: 'DHora',          horario: 'Después de hora' },
   { num: -1, label: 'Fuera de prog.', horario: '' },
+  { num: -2, label: '🔄 Transferencias', horario: '' },
 ]
 const VUELTA_FUERA = -1
+const VUELTA_TRANSFERENCIAS = -2
 const PAGO_COLOR: Record<string, string> = {
   cobrado: 'bg-green-100 text-green-800', cuenta_corriente: 'bg-blue-100 text-blue-800',
   pendiente_cobro: 'bg-yellow-100 text-yellow-800', pago_en_obra: 'bg-orange-100 text-orange-800',
@@ -1005,6 +1007,8 @@ function ProgramacionInner() {
   const [bannerGrandeDismissed, setBannerGrandeDismissed] = useState(false)
   const [flotaSinRevisar, setFlotaSinRevisar] = useState(false)
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
+  const [contadorTransferencias, setContadorTransferencias] = useState(0)
+  const [transferencias, setTransferencias] = useState<any[]>([])
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
@@ -1034,9 +1038,22 @@ function ProgramacionInner() {
     })
   }, [])
 
+  // Cargar transferencias en paralelo (independiente de la vuelta activa)
+  useEffect(() => { cargarTransferencias() }, [fecha, sucursal])
   useEffect(() => { cargarDatos() }, [fecha, sucursal, vueltaActiva])
 
+  async function cargarTransferencias() {
+    try {
+      const res = await fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`)
+      const data = await res.json()
+      const list = Array.isArray(data) ? data : []
+      setTransferencias(list)
+      setContadorTransferencias(list.length)
+    } catch {}
+  }
+
   async function cargarDatos() {
+    if (vueltaActiva === VUELTA_TRANSFERENCIAS) { setCargando(false); return }
     setCargando(true); setConfirmado(false)
     let q = supabase.from('pedidos')
       .select('*, prioridad, barrio_cerrado')
@@ -1608,15 +1625,24 @@ function ProgramacionInner() {
             {VUELTAS.map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
+              const esTransferencias = v.num === VUELTA_TRANSFERENCIAS
               const badge = esFuera && contadorSinVuelta > 0
-              const cerradaManual = !esFuera && vultasCerradasManual.has(v.num)
+              const badgeTransf = esTransferencias && contadorTransferencias > 0
+              const cerradaManual = !esFuera && !esTransferencias && vultasCerradasManual.has(v.num)
               return (
                 <div key={v.num} className="flex items-center gap-0.5">
                   <button onClick={() => setVueltaActiva(v.num)}
                     className="relative px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
                     style={{
-                      background: activo ? '#254A96' : cerradaManual ? '#fde8e8' : '#f4f4f3',
-                      color: activo ? 'white' : cerradaManual ? '#E52322' : '#666',
+                      background: activo
+                        ? esTransferencias ? '#f97316' : '#254A96'
+                        : cerradaManual ? '#fde8e8'
+                        : esTransferencias ? '#fff7ed'
+                        : '#f4f4f3',
+                      color: activo ? 'white'
+                        : cerradaManual ? '#E52322'
+                        : esTransferencias ? '#ea580c'
+                        : '#666',
                     }}>
                     {v.label}
                     {cerradaManual && <span className="ml-1 text-xs">🔒</span>}
@@ -1627,8 +1653,14 @@ function ProgramacionInner() {
                         {contadorSinVuelta}
                       </span>
                     )}
+                    {badgeTransf && (
+                      <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center rounded-full font-bold text-white"
+                        style={{ minWidth: 17, height: 17, fontSize: 9, padding: '0 3px', background: '#f97316' }}>
+                        {contadorTransferencias}
+                      </span>
+                    )}
                   </button>
-                  {puedeEditarProg && (
+                  {puedeEditarProg && !esTransferencias && (
                     <button
                       onClick={() => handleToggleVueltaCerrada(v.num)}
                       title={cerradaManual
@@ -1755,7 +1787,34 @@ function ProgramacionInner() {
           </div>
         )}
 
-        {cargando ? (
+        {vueltaActiva === VUELTA_TRANSFERENCIAS ? (
+          /* ── Vista especial: Transferencias entre sucursales ── */
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="max-w-2xl mx-auto space-y-2">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium" style={{ color: '#B9BBB7' }}>
+                  {transferencias.length} transferencia{transferencias.length !== 1 ? 's' : ''} pendiente{transferencias.length !== 1 ? 's' : ''}
+                  {' '}para despachar desde {sucursal}
+                </p>
+                <button onClick={cargarTransferencias}
+                  className="text-xs px-3 py-1.5 rounded-lg"
+                  style={{ color: '#ea580c', background: '#fff7ed' }}>
+                  Actualizar
+                </button>
+              </div>
+              {transferencias.length === 0 ? (
+                <div className="flex flex-col items-center py-16" style={{ color: '#B9BBB7' }}>
+                  <div className="text-4xl mb-3">🔄</div>
+                  <p>No hay transferencias pendientes desde {sucursal}</p>
+                </div>
+              ) : (
+                transferencias.map((req: any) => (
+                  <TransferCard key={req.id} req={req} />
+                ))
+              )}
+            </div>
+          </div>
+        ) : cargando ? (
           <div className="flex justify-center py-24">
             <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
           </div>
@@ -2063,6 +2122,72 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         <button onClick={onClose} className="text-2xl leading-none px-2 shrink-0" style={{ color: '#B9BBB7' }}>×</button>
       </div>
       <div ref={mapRef} style={{ flex: 1, minHeight: 0 }} />
+    </div>
+  )
+}
+
+// ─── Tarjeta de transferencia (visible en tab 🔄 Transferencias) ────────────────
+// Visualmente naranja para diferenciarse de las tarjetas de pedidos (azul)
+// y de los reprogramados (amarillo #fbbf24).
+function TransferCard({ req }: { req: any }) {
+  const ESTADO_COLOR: Record<string, string> = {
+    pendiente:   '#fef3c7',
+    conf_stock:  '#e0f2fe',
+    preparacion: '#ede9fe',
+    en_transito: '#dbeafe',
+    entregado:   '#d1fae5',
+    rechazado:   '#fde8e8',
+  }
+  const ESTADO_TEXT: Record<string, string> = {
+    pendiente:   '#b45309',
+    conf_stock:  '#0369a1',
+    preparacion: '#7c3aed',
+    en_transito: '#1d4ed8',
+    entregado:   '#065f46',
+    rechazado:   '#E52322',
+  }
+  const ESTADO_LABEL: Record<string, string> = {
+    pendiente:   'Pendiente',
+    conf_stock:  'Conf. Stock',
+    preparacion: 'En preparación',
+    en_transito: 'En tránsito',
+    entregado:   'Entregado',
+    rechazado:   'Rechazado',
+  }
+  const items = req.requerimiento_items ?? []
+  const resumen = items.slice(0, 3).map((it: any) => it.nombre_producto).join(', ')
+    + (items.length > 3 ? ` +${items.length - 3} más` : '')
+
+  return (
+    <div className="bg-white rounded-xl border px-4 py-3"
+      style={{ borderColor: '#f0f0f0', borderLeft: '4px solid #f97316' }}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Badge estado */}
+          <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+            style={{ background: ESTADO_COLOR[req.estado] ?? '#f4f4f3', color: ESTADO_TEXT[req.estado] ?? '#666' }}>
+            {ESTADO_LABEL[req.estado] ?? req.estado}
+          </span>
+          {req.nv && <span className="text-xs font-medium" style={{ color: '#254A96' }}>NV {req.nv}</span>}
+          {req.cliente && <span className="text-xs" style={{ color: '#B9BBB7' }}>{req.cliente}</span>}
+        </div>
+        <div className="flex items-center gap-2 text-xs shrink-0" style={{ color: '#B9BBB7' }}>
+          {req.cod_vehiculo && (
+            <span className="font-medium px-2 py-0.5 rounded" style={{ background: '#fff7ed', color: '#ea580c' }}>
+              🚛 {req.cod_vehiculo}
+            </span>
+          )}
+          {req.fecha_solicitada && <span>Límite: {req.fecha_solicitada}</span>}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <span className="text-sm font-semibold" style={{ color: '#f97316' }}>{req.sucursal_origen}</span>
+        <span className="text-sm" style={{ color: '#B9BBB7' }}>→</span>
+        <span className="text-sm font-semibold" style={{ color: '#254A96' }}>{req.sucursal_destino}</span>
+      </div>
+      {resumen && (
+        <p className="text-xs mt-1.5 leading-tight" style={{ color: '#B9BBB7' }}>{resumen}</p>
+      )}
     </div>
   )
 }

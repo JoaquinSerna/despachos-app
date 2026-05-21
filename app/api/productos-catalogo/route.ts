@@ -44,6 +44,13 @@ export async function POST(req: NextRequest) {
       return true // default activo
     }
 
+    // Debug: ver qué columnas y valores tiene la primera fila
+    const primeraFila = rows_norm[0] ?? {}
+    const colsEncontradas = Object.keys(primeraFila)
+    const tieneId = 'id' in primeraFila
+    const tieneNombre = 'nombre' in primeraFila
+    const tieneActivo = 'activo' in primeraFila
+
     const now = new Date().toISOString()
     const records = rows_norm
       .filter(r => r['id'] && r['nombre'])
@@ -65,7 +72,10 @@ export async function POST(req: NextRequest) {
       }))
 
     if (!records.length) {
-      return NextResponse.json({ error: 'No se encontraron productos válidos (se requiere columna id y nombre)' }, { status: 400 })
+      return NextResponse.json({
+        error: 'No se encontraron productos válidos (se requiere columna id y nombre)',
+        _debug: { totalFilas: rows_norm.length, columnas: colsEncontradas.slice(0, 20), tieneId, tieneNombre, tieneActivo, primeraFila: Object.fromEntries(Object.entries(primeraFila).slice(0, 5)) },
+      }, { status: 400 })
     }
 
     // Upsert en lotes de 500
@@ -79,7 +89,10 @@ export async function POST(req: NextRequest) {
     }
 
     const inactivos = records.filter(r => !r.activo).length
-    return NextResponse.json({ success: true, total: imported, activos: imported - inactivos, inactivos, importado_en: now })
+    return NextResponse.json({
+      success: true, total: imported, activos: imported - inactivos, inactivos, importado_en: now,
+      _debug: { columnas: colsEncontradas.slice(0, 20), tieneId, tieneNombre, tieneActivo },
+    })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }

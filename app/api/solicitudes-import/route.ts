@@ -29,14 +29,29 @@ function normalizeSucursal(s: string) {
 function parseDate(val: any): string | null {
   if (!val) return null
   try {
+    // Ya es un Date object (cuando se lee con cellDates: true)
+    if (val instanceof Date) {
+      if (isNaN(val.getTime())) return null
+      return val.toISOString().split('T')[0]
+    }
     // Excel serial number
     if (typeof val === 'number') {
       const d = XLSX.SSF.parse_date_code(val)
       return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`
     }
-    const d = new Date(val)
-    if (isNaN(d.getTime())) return null
-    return d.toISOString().split('T')[0]
+    if (typeof val === 'string') {
+      const s = val.trim()
+      // Formato DD/MM/YYYY o DD-MM-YYYY (argentino)
+      const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+      if (dmyMatch) {
+        const [, d, m, y] = dmyMatch
+        return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
+      }
+      // Formato ISO o YYYY/MM/DD
+      const iso = new Date(s)
+      if (!isNaN(iso.getTime())) return iso.toISOString().split('T')[0]
+    }
+    return null
   } catch { return null }
 }
 
@@ -55,13 +70,23 @@ export async function POST(req: NextRequest) {
     if (!file) return NextResponse.json({ error: 'No se recibió archivo' }, { status: 400 })
 
     const buffer = await file.arrayBuffer()
-    const wb = XLSX.read(buffer, { type: 'array', cellDates: false })
+    const wb = XLSX.read(buffer, { type: 'array', cellDates: true })
 
     // Leer hoja de solicitudes
     const ws = wb.Sheets['Solicitudes de Despacho'] ?? wb.Sheets[wb.SheetNames[0]]
     const rows: any[] = XLSX.utils.sheet_to_json(ws)
 
     if (!rows.length) return NextResponse.json({ error: 'Hoja de solicitudes vacía' }, { status: 400 })
+
+    // Debug: devolver info de la primera fila para diagnosticar fechas
+    const primeraFila = rows[0]
+    const fechaRaw = primeraFila['fecha_despacho']
+    const fechaDebug = {
+      valor: fechaRaw,
+      tipo: typeof fechaRaw,
+      esDate: fechaRaw instanceof Date,
+      parseado: parseDate(fechaRaw),
+    }
 
     // Normalizar las solicitudes del Excel
     const solicitudes = rows.map(r => ({
@@ -132,7 +157,8 @@ export async function POST(req: NextRequest) {
       cargados_en_app: cargados.length,
       no_cargados: noCargados.length,
       items: itemsCount,
-      solicitudes_sin_cargar: noCargados.slice(0, 200), // devolver primeras 200 para mostrar en UI
+      solicitudes_sin_cargar: noCargados.slice(0, 200),
+      _debug_fecha: fechaDebug, // temporal para diagnosticar formato de fecha
     })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

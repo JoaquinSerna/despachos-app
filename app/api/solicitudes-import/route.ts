@@ -27,29 +27,50 @@ function normalizeSucursal(s: string) {
 }
 
 function parseDate(val: any): string | null {
-  if (!val) return null
+  if (val == null || val === '') return null
   try {
-    // Ya es un Date object (cuando se lee con cellDates: true)
+    // JS Date object (cellDates: true)
     if (val instanceof Date) {
       if (isNaN(val.getTime())) return null
-      return val.toISOString().split('T')[0]
+      // Usar componentes locales para evitar desfase por timezone
+      const y = val.getFullYear()
+      const m = String(val.getMonth() + 1).padStart(2, '0')
+      const d = String(val.getDate()).padStart(2, '0')
+      return `${y}-${m}-${d}`
     }
-    // Excel serial number
-    if (typeof val === 'number') {
+    // Objeto fecha de XLSX ({ y, m, d, H, M, S })
+    if (typeof val === 'object' && 'y' in val && 'm' in val && 'd' in val) {
+      return `${val.y}-${String(val.m).padStart(2,'0')}-${String(val.d).padStart(2,'0')}`
+    }
+    // Serial numérico de Excel
+    if (typeof val === 'number' && val > 0) {
       const d = XLSX.SSF.parse_date_code(val)
-      return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`
+      if (d?.y > 1900) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`
     }
     if (typeof val === 'string') {
-      const s = val.trim()
+      const s = val.trim().replace(/^["']|["']$/g, '') // quitar comillas si las hay
+      if (!s) return null
+
       // Formato DD/MM/YYYY o DD-MM-YYYY (argentino)
-      const dmyMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+      const dmyMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/)
       if (dmyMatch) {
         const [, d, m, y] = dmyMatch
         return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
       }
-      // Formato ISO o YYYY/MM/DD
-      const iso = new Date(s)
-      if (!isNaN(iso.getTime())) return iso.toISOString().split('T')[0]
+
+      // Formato YYYY-DD-MM o YYYY/DD/MM (ERP export: año-día-mes — ¡invertido!)
+      // El ERP exporta con día en segunda posición y mes en tercera
+      const ydmMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/)
+      if (ydmMatch) {
+        const [, y, dia, mes] = ydmMatch
+        return `${y}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`
+      }
+
+      // Fallback genérico
+      const d = new Date(s)
+      if (!isNaN(d.getTime())) {
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      }
     }
     return null
   } catch { return null }

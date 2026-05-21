@@ -48,22 +48,24 @@ function parseDate(val: any): string | null {
       if (d?.y > 1900) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`
     }
     if (typeof val === 'string') {
-      const s = val.trim().replace(/^["']|["']$/g, '') // quitar comillas si las hay
-      if (!s) return null
+      const raw = val.trim().replace(/^["']|["']$/g, '') // quitar comillas si las hay
+      if (!raw) return null
 
-      // Formato DD/MM/YYYY o DD-MM-YYYY (argentino)
+      // Quitar componente de hora si la hay (ej: "01-04-2026 00:00:00" → "01-04-2026")
+      const s = raw.split(/[\sT]/)[0]
+
+      // Formato DD/MM/YYYY o DD-MM-YYYY (argentino / ERP: día-mes-año)
       const dmyMatch = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/)
       if (dmyMatch) {
         const [, d, m, y] = dmyMatch
         return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`
       }
 
-      // Formato YYYY-DD-MM o YYYY/DD/MM (ERP export: año-día-mes — ¡invertido!)
-      // El ERP exporta con día en segunda posición y mes en tercera
-      const ydmMatch = s.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/)
-      if (ydmMatch) {
-        const [, y, dia, mes] = ydmMatch
-        return `${y}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`
+      // Formato ISO YYYY-MM-DD (pasarlo directamente sin invertir)
+      const isoMatch = s.match(/^(\d{4})[\/\-\.](\d{2})[\/\-\.](\d{2})$/)
+      if (isoMatch) {
+        const [, y, m, d] = isoMatch
+        return `${y}-${m}-${d}`
       }
 
       // Fallback genérico

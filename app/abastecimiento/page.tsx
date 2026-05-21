@@ -133,6 +133,63 @@ interface Requerimiento {
   requerimiento_items: ReqItem[]
 }
 
+// ─── Tipo para vista agregada (Sugerencias) ───────────────────────────────────
+interface SugerenciaRow {
+  id_producto: number
+  nombre_producto: string
+  categoria: string
+  sucursal: string
+  demandado: number
+  stock_local: number
+  deficit: number
+  disponible_otros: number
+  sucursal_mejor: string
+  cobertura: 'cubierto' | 'parcial' | 'sin_stock'
+  activo: boolean
+  sol_ids: number[]
+}
+
+/** Agrega demanda por (sucursal, producto) y calcula cobertura vs stock */
+function buildSugerencias(
+  solicitudes: SdSolicitud[],
+  stock: StockMap,
+  catalogo: Record<number, CatalogoEntry>,
+): SugerenciaRow[] {
+  const demand: Record<string, Record<number, SugerenciaRow>> = {}
+  for (const sol of solicitudes) {
+    for (const item of sol.items) {
+      if (item.nombre_producto === 'Transporte por km') continue
+      if (!demand[sol.sucursal]) demand[sol.sucursal] = {}
+      if (!demand[sol.sucursal][item.id_producto]) {
+        demand[sol.sucursal][item.id_producto] = {
+          id_producto: item.id_producto, nombre_producto: item.nombre_producto,
+          categoria: item.categoria, sucursal: sol.sucursal,
+          demandado: 0, stock_local: 0, deficit: 0, disponible_otros: 0,
+          sucursal_mejor: '', cobertura: 'sin_stock',
+          activo: catalogo[item.id_producto]?.activo !== false, sol_ids: [],
+        }
+      }
+      demand[sol.sucursal][item.id_producto].demandado += item.cantidad_solicitada
+      if (!demand[sol.sucursal][item.id_producto].sol_ids.includes(sol.id))
+        demand[sol.sucursal][item.id_producto].sol_ids.push(sol.id)
+    }
+  }
+  const rows: SugerenciaRow[] = []
+  for (const [suc, prods] of Object.entries(demand)) {
+    for (const [, row] of Object.entries(prods)) {
+      row.stock_local = stock[row.id_producto]?.[suc] ?? 0
+      row.deficit = Math.max(0, row.demandado - row.stock_local)
+      const others = Object.entries(stock[row.id_producto] ?? {})
+        .filter(([s]) => s !== suc)
+        .sort(([, a], [, b]) => (b as number) - (a as number))
+      if (others.length > 0) { row.disponible_otros = others[0][1] as number; row.sucursal_mejor = others[0][0] }
+      row.cobertura = row.stock_local >= row.demandado ? 'cubierto' : row.stock_local > 0 ? 'parcial' : 'sin_stock'
+      rows.push(row)
+    }
+  }
+  return rows
+}
+
 // ─── Helpers de decisión ───────────────────────────────────────────────────────
 /** Decide automáticamente basado en stock disponible */
 function autoSuggest(item: SdItem, sucursalOrigen: string, stock: StockMap): ItemDecision {
@@ -323,78 +380,64 @@ export default function AbastecimientoPage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TAB: VERIFICACIÓN SD
+// TAB: VERIFICACIÓN SD — vista Sugerencias de Transferencias
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabVerificacion({ rol, userEmail, showToast }: {
   rol: string; userEmail: string; showToast: (msg: string, tipo?: 'ok' | 'err') => void
 }) {
-  const [fecha, setFecha] = useState(hoy())
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
+  const [filtroSucursal, setFiltroSucursal] = useState('')
+  const [filtroCategoria, setFiltroCategoria] = useState('')
+  const [filtroCobertura, setFiltroCobertura] = useState('')
+  const [filtroEstadoSol, setFiltroEstadoSol] = useState('')
+  const [filtroActivo, setFiltroActivo] = useState('')
   const [solicitudes, setSolicitudes] = useState<SdSolicitud[]>([])
   const [stock, setStock] = useState<StockMap>({})
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
   const [decisions, setDecisions] = useState<DecisionsMap>({})
-  const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({}) // key: `${solId}|${effBranch}` → deadline override
+  const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
-  const [expandidos, setExpandidos] = useState<Set<number>>(new Set())
-  const [filtroSucursal, setFiltroSucursal] = useState('')
-  const [filtroEstadoSol, setFiltroEstadoSol] = useState('')
-  const [filtroActivo, setFiltroActivo] = useState('')
-  const [solFechasDisp, setSolFechasDisp] = useState<string[]>([])
+  const [fechasDisp, setFechasDisp] = useState<string[]>([])
+  const [stockFecha, setStockFecha] = useState<string | null>(null)
+  const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(SUCURSALES))
 
-  // Cargar fechas disponibles en solicitudes importadas
   useEffect(() => {
     supabase.from('solicitudes_importadas')
-      .select('fecha_despacho')
-      .order('fecha_despacho', { ascending: false })
-      .limit(60)
+      .select('fecha_despacho').order('fecha_despacho', { ascending: false }).limit(60)
       .then(({ data }) => {
-        const unique = [...new Set((data ?? []).map((r: any) => r.fecha_despacho).filter(Boolean))]
-        setSolFechasDisp(unique)
-        if (!unique.includes(fecha) && unique.length > 0) setFecha(unique[0])
+        const unique = [...new Set((data ?? []).map((r: any) => r.fecha_despacho).filter(Boolean))] as string[]
+        setFechasDisp(unique)
+        if (unique.length > 0) setFechaDesde(unique[0])
+      })
+    supabase.from('stock_sucursal')
+      .select('actualizado_en').order('actualizado_en', { ascending: false }).limit(1)
+      .then(({ data }) => {
+        if (data?.[0]?.actualizado_en) setStockFecha(data[0].actualizado_en.split('T')[0])
       })
   }, [])
-
-  // Cargar solicitudes cuando cambia la fecha
-  useEffect(() => { if (fecha) cargarSolicitudes() }, [fecha, filtroSucursal])
-
-  // Estados únicos presentes en las solicitudes cargadas (para el filtro)
-  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))]
 
   async function cargarSolicitudes() {
     setLoading(true)
     try {
-      // 1. Solicitudes de la fecha
-      let q = supabase
-        .from('solicitudes_importadas')
-        .select('*')
-        .eq('fecha_despacho', fecha)
-        .order('id')
+      let q = supabase.from('solicitudes_importadas').select('*').order('id')
+      if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
+      if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
       if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
       const { data: sols } = await q
 
-      if (!sols?.length) {
-        setSolicitudes([])
-        setLoading(false)
-        return
-      }
+      if (!sols?.length) { setSolicitudes([]); setLoading(false); return }
 
       const solIds = sols.map((s: any) => s.id)
-
-      // 2. Items
       const { data: itemsRaw } = await supabase
-        .from('solicitudes_importadas_items')
-        .select('*')
-        .in('id_solicitud', solIds)
+        .from('solicitudes_importadas_items').select('*').in('id_solicitud', solIds)
 
-      // 3. Stock
       const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
       const stockMap: StockMap = {}
       if (prodIds.length > 0) {
         const { data: stockRaw } = await supabase
-          .from('stock_sucursal')
-          .select('id_producto, sucursal, cantidad')
-          .in('id_producto', prodIds)
+          .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds)
         for (const s of stockRaw ?? []) {
           if (!stockMap[s.id_producto]) stockMap[s.id_producto] = {}
           stockMap[s.id_producto][s.sucursal] = s.cantidad
@@ -402,7 +445,6 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       }
       setStock(stockMap)
 
-      // 4. Catálogo (activo flag)
       if (prodIds.length > 0) {
         const res = await fetch(`/api/productos-catalogo?ids=${prodIds.join(',')}`)
         if (res.ok) {
@@ -413,193 +455,95 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         }
       }
 
-      // 5. Decisiones existentes
-      const res = await fetch(`/api/sd-decisiones?fecha=${fecha}`)
-      const decRaw: any[] = res.ok ? await res.json() : []
+      const fechas = [...new Set(sols.map((s: any) => s.fecha_despacho).filter(Boolean))]
       const decMap: DecisionsMap = {}
-      for (const d of decRaw) {
-        const key = d.id_producto ? `${d.id_solicitud}|${d.id_producto}` : `${d.id_solicitud}`
-        decMap[key] = { tipo: d.tipo, sucursal_asignada: d.sucursal_asignada }
+      for (const f of fechas) {
+        const res = await fetch(`/api/sd-decisiones?fecha=${f}`)
+        const decRaw: any[] = res.ok ? await res.json() : []
+        for (const d of decRaw) {
+          const key = d.id_producto ? `${d.id_solicitud}|${d.id_producto}` : `${d.id_solicitud}`
+          decMap[key] = { tipo: d.tipo, sucursal_asignada: d.sucursal_asignada }
+        }
       }
 
-      // 6. Construir solicitudes con items
       const itemsBySol: Record<number, SdItem[]> = {}
       for (const it of (itemsRaw ?? [])) {
         if (!itemsBySol[it.id_solicitud]) itemsBySol[it.id_solicitud] = []
         itemsBySol[it.id_solicitud].push({
-          id_producto: it.id_producto,
-          nombre_producto: it.nombre_producto ?? '',
-          categoria: it.categoria ?? '',
-          subcategoria: it.subcategoria ?? '',
-          cantidad_solicitada: it.cantidad_solicitada ?? 0,
-          cantidad_entregada: it.cantidad_entregada ?? 0,
+          id_producto: it.id_producto, nombre_producto: it.nombre_producto ?? '',
+          categoria: it.categoria ?? '', subcategoria: it.subcategoria ?? '',
+          cantidad_solicitada: it.cantidad_solicitada ?? 0, cantidad_entregada: it.cantidad_entregada ?? 0,
           hojas_de_ruta: it.hojas_de_ruta ?? '',
         })
       }
 
       const solsConItems: SdSolicitud[] = sols.map((s: any) => ({
-        id: s.id,
-        fecha_despacho: s.fecha_despacho,
-        horario: s.horario ?? '',
-        prioridad: s.prioridad ?? '',
-        estado: s.estado ?? '',
-        id_venta: s.id_venta,
-        cliente: s.cliente ?? '',
-        destino: s.destino ?? '',
-        direccion: s.direccion ?? '',
-        sucursal: s.sucursal ?? '',
-        items: itemsBySol[s.id] ?? [],
+        id: s.id, fecha_despacho: s.fecha_despacho, horario: s.horario ?? '',
+        prioridad: s.prioridad ?? '', estado: s.estado ?? '', id_venta: s.id_venta,
+        cliente: s.cliente ?? '', destino: s.destino ?? '', direccion: s.direccion ?? '',
+        sucursal: s.sucursal ?? '', items: itemsBySol[s.id] ?? [],
       }))
-
       setSolicitudes(solsConItems)
 
-      // 7. Auto-sugerencias para los que no tienen decisión
       const newDec = { ...decMap }
       for (const sol of solsConItems) {
         for (const item of sol.items) {
           if (item.nombre_producto === 'Transporte por km') continue
-          const existeKey = `${sol.id}|${item.id_producto}`
-          const existeSolKey = `${sol.id}`
-          if (!newDec[existeKey] && !newDec[existeSolKey]) {
-            const sug = autoSuggest(item, sol.sucursal, stockMap)
-            newDec[existeKey] = sug
-          }
+          const itemKey = `${sol.id}|${item.id_producto}`
+          const solKey = `${sol.id}`
+          if (!newDec[itemKey] && !newDec[solKey])
+            newDec[itemKey] = autoSuggest(item, sol.sucursal, stockMap)
         }
       }
       setDecisions(newDec)
 
-      // 8. Inicializar fechas de deadline
       const dl: Record<string, string> = {}
       for (const sol of solsConItems) {
         const branches = new Set<string>()
         for (const item of sol.items) {
           const dec = newDec[`${sol.id}|${item.id_producto}`] ?? newDec[`${sol.id}`]
-          if (dec?.tipo === 'reasignado' && dec.sucursal_asignada && dec.sucursal_asignada !== sol.sucursal) {
+          if (dec?.tipo === 'reasignado' && dec.sucursal_asignada && dec.sucursal_asignada !== sol.sucursal)
             branches.add(dec.sucursal_asignada)
-          }
         }
         for (const branch of branches) {
           const key = `${sol.id}|${branch}`
-          if (!dl[key]) {
-            dl[key] = calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '').date
-          }
+          if (!dl[key]) dl[key] = calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '').date
         }
       }
       setFechasDeadline(dl)
-
     } catch (e: any) {
-      showToast(`Error cargando solicitudes: ${e.message}`, 'err')
+      showToast(`Error: ${e.message}`, 'err')
     }
     setLoading(false)
   }
 
-  function setDecision(solId: number, prodId: number | null, dec: ItemDecision) {
-    const key = prodId ? `${solId}|${prodId}` : `${solId}`
-    setDecisions(prev => ({ ...prev, [key]: dec }))
-
-    // Si es reasignado, inicializar deadline
-    if (dec.tipo === 'reasignado' && dec.sucursal_asignada) {
-      const sol = solicitudes.find(s => s.id === solId)
-      if (sol) {
-        const dlKey = `${solId}|${dec.sucursal_asignada}`
-        setFechasDeadline(prev => {
-          if (prev[dlKey]) return prev
-          return { ...prev, [dlKey]: calcDeadline(dec.sucursal_asignada, sol.sucursal, sol.fecha_despacho ?? '').date }
-        })
-      }
-    }
-  }
-
-  function toggleExpand(solId: number) {
-    setExpandidos(prev => {
-      const s = new Set(prev)
-      if (s.has(solId)) s.delete(solId)
-      else s.add(solId)
-      return s
-    })
-  }
-
-  function expandirTodas() {
-    setExpandidos(new Set(solicitudes.map(s => s.id)))
-  }
-  function colapsarTodas() {
-    setExpandidos(new Set())
-  }
-
-  function aprobarTodas() {
-    const newDec = { ...decisions }
-    for (const sol of solicitudes) {
-      newDec[`${sol.id}`] = { tipo: 'aprobado', sucursal_asignada: sol.sucursal }
-    }
-    setDecisions(newDec)
-  }
-
   async function confirmar() {
-    const sinVerif = solicitudes.filter(sol => estadoGeneral(sol, decisions) === 'sinverif')
-    if (sinVerif.length > 0) {
-      showToast(`Hay ${sinVerif.length} solicitudes sin verificar`, 'err')
-      return
-    }
-
     setConfirmando(true)
     try {
-      // 1. Guardar decisiones
       const decToSave: any[] = []
       for (const sol of solicitudes) {
         const solDec = decisions[`${sol.id}`]
-        if (solDec) {
-          decToSave.push({
-            id_solicitud: sol.id,
-            id_producto: null,
-            tipo: solDec.tipo,
-            sucursal_asignada: solDec.sucursal_asignada,
-            fecha_sd: sol.fecha_despacho,
-            operador: userEmail,
-          })
-        }
+        if (solDec) decToSave.push({ id_solicitud: sol.id, id_producto: null, tipo: solDec.tipo, sucursal_asignada: solDec.sucursal_asignada, fecha_sd: sol.fecha_despacho, operador: userEmail })
         for (const item of sol.items) {
           const itemDec = decisions[`${sol.id}|${item.id_producto}`]
-          if (itemDec) {
-            decToSave.push({
-              id_solicitud: sol.id,
-              id_producto: item.id_producto,
-              tipo: itemDec.tipo,
-              sucursal_asignada: itemDec.sucursal_asignada,
-              fecha_sd: sol.fecha_despacho,
-              operador: userEmail,
-            })
-          }
+          if (itemDec) decToSave.push({ id_solicitud: sol.id, id_producto: item.id_producto, tipo: itemDec.tipo, sucursal_asignada: itemDec.sucursal_asignada, fecha_sd: sol.fecha_despacho, operador: userEmail })
         }
       }
-
       const savedRes = await fetch('/api/sd-decisiones', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decisions: decToSave }),
       })
       if (!savedRes.ok) throw new Error('Error guardando decisiones')
 
-      // 2. Crear requerimientos para los reasignados
-      // Agrupar por (id_solicitud, branch_origen_transfer) → un requerimiento por grupo
-      const reqGrupos: Map<string, {
-        sol: SdSolicitud; fromBranch: string; items: { nombre: string; id_producto: number; cantidad: number }[]
-      }> = new Map()
-
+      const reqGrupos: Map<string, { sol: SdSolicitud; fromBranch: string; items: { nombre: string; id_producto: number; cantidad: number }[] }> = new Map()
       for (const sol of solicitudes) {
         for (const item of sol.items) {
           if (item.nombre_producto === 'Transporte por km') continue
           const dec = getDecision(decisions, sol.id, item.id_producto)
           if (dec.tipo !== 'reasignado' || !dec.sucursal_asignada || dec.sucursal_asignada === sol.sucursal) continue
-
           const key = `${sol.id}|${dec.sucursal_asignada}`
-          if (!reqGrupos.has(key)) {
-            reqGrupos.set(key, { sol, fromBranch: dec.sucursal_asignada, items: [] })
-          }
-          reqGrupos.get(key)!.items.push({
-            nombre: item.nombre_producto,
-            id_producto: item.id_producto,
-            cantidad: item.cantidad_solicitada,
-          })
+          if (!reqGrupos.has(key)) reqGrupos.set(key, { sol, fromBranch: dec.sucursal_asignada, items: [] })
+          reqGrupos.get(key)!.items.push({ nombre: item.nombre_producto, id_producto: item.id_producto, cantidad: item.cantidad_solicitada })
         }
       }
 
@@ -608,37 +552,19 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         const { sol, fromBranch } = grupo
         const dlKey = `${sol.id}|${fromBranch}`
         const fechaSolicitada = fechasDeadline[dlKey] || calcDeadline(fromBranch, sol.sucursal, sol.fecha_despacho ?? '').date
-
-        const body = {
-          tipo: 'abastecimiento',
-          nv: String(sol.id_venta),
-          cliente: sol.cliente,
-          sucursal_origen: fromBranch,
-          sucursal_destino: sol.sucursal,
-          estado: 'pendiente',
-          fecha_req: hoy(),
-          fecha_solicitada: fechaSolicitada || null,
-          solicitado_por: userEmail,
-          notas: `Generado desde SD #${sol.id} — despacho ${fmtFecha(sol.fecha_despacho)}`,
-          items: grupo.items.map(it => ({
-            id_producto: it.id_producto,
-            nombre_producto: it.nombre,
-            cantidad_solicitada: it.cantidad,
-          })),
-        }
-
         const res = await fetch('/api/requerimientos', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tipo: 'abastecimiento', nv: String(sol.id_venta), cliente: sol.cliente,
+            sucursal_origen: fromBranch, sucursal_destino: sol.sucursal,
+            estado: 'pendiente', fecha_req: hoy(), fecha_solicitada: fechaSolicitada || null,
+            solicitado_por: userEmail, notas: `Generado desde SD #${sol.id} — despacho ${fmtFecha(sol.fecha_despacho)}`,
+            items: grupo.items.map(it => ({ id_producto: it.id_producto, nombre_producto: it.nombre, cantidad_solicitada: it.cantidad })),
+          }),
         })
-        if (!res.ok) {
-          const err = await res.json()
-          throw new Error(err.error ?? 'Error creando requerimiento')
-        }
+        if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando requerimiento') }
         reqCreados++
       }
-
       showToast(`✓ ${decToSave.length} decisiones guardadas${reqCreados > 0 ? ` · ${reqCreados} transferencias generadas` : ''}`)
     } catch (e: any) {
       showToast(`Error: ${e.message}`, 'err')
@@ -646,343 +572,289 @@ function TabVerificacion({ rol, userEmail, showToast }: {
     setConfirmando(false)
   }
 
-  // Stats resumen
-  const totalSols = solicitudes.length
-  const aprobadas = solicitudes.filter(s => estadoGeneral(s, decisions) === 'aprobado').length
-  const reasignadas = solicitudes.filter(s => {
-    const eg = estadoGeneral(s, decisions)
-    return eg === 'reasignado' || eg === 'mixto'
-  }).length
-  const rechazadas = solicitudes.filter(s => estadoGeneral(s, decisions) === 'rechazado').length
-  const sinVerif = solicitudes.filter(s => estadoGeneral(s, decisions) === 'sinverif').length
+  // ── Datos derivados ────────────────────────────────────────────────────────
+  const todasSugerencias = buildSugerencias(solicitudes, stock, catalogo)
+  const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
+  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))]
 
-  const solsFiltradas = solicitudes
-    .filter(s => !filtroSucursal || s.sucursal === filtroSucursal)
-    .filter(s => {
+  const sugerenciasFiltradas = todasSugerencias
+    .filter(r => !filtroCategoria || r.categoria === filtroCategoria)
+    .filter(r => !filtroCobertura || r.cobertura === filtroCobertura)
+    .filter(r => !filtroActivo || Object.keys(catalogo).length === 0 || String(r.activo) === filtroActivo)
+    .filter(r => {
       if (!filtroEstadoSol) return true
-      if (filtroEstadoSol === 'excl_delivered') return s.estado !== 'delivered' && s.estado !== 'Entregado'
-      return s.estado === filtroEstadoSol
+      return r.sol_ids.some(solId => solicitudes.find(s => s.id === solId)?.estado === filtroEstadoSol)
     })
-    .filter(s => {
-      if (!filtroActivo || Object.keys(catalogo).length === 0) return true
-      return s.items.some(it => {
-        const activo = catalogo[it.id_producto]?.activo
-        if (filtroActivo === 'true')  return activo === true
-        if (filtroActivo === 'false') return activo === false
-        return true
-      })
-    })
+
+  const sinStock    = sugerenciasFiltradas.filter(r => r.cobertura === 'sin_stock').length
+  const parcial     = sugerenciasFiltradas.filter(r => r.cobertura === 'parcial').length
+  const cubiertos   = sugerenciasFiltradas.filter(r => r.cobertura === 'cubierto').length
+  const sucConDef   = new Set(sugerenciasFiltradas.filter(r => r.cobertura !== 'cubierto').map(r => r.sucursal)).size
+
+  const bySucursal: Record<string, SugerenciaRow[]> = {}
+  for (const r of sugerenciasFiltradas) {
+    if (!bySucursal[r.sucursal]) bySucursal[r.sucursal] = []
+    bySucursal[r.sucursal].push(r)
+  }
+
+  const STAT_CARDS = [
+    { value: sinStock,   label: 'Sin stock en red',       color: sinStock   > 0 ? '#E52322' : '#B9BBB7', key: 'sin_stock' },
+    { value: parcial,    label: 'Cobertura parcial',      color: parcial    > 0 ? '#d97706' : '#B9BBB7', key: 'parcial'   },
+    { value: cubiertos,  label: 'Cubiertos',              color: '#10b981',                               key: 'cubierto'  },
+    { value: sucConDef,  label: 'Sucursales con déficit', color: sucConDef  > 0 ? '#254A96' : '#B9BBB7', key: ''          },
+  ]
 
   return (
     <div className="px-4 md:px-6 py-4 max-w-5xl">
 
-      {/* Barra superior: fecha + filtros */}
-      <div className="bg-white rounded-xl border px-4 py-3 mb-4 flex items-center gap-3 flex-wrap" style={{ borderColor: '#f0f0f0' }}>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium" style={{ color: '#254A96' }}>Fecha despacho</label>
-          {solFechasDisp.length > 0 ? (
-            <select value={fecha} onChange={e => setFecha(e.target.value)}
-              className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              {solFechasDisp.map(d => (
-                <option key={d} value={d}>{fmtFecha(d)}</option>
-              ))}
+      {/* ── Barra de filtros ─────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4" style={{ borderColor: '#f0f0f0' }}>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-3 gap-y-3 mb-3">
+          {/* Fecha Desde */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Desde</label>
+            <select value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <option value="">— Sin límite —</option>
+              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
             </select>
-          ) : (
-            <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
-              className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+          </div>
+          {/* Fecha Hasta */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Hasta</label>
+            <select value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <option value="">— Sin límite —</option>
+              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
+            </select>
+          </div>
+          {/* Sucursal */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Sucursal</label>
+            <select value={filtroSucursal} onChange={e => setFiltroSucursal(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <option value="">Todas</option>
+              {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          {/* Categoría */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Categoría</label>
+            <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <option value="">— Todas —</option>
+              {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          {/* Cobertura — filtro clave */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Cobertura</label>
+            <select value={filtroCobertura} onChange={e => setFiltroCobertura(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:outline-none"
+              style={{ borderColor: filtroCobertura === 'sin_stock' ? '#fca5a5' : filtroCobertura === 'parcial' ? '#fde68a' : filtroCobertura === 'cubierto' ? '#6ee7b7' : '#e8edf8',
+                       color:       filtroCobertura === 'sin_stock' ? '#dc2626' : filtroCobertura === 'parcial' ? '#d97706'  : filtroCobertura === 'cubierto' ? '#065f46'  : '#1a1a1a' }}>
+              <option value="">Todas</option>
+              <option value="cubierto">Cubierto</option>
+              <option value="parcial">Cobertura parcial</option>
+              <option value="sin_stock">Sin stock disponible</option>
+            </select>
+          </div>
+          {/* Estado de Entrega */}
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado de Entrega</label>
+            <select value={filtroEstadoSol} onChange={e => setFiltroEstadoSol(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <option value="">Todos</option>
+              {estadosDisp.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Fila 2: Estado Producto + botones */}
+        <div className="flex items-end gap-3 flex-wrap">
+          {Object.keys(catalogo).length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado Producto</label>
+              <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
+                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                <option value="">Todos</option>
+                <option value="true">Solo activos</option>
+                <option value="false">Solo inactivos</option>
+              </select>
+            </div>
+          )}
+          <button onClick={cargarSolicitudes} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+            style={{ background: '#254A96' }}>
+            🔄 Actualizar
+          </button>
+          {solicitudes.length > 0 && (
+            <button onClick={confirmar} disabled={confirmando}
+              className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
+              style={{ background: '#10b981' }}>
+              {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
+            </button>
           )}
         </div>
-        <select value={filtroSucursal} onChange={e => setFiltroSucursal(e.target.value)}
-          className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-          <option value="">Todas las sucursales</option>
-          {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        {/* Filtro estado de entrega */}
-        <select value={filtroEstadoSol} onChange={e => setFiltroEstadoSol(e.target.value)}
-          className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-          <option value="">Todos los estados</option>
-          <option value="excl_delivered">Excluir entregados</option>
-          {estadosDisp.map(e => <option key={e} value={e}>{e}</option>)}
-        </select>
-
-        {/* Filtro estado producto (activo/inactivo) — solo si catálogo cargado */}
-        {Object.keys(catalogo).length > 0 && (
-          <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
-            className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-            <option value="">Todos los productos</option>
-            <option value="true">Solo activos</option>
-            <option value="false">Solo inactivos</option>
-          </select>
-        )}
-
-        {totalSols > 0 && (
-          <div className="flex items-center gap-3 ml-auto text-xs flex-wrap">
-            <span style={{ color: '#B9BBB7' }}>{totalSols} sol.</span>
-            {aprobadas > 0 && <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: '#d1fae5', color: '#065f46' }}>✓ {aprobadas} aprobadas</span>}
-            {reasignadas > 0 && <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>↗ {reasignadas} reasignadas</span>}
-            {rechazadas > 0 && <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>✕ {rechazadas} rechazadas</span>}
-            {sinVerif > 0 && <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: '#f4f4f3', color: '#B9BBB7' }}>? {sinVerif} sin verifif.</span>}
-          </div>
-        )}
       </div>
 
-      {/* Acciones masivas */}
-      {totalSols > 0 && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <button onClick={expandirTodas}
-            className="px-3 py-1.5 text-xs rounded-lg border"
-            style={{ borderColor: '#e8edf8', color: '#666' }}>
-            Expandir todas
-          </button>
-          <button onClick={colapsarTodas}
-            className="px-3 py-1.5 text-xs rounded-lg border"
-            style={{ borderColor: '#e8edf8', color: '#666' }}>
-            Colapsar todas
-          </button>
-          <button onClick={aprobarTodas}
-            className="px-3 py-1.5 text-xs rounded-lg border font-medium"
-            style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>
-            ✓ Aprobar todas
-          </button>
-          <div className="flex-1" />
-          <button
-            onClick={confirmar}
-            disabled={confirmando || totalSols === 0 || sinVerif > 0}
-            className="px-5 py-2 text-sm font-semibold rounded-xl text-white disabled:opacity-40"
-            style={{ background: sinVerif > 0 ? '#B9BBB7' : '#254A96' }}>
-            {confirmando ? 'Guardando…' : sinVerif > 0 ? `Falta verificar ${sinVerif}` : 'Confirmar verificación'}
-          </button>
+      {/* Stock fecha */}
+      {stockFecha && (
+        <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
+          ⏱ Stock evaluado al: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(stockFecha)}</strong>
+        </p>
+      )}
+
+      {/* ── Stats ────────────────────────────────────────────────────────── */}
+      {solicitudes.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          {STAT_CARDS.map(stat => (
+            <button key={stat.label}
+              onClick={() => stat.key && setFiltroCobertura(prev => prev === stat.key ? '' : stat.key)}
+              className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
+              style={{ borderColor: filtroCobertura === stat.key ? stat.color : '#f0f0f0', borderWidth: filtroCobertura === stat.key ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
+              <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
+              <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Lista de solicitudes */}
+      {/* ── Lista ────────────────────────────────────────────────────────── */}
       {loading ? (
         <div className="flex justify-center py-24">
           <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
             style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
         </div>
-      ) : solsFiltradas.length === 0 ? (
+      ) : sugerenciasFiltradas.length === 0 ? (
         <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
           <div className="text-5xl mb-4">📋</div>
-          <p className="font-medium">No hay solicitudes para esta fecha</p>
-          <p className="text-xs mt-1">Importá el Excel de SDs desde la pestaña Importar</p>
+          <p className="font-medium">{solicitudes.length === 0 ? 'No hay solicitudes cargadas' : 'Sin resultados para los filtros'}</p>
+          {solicitudes.length === 0 && <p className="text-xs mt-1">Importá el Excel de SDs e ingresá hacé click en Actualizar</p>}
         </div>
       ) : (
-        <div className="space-y-2">
-          {solsFiltradas.map(sol => (
-            <SolicitudCard
-              key={sol.id}
-              sol={sol}
-              decisions={decisions}
-              stock={stock}
-              catalogo={catalogo}
-              fechasDeadline={fechasDeadline}
-              expandido={expandidos.has(sol.id)}
-              onToggleExpand={() => toggleExpand(sol.id)}
-              onSetDecision={(prodId, dec) => setDecision(sol.id, prodId, dec)}
-              onSetDeadline={(fromBranch, date) => setFechasDeadline(prev => ({ ...prev, [`${sol.id}|${fromBranch}`]: date }))}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── Tarjeta de solicitud ──────────────────────────────────────────────────────
-function SolicitudCard({
-  sol, decisions, stock, catalogo, fechasDeadline,
-  expandido, onToggleExpand, onSetDecision, onSetDeadline,
-}: {
-  sol: SdSolicitud
-  decisions: DecisionsMap
-  stock: StockMap
-  catalogo: Record<number, CatalogoEntry>
-  fechasDeadline: Record<string, string>
-  expandido: boolean
-  onToggleExpand: () => void
-  onSetDecision: (prodId: number | null, dec: ItemDecision) => void
-  onSetDeadline: (fromBranch: string, date: string) => void
-}) {
-  const eg = estadoGeneral(sol, decisions)
-  const egStyle = DECISION_STYLE[eg] ?? DECISION_STYLE['sinverif']
-
-  // Deadlines únicos para esta solicitud (de los reasignados)
-  const transferBranches = new Set<string>()
-  for (const item of sol.items) {
-    const dec = getDecision(decisions, sol.id, item.id_producto)
-    if (dec.tipo === 'reasignado' && dec.sucursal_asignada && dec.sucursal_asignada !== sol.sucursal) {
-      transferBranches.add(dec.sucursal_asignada)
-    }
-  }
-
-  const hasInactive = sol.items.some(it => catalogo[it.id_producto]?.activo === false)
-
-  return (
-    <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0', borderLeft: `4px solid ${egStyle.color}` }}>
-      {/* Header */}
-      <div className="px-4 py-3 flex items-start justify-between gap-3 cursor-pointer" onClick={onToggleExpand}>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-              style={{ background: egStyle.bg, color: egStyle.color }}>
-              {egStyle.label}
-            </span>
-            <span className="text-xs font-medium" style={{ color: '#254A96' }}>#{sol.id}</span>
-            {sol.id_venta > 0 && <span className="text-xs" style={{ color: '#B9BBB7' }}>NV {sol.id_venta}</span>}
-            {sol.prioridad === 'ALTA' && (
-              <span className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ background: '#fde8e8', color: '#E52322' }}>⚡ ALTA</span>
-            )}
-            {hasInactive && (
-              <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>⚠ Producto inactivo</span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>{sol.cliente || 'Sin nombre'}</span>
-            <span className="text-xs" style={{ color: '#B9BBB7' }}>·</span>
-            <span className="text-xs" style={{ color: '#B9BBB7' }}>{sol.destino || sol.direccion}</span>
-          </div>
-          <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: '#B9BBB7' }}>
-            <span className="font-medium" style={{ color: '#254A96' }}>{sol.sucursal}</span>
-            {sol.horario && <span>🕐 {sol.horario}</span>}
-            <span>{sol.items.length} producto{sol.items.length !== 1 ? 's' : ''}</span>
-          </div>
-        </div>
-
-        {/* Deadlines resumen + expand toggle */}
-        <div className="flex items-center gap-2 shrink-0">
-          {[...transferBranches].map(branch => {
-            const dlKey = `${sol.id}|${branch}`
-            const dl = fechasDeadline[dlKey]
-              ? calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '')
-              : calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '')
-            const customDate = fechasDeadline[dlKey]
-            const dlDate = customDate || dl.date
-            return (
-              <span key={branch} className="text-xs px-2 py-1 rounded-lg font-medium"
-                style={{ background: '#fef3c7', color: '#b45309' }}
-                title={`Transfer desde ${branch} → límite ${fmtFecha(dlDate)}`}>
-                ⏰ {branch}: {fmtFecha(dlDate)}
-              </span>
-            )
-          })}
-          <span className="text-sm" style={{ color: '#B9BBB7' }}>{expandido ? '▲' : '▼'}</span>
-        </div>
-      </div>
-
-      {/* Items (expandible) */}
-      {expandido && (
-        <div className="border-t px-4 pb-4 pt-3 space-y-2" style={{ borderColor: '#f0f0f0' }}>
-          {/* Acción rápida por solicitud */}
-          <div className="flex items-center gap-2 mb-3 pb-3 border-b" style={{ borderColor: '#f0f0f0' }}>
-            <span className="text-xs font-medium" style={{ color: '#B9BBB7' }}>Decisión general:</span>
-            <button onClick={() => onSetDecision(null, { tipo: 'aprobado', sucursal_asignada: sol.sucursal })}
-              className="text-xs px-2.5 py-1 rounded-lg font-medium"
-              style={{ background: decisions[`${sol.id}`]?.tipo === 'aprobado' ? '#d1fae5' : '#f4f4f3', color: decisions[`${sol.id}`]?.tipo === 'aprobado' ? '#065f46' : '#666' }}>
-              ✓ Aprobar todo
-            </button>
-            <button onClick={() => onSetDecision(null, { tipo: 'rechazado', sucursal_asignada: '' })}
-              className="text-xs px-2.5 py-1 rounded-lg font-medium"
-              style={{ background: decisions[`${sol.id}`]?.tipo === 'rechazado' ? '#fde8e8' : '#f4f4f3', color: decisions[`${sol.id}`]?.tipo === 'rechazado' ? '#E52322' : '#666' }}>
-              ✕ Rechazar todo
-            </button>
-            {[...transferBranches].map(branch => (
-              <div key={branch} className="flex items-center gap-1.5 ml-auto text-xs">
-                <span style={{ color: '#b45309' }}>⏰ Límite transfer desde {branch}:</span>
-                <input type="date"
-                  value={fechasDeadline[`${sol.id}|${branch}`] || calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '').date}
-                  onChange={e => onSetDeadline(branch, e.target.value)}
-                  className="border rounded px-2 py-0.5 text-xs focus:outline-none"
-                  style={{ borderColor: '#fde68a' }} />
-              </div>
+        <div className="space-y-3">
+          {Object.entries(bySucursal)
+            .sort(([a], [b]) => a.localeCompare(b))
+            .map(([suc, rows]) => (
+              <SucursalGroup key={suc} sucursal={suc} rows={rows}
+                expanded={expandedBranches.has(suc)}
+                onToggle={() => setExpandedBranches(prev => {
+                  const s = new Set(prev); s.has(suc) ? s.delete(suc) : s.add(suc); return s
+                })}
+              />
             ))}
-          </div>
-
-          {sol.items.filter(it => it.nombre_producto !== 'Transporte por km').map(item => (
-            <ItemRow
-              key={item.id_producto}
-              item={item}
-              sol={sol}
-              decision={getDecision(decisions, sol.id, item.id_producto)}
-              stock={stock[item.id_producto] ?? {}}
-              catalogoEntry={catalogo[item.id_producto]}
-              onSetDecision={(dec) => onSetDecision(item.id_producto, dec)}
-            />
-          ))}
         </div>
       )}
     </div>
   )
 }
 
-// ─── Fila de item ──────────────────────────────────────────────────────────────
-function ItemRow({ item, sol, decision, stock, catalogoEntry, onSetDecision }: {
-  item: SdItem
-  sol: SdSolicitud
-  decision: ItemDecision
-  stock: Record<string, number>
-  catalogoEntry: CatalogoEntry | undefined
-  onSetDecision: (dec: ItemDecision) => void
+// ─── Grupo por sucursal ────────────────────────────────────────────────────────
+function SucursalGroup({ sucursal, rows, expanded, onToggle }: {
+  sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
 }) {
-  const esInactivo = catalogoEntry?.activo === false
-  const stockOrigen = stock[sol.sucursal] ?? 0
-  const tieneStock = stockOrigen >= item.cantidad_solicitada
-  const decStyle = DECISION_STYLE[decision.tipo || 'sinverif']
+  const sinStock = rows.filter(r => r.cobertura === 'sin_stock').length
+  const parcial  = rows.filter(r => r.cobertura === 'parcial').length
+  const cubierto = rows.filter(r => r.cobertura === 'cubierto').length
 
   return (
-    <div className="rounded-lg px-3 py-2.5 flex items-start gap-3 flex-wrap"
-      style={{ background: esInactivo ? '#fef9c3' : '#f9f9f9', border: `1px solid ${esInactivo ? '#fde68a' : '#f0f0f0'}` }}>
-
-      {/* Nombre + indicadores */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{item.nombre_producto}</span>
-          {esInactivo && (
-            <span className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ background: '#fef3c7', color: '#b45309' }}>
-              ⚠ INACTIVO
-            </span>
+    <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0' }}>
+      <div className="px-4 py-3 flex items-center gap-3 cursor-pointer select-none"
+        style={{ background: '#fafbff' }} onClick={onToggle}>
+        <span className="font-semibold text-sm" style={{ color: '#254A96' }}>🏬 {sucursal}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {sinStock > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#fde8e8', color: '#E52322' }}>✕ {sinStock} sin stock</span>
           )}
-          <span className="text-xs" style={{ color: '#B9BBB7' }}>#{item.id_producto}</span>
+          {parcial > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#fef3c7', color: '#b45309' }}>△ {parcial} parcial</span>
+          )}
+          {cubierto > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#d1fae5', color: '#065f46' }}>✓ {cubierto} cubierto</span>
+          )}
         </div>
-        <div className="flex items-center gap-3 mt-1 text-xs flex-wrap">
-          <span style={{ color: '#B9BBB7' }}>
-            Solicitado: <strong style={{ color: '#1a1a1a' }}>{item.cantidad_solicitada}</strong>
+        <span className="ml-auto text-xs" style={{ color: '#B9BBB7' }}>{expanded ? '▲' : '▼'}</span>
+      </div>
+
+      {expanded && (
+        <div className="border-t divide-y" style={{ borderColor: '#f0f0f0' }}>
+          {rows
+            .sort((a, b) => {
+              const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
+              return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
+            })
+            .map(row => <ProductoRow key={row.id_producto} row={row} />)
+          }
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Fila de producto (vista agregada) ────────────────────────────────────────
+function ProductoRow({ row }: { row: SugerenciaRow }) {
+  const cob = {
+    cubierto:  { bg: '#d1fae5', color: '#065f46', label: 'Cubierto' },
+    parcial:   { bg: '#fef3c7', color: '#b45309', label: 'Cobertura parcial' },
+    sin_stock: { bg: '#fde8e8', color: '#E52322', label: 'Sin stock disponible' },
+  }[row.cobertura]
+
+  return (
+    <div className="flex items-center gap-4 px-4 py-3 flex-wrap"
+      style={{ background: row.cobertura === 'sin_stock' ? '#fefafa' : '#fff' }}>
+
+      {/* Nombre + badges */}
+      <div className="flex-1 min-w-48">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-sm"
+            style={{ color: row.cobertura === 'sin_stock' ? '#dc2626' : '#1a1a1a',
+                     fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
+            {row.nombre_producto}
           </span>
-          {/* Stock por sucursal */}
-          {Object.entries(stock).length > 0 ? (
-            Object.entries(stock).sort(([, a], [, b]) => (b as number) - (a as number)).map(([suc, qty]) => (
-              <span key={suc} className="px-1.5 py-0.5 rounded font-medium"
-                style={{
-                  background: (qty as number) >= item.cantidad_solicitada ? '#d1fae5' : (qty as number) > 0 ? '#fef3c7' : '#f4f4f3',
-                  color: (qty as number) >= item.cantidad_solicitada ? '#065f46' : (qty as number) > 0 ? '#b45309' : '#B9BBB7',
-                }}>
-                {suc}: {qty as number}
-              </span>
-            ))
-          ) : (
-            <span style={{ color: '#B9BBB7' }}>Sin datos de stock</span>
+          {row.categoria && (
+            <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+              style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>
+          )}
+          {!row.activo && (
+            <span className="text-xs px-1.5 py-0.5 rounded font-bold"
+              style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
           )}
         </div>
       </div>
 
-      {/* Selector de decisión */}
-      <div className="flex items-center gap-2 shrink-0">
-        <select
-          value={`${decision.tipo}|${decision.sucursal_asignada}`}
-          onChange={e => {
-            const [tipo, suc] = e.target.value.split('|')
-            onSetDecision({ tipo: tipo as DecisionTipo, sucursal_asignada: suc || sol.sucursal })
-          }}
-          className="border rounded-lg px-2.5 py-1.5 text-xs font-medium focus:outline-none"
-          style={{ borderColor: decStyle.color + '60', background: decStyle.bg, color: decStyle.color }}>
-          <option value="|">— sin decidir —</option>
-          <option value={`aprobado|${sol.sucursal}`}>✓ Aprobar (despacha desde {sol.sucursal})</option>
-          <option value="rechazado|">✕ Rechazar</option>
-          {SUCURSALES.filter(s => s !== sol.sucursal).map(s => (
-            <option key={s} value={`reasignado|${s}`}>↗ Reasignar → {s}</option>
-          ))}
-        </select>
+      {/* Cobertura badge */}
+      <span className="text-xs px-2.5 py-1 rounded-full font-semibold whitespace-nowrap"
+        style={{ background: cob.bg, color: cob.color }}>{cob.label}</span>
+
+      {/* Stats numéricos */}
+      <div className="flex items-center gap-5 text-center text-xs shrink-0">
+        <div>
+          <div className="text-xl font-bold leading-none" style={{ color: '#254A96' }}>{row.demandado}</div>
+          <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Demandado</div>
+        </div>
+        <div>
+          <div className="text-xl font-bold leading-none"
+            style={{ color: row.stock_local === 0 ? '#E52322' : row.stock_local >= row.demandado ? '#10b981' : '#d97706' }}>
+            {row.stock_local}
+          </div>
+          <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Stock local</div>
+        </div>
+        {row.deficit > 0 && (
+          <div>
+            <div className="text-xl font-bold leading-none" style={{ color: '#E52322' }}>{row.deficit}</div>
+            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Déficit</div>
+          </div>
+        )}
+        {row.disponible_otros > 0 && (
+          <div>
+            <div className="text-xl font-bold leading-none" style={{ color: '#f97316' }}>{row.disponible_otros}</div>
+            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Disp. en {row.sucursal_mejor}</div>
+          </div>
+        )}
       </div>
     </div>
   )

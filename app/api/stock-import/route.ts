@@ -34,8 +34,12 @@ export async function POST(req: NextRequest) {
 
     if (!rows.length) return NextResponse.json({ error: 'El archivo está vacío' }, { status: 400 })
 
-    // Normalizar columnas a lowercase sin espacios
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, '_').replace(/[()]/g, '')
+    // Normalizar columnas: lowercase, sin acentos (ñ→n, á→a, etc.), sin espacios ni paréntesis
+    const normalize = (s: string) =>
+      s.toLowerCase()
+       .normalize('NFD').replace(/[̀-ͯ]/g, '') // elimina diacríticos: ñ→n, á→a…
+       .replace(/\s+/g, '_')
+       .replace(/[()]/g, '')
     const rows_norm = rows.map(r => {
       const out: any = {}
       for (const [k, v] of Object.entries(r)) out[normalize(k)] = v

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { puedeEditar } from '../lib/permisos'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 import { logAuditoria } from '../lib/auditoria'
+import type { jsPDF as JsPDFType } from 'jspdf'
 
 function detectarSucursal(sucursalObra: string, deposito: string): string {
   const obra = sucursalObra?.toUpperCase() || ''
@@ -614,6 +615,153 @@ export default function NuevoDespacho() {
     setLoadingRetiro(false)
   }
 
+  const generarPdfRetiro = async () => {
+    const { jsPDF } = await import('jspdf')
+    const doc: JsPDFType = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+    const azul: [number, number, number]    = [37, 74, 150]
+    const verde: [number, number, number]   = [15, 118, 110]
+    const gris: [number, number, number]    = [100, 100, 100]
+    const grisClaro: [number, number, number] = [245, 245, 247]
+    const blanco: [number, number, number]  = [255, 255, 255]
+    const negro: [number, number, number]   = [26, 26, 26]
+
+    const margenIzq = 14
+    const ancho = 182
+    let y = 15
+
+    const ahora = new Date()
+    const fechaGen = ahora.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    const horaGen  = ahora.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+
+    // ── Encabezado ──────────────────────────────────────────────────────────
+    doc.setFillColor(...azul)
+    doc.rect(margenIzq, y, ancho, 18, 'F')
+    doc.setTextColor(...blanco)
+    doc.setFontSize(15)
+    doc.setFont('helvetica', 'bold')
+    doc.text('SOLICITUD DE RETIRO', margenIzq + 4, y + 8)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text('CAC — Centro de Abastecimiento Cerámico', margenIzq + 4, y + 14)
+    doc.text(`Generado: ${fechaGen} ${horaGen}`, margenIzq + ancho - 2, y + 14, { align: 'right' })
+    y += 24
+
+    // ── Datos del cliente ────────────────────────────────────────────────────
+    doc.setFillColor(...grisClaro)
+    doc.rect(margenIzq, y, ancho, 7, 'F')
+    doc.setTextColor(...azul)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.text('DATOS DEL CLIENTE', margenIzq + 3, y + 4.8)
+    y += 9
+
+    const camposDatos: [string, string][] = [
+      ['NV (Nota de Venta)', formRetiro.nv || '—'],
+      ['Cliente', formRetiro.cliente || '—'],
+      ['Teléfono', formRetiro.telefono || '—'],
+      ['Dirección de retiro', formRetiro.direccion || '—'],
+      ['Sucursal', formRetiro.sucursal || '—'],
+      ['Fecha estimada', formRetiro.fecha_estimada ? new Date(formRetiro.fecha_estimada + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—'],
+    ]
+
+    camposDatos.forEach(([label, valor], i) => {
+      if (i % 2 === 0) {
+        doc.setFillColor(...blanco)
+      } else {
+        doc.setFillColor(250, 250, 252)
+      }
+      doc.rect(margenIzq, y, ancho, 6.5, 'F')
+      doc.setTextColor(...gris)
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.text(label + ':', margenIzq + 3, y + 4.4)
+      doc.setTextColor(...negro)
+      doc.setFont('helvetica', 'bold')
+      doc.text(valor, margenIzq + 55, y + 4.4)
+      y += 6.5
+    })
+    y += 5
+
+    // ── Productos ────────────────────────────────────────────────────────────
+    doc.setFillColor(...verde)
+    doc.rect(margenIzq, y, ancho, 7, 'F')
+    doc.setTextColor(...blanco)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    doc.text('PRODUCTOS A RETIRAR', margenIzq + 3, y + 4.8)
+    y += 9
+
+    // Cabecera tabla
+    doc.setFillColor(...azul)
+    doc.rect(margenIzq, y, ancho, 6.5, 'F')
+    doc.setTextColor(...blanco)
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.text('#', margenIzq + 3, y + 4.4)
+    doc.text('Código', margenIzq + 12, y + 4.4)
+    doc.text('Producto', margenIzq + 32, y + 4.4)
+    doc.text('Cant.', margenIzq + ancho - 5, y + 4.4, { align: 'right' })
+    y += 6.5
+
+    const itemsValidos = itemsRetiro.filter(it => it.nombre_producto.trim())
+    itemsValidos.forEach((item, i) => {
+      if (y + 7 > 275) { doc.addPage(); y = 15 }
+      const par = i % 2 === 0
+      doc.setFillColor(par ? 255 : 248, par ? 255 : 250, par ? 255 : 255)
+      doc.rect(margenIzq, y, ancho, 6.5, 'F')
+      doc.setTextColor(...gris)
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.text(String(i + 1), margenIzq + 3, y + 4.4)
+      doc.text(item.id_producto ? String(item.id_producto) : '—', margenIzq + 12, y + 4.4)
+      doc.setTextColor(...negro)
+      doc.setFont('helvetica', 'normal')
+      // Truncar nombre si es muy largo
+      const nombre = item.nombre_producto.length > 55 ? item.nombre_producto.substring(0, 52) + '…' : item.nombre_producto
+      doc.text(nombre, margenIzq + 32, y + 4.4)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(...azul)
+      doc.text(String(item.cantidad), margenIzq + ancho - 5, y + 4.4, { align: 'right' })
+      y += 6.5
+    })
+    y += 5
+
+    // ── Notas ────────────────────────────────────────────────────────────────
+    if (formRetiro.notas?.trim()) {
+      if (y + 20 > 275) { doc.addPage(); y = 15 }
+      doc.setFillColor(...grisClaro)
+      doc.rect(margenIzq, y, ancho, 7, 'F')
+      doc.setTextColor(...azul)
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.text('NOTAS', margenIzq + 3, y + 4.8)
+      y += 9
+      doc.setTextColor(...negro)
+      doc.setFontSize(8.5)
+      doc.setFont('helvetica', 'normal')
+      const lineas = doc.splitTextToSize(formRetiro.notas.trim(), ancho - 6)
+      doc.text(lineas, margenIzq + 3, y + 4)
+      y += lineas.length * 5 + 4
+    }
+
+    // ── Footer ───────────────────────────────────────────────────────────────
+    const totalPags = (doc as any).internal.getNumberOfPages()
+    for (let p = 1; p <= totalPags; p++) {
+      doc.setPage(p)
+      doc.setDrawColor(220, 220, 220)
+      doc.line(margenIzq, 285, margenIzq + ancho, 285)
+      doc.setFontSize(7.5)
+      doc.setTextColor(...gris)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Solicitud de retiro NV ${formRetiro.nv} — ${formRetiro.cliente} · ${fechaGen}`, margenIzq, 290)
+      doc.text(`Pág. ${p} / ${totalPags}`, margenIzq + ancho, 290, { align: 'right' })
+    }
+
+    const fileName = `retiro_NV${formRetiro.nv}_${formRetiro.cliente.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}.pdf`
+    doc.save(fileName)
+  }
+
   const resetRetiro = () => {
     setExitoRetiro(false)
     setFormRetiro(RETIRO_FORM_INICIAL)
@@ -651,14 +799,27 @@ export default function NuevoDespacho() {
       <div className="bg-white rounded-2xl shadow-lg p-10 text-center max-w-md w-full mx-4">
         <div className="w-16 h-16 rounded-full flex items-center justify-center text-3xl mx-auto mb-6" style={{ background: '#d1fae5' }}>🔄</div>
         <h2 className="text-2xl font-semibold mb-2" style={{ color: '#254A96' }}>Retiro solicitado</h2>
-        <p className="text-sm mb-8" style={{ color: '#B9BBB7' }}>La solicitud de retiro fue registrada. El ruteador definirá cuándo pasamos a buscarlo.</p>
-        <div className="flex gap-3 justify-center">
-          <button onClick={resetRetiro} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: '#254A96' }}>
-            Nueva solicitud
+        <p className="text-sm mb-2" style={{ color: '#B9BBB7' }}>La solicitud de retiro fue registrada. El ruteador definirá cuándo pasamos a buscarlo.</p>
+        {/* Resumen rápido */}
+        <div className="rounded-xl px-4 py-3 mb-6 text-left text-sm space-y-1" style={{ background: '#f4f4f3' }}>
+          <p style={{ color: '#1a1a1a' }}><strong>NV:</strong> {formRetiro.nv} · <strong>Cliente:</strong> {formRetiro.cliente}</p>
+          <p style={{ color: '#666' }}>{formRetiro.sucursal}{formRetiro.fecha_estimada ? ` · ${new Date(formRetiro.fecha_estimada + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })}` : ''}</p>
+          <p style={{ color: '#666' }}>{itemsRetiro.filter(i => i.nombre_producto).length} producto{itemsRetiro.filter(i => i.nombre_producto).length !== 1 ? 's' : ''} a retirar</p>
+        </div>
+        <div className="flex flex-col gap-2.5">
+          <button onClick={generarPdfRetiro}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2"
+            style={{ background: '#0f766e' }}>
+            📄 Generar PDF para logística
           </button>
-          <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
-            Ir al panel
-          </button>
+          <div className="flex gap-3">
+            <button onClick={resetRetiro} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: '#254A96' }}>
+              Nueva solicitud
+            </button>
+            <button onClick={() => router.push('/dashboard')} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
+              Ir al panel
+            </button>
+          </div>
         </div>
       </div>
     </div>

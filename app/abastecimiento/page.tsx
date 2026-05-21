@@ -101,8 +101,8 @@ interface SdSolicitud {
 }
 
 interface CatalogoEntry { id: number; nombre: string; activo: boolean }
-// stock[id_producto][sucursal] = cantidad
-type StockMap = Record<number, Record<string, number>>
+// stock[String(id_producto)][sucursal] = cantidad — siempre string para evitar type mismatch
+type StockMap = Record<string, Record<string, number>>
 // decisions[solId] = sol-level; decisions[`${solId}|${prodId}`] = item-level override
 type DecisionsMap = Record<string, ItemDecision>
 
@@ -177,9 +177,10 @@ function buildSugerencias(
   const rows: SugerenciaRow[] = []
   for (const [suc, prods] of Object.entries(demand)) {
     for (const [, row] of Object.entries(prods)) {
-      row.stock_local = stock[row.id_producto]?.[suc] ?? 0
+      const pid = String(row.id_producto)
+      row.stock_local = stock[pid]?.[suc] ?? 0
       row.deficit = Math.max(0, row.demandado - row.stock_local)
-      const others = Object.entries(stock[row.id_producto] ?? {})
+      const others = Object.entries(stock[pid] ?? {})
         .filter(([s]) => s !== suc)
         .sort(([, a], [, b]) => (b as number) - (a as number))
       if (others.length > 0) { row.disponible_otros = others[0][1] as number; row.sucursal_mejor = others[0][0] }
@@ -193,7 +194,7 @@ function buildSugerencias(
 // ─── Helpers de decisión ───────────────────────────────────────────────────────
 /** Decide automáticamente basado en stock disponible */
 function autoSuggest(item: SdItem, sucursalOrigen: string, stock: StockMap): ItemDecision {
-  const stockProd = stock[item.id_producto] ?? {}
+  const stockProd = stock[String(item.id_producto)] ?? {}
   const stockOrigen = stockProd[sucursalOrigen] ?? 0
 
   if (stockOrigen >= item.cantidad_solicitada) {
@@ -439,8 +440,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         const { data: stockRaw } = await supabase
           .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds)
         for (const s of stockRaw ?? []) {
-          if (!stockMap[s.id_producto]) stockMap[s.id_producto] = {}
-          stockMap[s.id_producto][s.sucursal] = s.cantidad
+          const key = String(s.id_producto)
+          if (!stockMap[key]) stockMap[key] = {}
+          stockMap[key][s.sucursal] = Number(s.cantidad)
         }
       }
       setStock(stockMap)

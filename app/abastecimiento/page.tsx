@@ -605,7 +605,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   ]
 
   return (
-    <div className="px-4 md:px-6 py-4 max-w-5xl">
+    <div className="px-4 md:px-6 py-4">
 
       {/* ── Barra de filtros ─────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4" style={{ borderColor: '#f0f0f0' }}>

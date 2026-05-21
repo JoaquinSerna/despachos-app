@@ -338,6 +338,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [confirmando, setConfirmando] = useState(false)
   const [expandidos, setExpandidos] = useState<Set<number>>(new Set())
   const [filtroSucursal, setFiltroSucursal] = useState('')
+  const [filtroEstadoSol, setFiltroEstadoSol] = useState('')
+  const [filtroActivo, setFiltroActivo] = useState('')
   const [solFechasDisp, setSolFechasDisp] = useState<string[]>([])
 
   // Cargar fechas disponibles en solicitudes importadas
@@ -355,6 +357,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 
   // Cargar solicitudes cuando cambia la fecha
   useEffect(() => { if (fecha) cargarSolicitudes() }, [fecha, filtroSucursal])
+
+  // Estados únicos presentes en las solicitudes cargadas (para el filtro)
+  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))]
 
   async function cargarSolicitudes() {
     setLoading(true)
@@ -651,9 +656,22 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const rechazadas = solicitudes.filter(s => estadoGeneral(s, decisions) === 'rechazado').length
   const sinVerif = solicitudes.filter(s => estadoGeneral(s, decisions) === 'sinverif').length
 
-  const solsFiltradas = filtroSucursal
-    ? solicitudes.filter(s => s.sucursal === filtroSucursal)
-    : solicitudes
+  const solsFiltradas = solicitudes
+    .filter(s => !filtroSucursal || s.sucursal === filtroSucursal)
+    .filter(s => {
+      if (!filtroEstadoSol) return true
+      if (filtroEstadoSol === 'excl_delivered') return s.estado !== 'delivered' && s.estado !== 'Entregado'
+      return s.estado === filtroEstadoSol
+    })
+    .filter(s => {
+      if (!filtroActivo || Object.keys(catalogo).length === 0) return true
+      return s.items.some(it => {
+        const activo = catalogo[it.id_producto]?.activo
+        if (filtroActivo === 'true')  return activo === true
+        if (filtroActivo === 'false') return activo === false
+        return true
+      })
+    })
 
   return (
     <div className="px-4 md:px-6 py-4 max-w-5xl">
@@ -679,6 +697,24 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           <option value="">Todas las sucursales</option>
           {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+
+        {/* Filtro estado de entrega */}
+        <select value={filtroEstadoSol} onChange={e => setFiltroEstadoSol(e.target.value)}
+          className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+          <option value="">Todos los estados</option>
+          <option value="excl_delivered">Excluir entregados</option>
+          {estadosDisp.map(e => <option key={e} value={e}>{e}</option>)}
+        </select>
+
+        {/* Filtro estado producto (activo/inactivo) — solo si catálogo cargado */}
+        {Object.keys(catalogo).length > 0 && (
+          <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
+            className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+            <option value="">Todos los productos</option>
+            <option value="true">Solo activos</option>
+            <option value="false">Solo inactivos</option>
+          </select>
+        )}
 
         {totalSols > 0 && (
           <div className="flex items-center gap-3 ml-auto text-xs flex-wrap">
@@ -1196,26 +1232,37 @@ function ModalDetalleReq({ req, rol, guardando, puedeEditar, editItems, editNota
           <div>
             <p className="text-xs font-semibold mb-2" style={{ color: '#254A96' }}>PRODUCTOS</p>
             <div className="space-y-1.5">
-              {req.requerimiento_items?.map((item: ReqItem) => (
-                <div key={item.id} className="rounded-lg px-3 py-2" style={{ background: '#f9f9f9', border: '1px solid #f0f0f0' }}>
-                  <p className="text-sm font-medium">{item.nombre_producto}</p>
-                  <div className="flex items-center gap-3 mt-1">
-                    <span className="text-xs" style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
-                    {puedeEditar ? (
-                      <label className="text-xs flex items-center gap-1.5" style={{ color: '#0f766e' }}>
-                        Aprobado:
-                        <input type="number" min={0}
-                          value={editItems[item.id] ?? item.cantidad_aprobada ?? item.cantidad_solicitada}
-                          onChange={e => setEditItems((prev: any) => ({ ...prev, [item.id]: parseInt(e.target.value) || 0 }))}
-                          className="w-16 border rounded px-1.5 py-0.5 text-xs focus:outline-none font-bold text-center"
-                          style={{ borderColor: '#e8edf8' }} />
-                      </label>
-                    ) : item.cantidad_aprobada != null ? (
-                      <span className="text-xs font-semibold" style={{ color: '#0f766e' }}>Aprobado: {item.cantidad_aprobada}</span>
-                    ) : null}
+              {req.requerimiento_items?.map((item: ReqItem) => {
+                const qtyAprobada = editItems[item.id] ?? item.cantidad_aprobada ?? item.cantidad_solicitada
+                const isOver = item.cantidad_solicitada != null && Number(qtyAprobada) > item.cantidad_solicitada
+                return (
+                  <div key={item.id} className="rounded-lg px-3 py-2"
+                    style={{ background: isOver ? '#fde8e8' : '#f9f9f9', border: `1px solid ${isOver ? '#fca5a5' : '#f0f0f0'}` }}>
+                    <p className="text-sm font-medium" style={isOver ? { color: '#dc2626', fontWeight: 600 } : {}}>
+                      {item.nombre_producto}
+                    </p>
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      <span className="text-xs" style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
+                      {puedeEditar ? (
+                        <label className="text-xs flex items-center gap-1.5" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
+                          Aprobado:
+                          <input type="number" min={0}
+                            value={qtyAprobada}
+                            onChange={e => setEditItems((prev: any) => ({ ...prev, [item.id]: parseInt(e.target.value) || 0 }))}
+                            className="w-16 border rounded px-1.5 py-0.5 text-xs focus:outline-none font-bold text-center"
+                            style={{ borderColor: isOver ? '#fca5a5' : '#e8edf8', color: isOver ? '#dc2626' : undefined }} />
+                          {isOver && <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#dc2626', color: '#fff' }}>⬆</span>}
+                        </label>
+                      ) : item.cantidad_aprobada != null ? (
+                        <span className="text-xs font-semibold flex items-center gap-1" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
+                          Aprobado: {item.cantidad_aprobada}
+                          {isOver && <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#dc2626', color: '#fff' }}>⬆</span>}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 

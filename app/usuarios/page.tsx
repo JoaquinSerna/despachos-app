@@ -17,6 +17,7 @@ interface Usuario {
   created_at: string
   permisos?: Record<string, string>
   activo?: boolean   // columna en DB: activo boolean DEFAULT true NOT NULL
+  motivo_inactivo?: string | null
 }
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -41,6 +42,8 @@ export default function UsuariosPage() {
   const [modalPermisos, setModalPermisos] = useState<Usuario | null>(null)
   const [permisosEdit, setPermisosEdit] = useState<Record<string, string>>({})
   const [guardandoPermisos, setGuardandoPermisos] = useState(false)
+  const [modalInactivar, setModalInactivar] = useState<{ usuario: Usuario } | null>(null)
+  const [motivoInactivar, setMotivoInactivar] = useState('')
   const [botonPedidosVisible, setBotonPedidosVisible] = useState(true)
   const [adminId, setAdminId] = useState('')
   const [adminNombre, setAdminNombre] = useState('')
@@ -235,19 +238,25 @@ export default function UsuariosPage() {
     } catch { showToast('Error al actualizar', 'err') }
   }
 
-  const toggleActivo = async (u: Usuario) => {
-    const nuevoEstado = !(u.activo !== false)  // undefined → true → false
-    const accion = nuevoEstado ? 'activar' : 'inactivar'
+  const toggleActivo = async (u: Usuario, motivoDirecto?: string) => {
+    const nuevoEstado = !(u.activo !== false)
+    if (!nuevoEstado && !motivoDirecto) {
+      // Abrir modal para pedir motivo
+      setMotivoInactivar('')
+      setModalInactivar({ usuario: u })
+      return
+    }
     if (!confirm(`¿${nuevoEstado ? 'Activar' : 'Inactivar'} a ${u.nombre}?`)) return
     const res = await fetch('/api/crear-usuario', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: u.id, activo: nuevoEstado }),
+      body: JSON.stringify({ id: u.id, activo: nuevoEstado, motivo_inactivo: nuevoEstado ? null : (motivoDirecto ?? null) }),
     })
     const data = await res.json()
     if (data.error) { showToast(data.error, 'err'); return }
     showToast(`Usuario ${nuevoEstado ? 'activado' : 'inactivado'}`)
-    if (adminId) logAuditoria(adminId, adminNombre, nuevoEstado ? 'Activó usuario' : 'Desactivó usuario', 'Usuarios', { email: u.email, nombre: u.nombre })
+    if (adminId) logAuditoria(adminId, adminNombre, nuevoEstado ? 'Activó usuario' : 'Desactivó usuario', 'Usuarios', { email: u.email, nombre: u.nombre, motivo: motivoDirecto ?? null })
+    setModalInactivar(null)
     cargarUsuarios()
   }
 
@@ -280,6 +289,58 @@ export default function UsuariosPage() {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
           style={{ background: toast.tipo === 'ok' ? '#254A96' : '#E52322' }}>
           {toast.tipo === 'ok' ? '✓' : '✕'} {toast.msg}
+        </div>
+      )}
+
+      {/* Modal inactivar con motivo */}
+      {modalInactivar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="font-bold text-base" style={{ color: '#E52322' }}>Inactivar usuario</h3>
+              <button onClick={() => setModalInactivar(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <p className="text-sm" style={{ color: '#666' }}>
+              ¿Inactivar a <strong>{modalInactivar.usuario.nombre}</strong>?
+              No podrá acceder al sistema hasta que lo reactives.
+            </p>
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                Motivo <span style={{ color: '#B9BBB7', fontWeight: 400 }}>(opcional)</span>
+              </label>
+              <select value={motivoInactivar} onChange={e => setMotivoInactivar(e.target.value)}
+                className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none mb-2"
+                style={{ borderColor: '#e8edf8' }}>
+                <option value="">— Sin especificar —</option>
+                <option value="ART">ART / Accidente laboral</option>
+                <option value="Licencia médica">Licencia médica</option>
+                <option value="Vacaciones">Vacaciones</option>
+                <option value="Suspensión">Suspensión</option>
+                <option value="Renuncia">Renuncia</option>
+                <option value="Otro">Otro</option>
+              </select>
+              {motivoInactivar === 'Otro' && (
+                <input type="text" placeholder="Especificá el motivo..."
+                  value={motivoInactivar === 'Otro' ? '' : motivoInactivar}
+                  onChange={e => setMotivoInactivar(e.target.value)}
+                  className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }} />
+              )}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setModalInactivar(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border"
+                style={{ borderColor: '#e8edf8', color: '#666' }}>
+                Cancelar
+              </button>
+              <button onClick={() => toggleActivo(modalInactivar.usuario, motivoInactivar || undefined)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white"
+                style={{ background: '#E52322' }}>
+                Inactivar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -534,7 +595,9 @@ export default function UsuariosPage() {
                         {u.nombre}
                         {!estaActivo && (
                           <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                            style={{ background: '#f4f4f3', color: '#B9BBB7' }}>inactivo</span>
+                            style={{ background: '#fde8e8', color: '#E52322' }}>
+                            {u.motivo_inactivo ? `⏸ ${u.motivo_inactivo}` : 'inactivo'}
+                          </span>
                         )}
                       </div>
                     </td>

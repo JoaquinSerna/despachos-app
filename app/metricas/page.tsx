@@ -23,6 +23,35 @@ function colorBarra(p: number) {
   return p >= 90 ? '#E52322' : p >= 70 ? '#10b981' : p >= 40 ? '#f59e0b' : '#B9BBB7'
 }
 
+const VUELTAS_MAX_DEFAULT: Record<string, number> = {
+  'LP520': 4, 'Guernica': 4,
+  'LP139': 3, 'Cañuelas': 3, 'Pinamar': 3,
+}
+
+/** Calcula vueltas_max efectivas considerando km por vuelta y límite diario */
+function calcVueltasMaxEfectivas(sucursal: string, vueltasRealizadas: number, distanciaKmTotal: number, kmMaxDia: number): number {
+  const defaultMax = VUELTAS_MAX_DEFAULT[sucursal] ?? 3
+  if (vueltasRealizadas === 0 || distanciaKmTotal === 0) return defaultMax
+  const kmPorVuelta = distanciaKmTotal / vueltasRealizadas
+  const maxPorKm = Math.floor(kmMaxDia / kmPorVuelta)
+  return Math.max(1, Math.min(defaultMax, maxPorKm))
+}
+
+/** Ocupación diaria estimada (0-100) */
+function calcOcupDiaria(
+  posUsadas: number, kgUsados: number,
+  posTotal: number, tonelajeMax: number,
+  vueltasRealizadas: number, vueltasMaxEfectivas: number,
+): { pctPos: number; pctKg: number } {
+  if (vueltasMaxEfectivas === 0) return { pctPos: 0, pctKg: 0 }
+  const capPosDia = posTotal * vueltasMaxEfectivas
+  const capKgDia  = tonelajeMax * vueltasMaxEfectivas
+  return {
+    pctPos: pct(posUsadas, capPosDia),
+    pctKg:  pct(kgUsados,  capKgDia),
+  }
+}
+
 function formatHora(iso: string | null) {
   if (!iso) return '—'
   return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
@@ -163,6 +192,10 @@ interface DatosCamionDia {
   km_ruta: number | null
   vueltas: DatosVuelta[]
   distanciaTotalKm: number
+  km_max_dia: number         // desde camiones_flota
+  vueltasMaxEfectivas: number
+  ocupDiariaPctPos: number
+  ocupDiariaPctKg: number
 }
 
 interface DatosCamionMes {
@@ -196,6 +229,7 @@ export default function MetricasPage() {
   const [fechaExportDesde, setFechaExportDesde] = useState(primerDiaMes)
   const [fechaExportHasta, setFechaExportHasta] = useState(hoy)
   const [exportSucursales, setExportSucursales] = useState<string[]>([])
+  const [camionesNoActivados, setCamionesNoActivados] = useState<{ camion_codigo: string; sucursal: string }[]>([])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
@@ -482,7 +516,7 @@ export default function MetricasPage() {
       supabase.from('pedidos')
         .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado, hora_entregado')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
       supabase.from('vueltas_tiempos').select('camion_codigo, vuelta, hora_inicio, hora_fin').eq('fecha', fecha),
     ])
 
@@ -586,6 +620,14 @@ export default function MetricasPage() {
       const capacidadKgDia = camion.tonelaje_max_kg * numVueltas
       const capacidadPosDia = camion.posiciones_total * numVueltas
 
+      const kmMaxDia = camion.km_max_dia ?? 200
+      const vueltasMaxEfectivas = calcVueltasMaxEfectivas(camion.sucursal, vueltas.length, distanciaTotalKm, kmMaxDia)
+      const { pctPos: ocupDiariaPctPos, pctKg: ocupDiariaPctKg } = calcOcupDiaria(
+        posicionesUsadas, kgUsados,
+        camion.posiciones_total, camion.tonelaje_max_kg,
+        vueltas.length, vueltasMaxEfectivas,
+      )
+
       return {
         camion_codigo: camionCodigo,
         tipo_unidad: camion.tipo_unidad,
@@ -605,6 +647,10 @@ export default function MetricasPage() {
         km_ruta: f?.km_ruta ?? null,
         vueltas,
         distanciaTotalKm,
+        km_max_dia: kmMaxDia,
+        vueltasMaxEfectivas,
+        ocupDiariaPctPos,
+        ocupDiariaPctKg,
       }
     }
 
@@ -613,6 +659,15 @@ export default function MetricasPage() {
       .filter(Boolean) as DatosCamionDia[]
 
     const sorted = datos.sort((a, b) => b.pctKg - a.pctKg)
+
+    // Camiones activos en flota base que no están en flota_dia hoy
+    const activadosHoy = new Set([...camionCodigosSet])
+    const noActivados = (camionesData ?? [])
+      .filter((c: any) => c.activo && !activadosHoy.has(c.codigo))
+      .filter((c: any) => !sucursal || c.sucursal === sucursal)
+      .map((c: any) => ({ camion_codigo: c.codigo, sucursal: c.sucursal }))
+    setCamionesNoActivados(noActivados)
+
     setDatosDia(sorted)
     setLoading(false)
     calcularKmReales(sorted)   // actualiza km en background con OSRM
@@ -873,7 +928,7 @@ export default function MetricasPage() {
               style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
           </div>
         ) : vista === 'diaria' ? (
-          <VistaDiaria datos={datosDia} fecha={fecha} />
+          <VistaDiaria datos={datosDia} fecha={fecha} camionesNoActivados={camionesNoActivados} />
         ) : (
           <VistaMensual datos={datosMes} mes={mes} />
         )}
@@ -918,7 +973,11 @@ const ESTADO_COLOR: Record<string, { bg: string; color: string }> = {
   rechazado:    { bg: '#fde8e8', color: '#E52322' },
 }
 
-function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string }) {
+function VistaDiaria({ datos, fecha, camionesNoActivados }: {
+  datos: DatosCamionDia[]
+  fecha: string
+  camionesNoActivados: { camion_codigo: string; sucursal: string }[]
+}) {
   const router = useRouter()
   const [filtroFlota, setFiltroFlota] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
   const [modalVuelta, setModalVuelta] = useState<{ camion: string; vuelta: DatosVuelta } | null>(null)
@@ -983,6 +1042,27 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
         ))}
       </div>
 
+      {/* Panel flota ociosa */}
+      {(() => {
+        const ociosos = datosFiltrados.filter(d => d.vueltas.length > 0 && Math.max(d.ocupDiariaPctKg, d.ocupDiariaPctPos) < 40)
+        if (ociosos.length === 0) return null
+        return (
+          <div className="rounded-xl p-4" style={{ background: '#fef3c7', border: '1px solid #fde68a' }}>
+            <p className="text-sm font-semibold mb-2" style={{ color: '#b45309' }}>
+              ⚠ {ociosos.length} camión{ociosos.length !== 1 ? 'es' : ''} con baja ocupación diaria
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ociosos.map(d => (
+                <span key={d.camion_codigo} className="text-xs px-2.5 py-1 rounded-full font-medium"
+                  style={{ background: '#fef9c3', color: '#92400e', border: '1px solid #fde68a' }}>
+                  {d.camion_codigo} · {Math.max(d.ocupDiariaPctKg, d.ocupDiariaPctPos)}% · {d.vueltas.length}/{d.vueltasMaxEfectivas}V
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Cards por camión */}
       {datosFiltrados.map(d => {
         const semaforo = colorSemaforo(Math.max(d.pctKg, d.pctPos))
@@ -999,6 +1079,15 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
                     <span className="text-xs" style={{ color: '#B9BBB7' }}>📍 {d.sucursal}</span>
                     <span className="text-xs px-2 py-0.5 rounded-full font-semibold" style={{ background: semaforo.bg, color: semaforo.color }}>
                       {Math.max(d.pctKg, d.pctPos)}% ocupación
+                    </span>
+                    {d.vueltas.length > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                        style={{ background: colorSemaforo(Math.max(d.ocupDiariaPctKg, d.ocupDiariaPctPos)).bg, color: colorSemaforo(Math.max(d.ocupDiariaPctKg, d.ocupDiariaPctPos)).color }}>
+                        {Math.max(d.ocupDiariaPctKg, d.ocupDiariaPctPos)}% día est.
+                      </span>
+                    )}
+                    <span className="text-xs" style={{ color: '#B9BBB7' }}>
+                      {d.vueltas.length}/{d.vueltasMaxEfectivas}V
                     </span>
                   </div>
                   <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
@@ -1180,6 +1269,23 @@ function VistaDiaria({ datos, fecha }: { datos: DatosCamionDia[]; fecha: string 
           </div>
         )
       })}
+
+      {/* Unidades no activadas — informativo */}
+      {camionesNoActivados.length > 0 && (
+        <div className="rounded-xl p-4" style={{ background: '#f4f4f3', border: '1px solid #e8edf8' }}>
+          <p className="text-sm font-medium mb-2" style={{ color: '#666' }}>
+            ℹ {camionesNoActivados.length} unidad{camionesNoActivados.length !== 1 ? 'es' : ''} disponible{camionesNoActivados.length !== 1 ? 's' : ''} no activada{camionesNoActivados.length !== 1 ? 's' : ''} hoy
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {camionesNoActivados.map(c => (
+              <span key={c.camion_codigo} className="text-xs px-2.5 py-1 rounded-full"
+                style={{ background: 'white', color: '#888', border: '1px solid #e8edf8' }}>
+                {c.camion_codigo} · {c.sucursal}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Modal pedidos de vuelta */}
       {modalVuelta && (

@@ -389,7 +389,7 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
 
 const BIG_MODES = ['stock', 'separar', 'reprog']
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand, soloVer = false }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand, soloVer = false, esTransferencia = false }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
@@ -402,6 +402,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   onIncidenciaStock: (id: string, itemsSinStock: any[], itemsConStock: any[]) => void
   onNeedsExpand?: (id: string, needs: boolean) => void
   soloVer?: boolean
+  esTransferencia?: boolean
 }) {
   const [expandido, setExpandido] = useState(false)
   const [modo, _setModo] = useState<'normal' | 'vuelta' | 'reprog' | 'cancelar' | 'editar_peso' | 'separar' | 'mover_sucursal' | 'stock'>('normal')
@@ -733,17 +734,21 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
             V{pedido.vuelta} · cambiar
           </button>
-          <span style={{ color: '#e0e0e0' }}>|</span>
-          <button onMouseDown={e => e.stopPropagation()}
-            onClick={e => { e.stopPropagation(); setStockDisp({}); setModo('stock') }}
-            className="text-xs hover:underline font-medium" style={{ color: '#b45309' }}>
-            ⚠ stock
-          </button>
-          <span style={{ color: '#e0e0e0' }}>|</span>
-          <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('mover_sucursal') }}
-            className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
-            🏭 {pedido.sucursal}
-          </button>
+          {!esTransferencia && (
+            <>
+              <span style={{ color: '#e0e0e0' }}>|</span>
+              <button onMouseDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); setStockDisp({}); setModo('stock') }}
+                className="text-xs hover:underline font-medium" style={{ color: '#b45309' }}>
+                ⚠ stock
+              </button>
+              <span style={{ color: '#e0e0e0' }}>|</span>
+              <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setModo('mover_sucursal') }}
+                className="text-xs hover:underline" style={{ color: '#B9BBB7' }}>
+                🏭 {pedido.sucursal}
+              </button>
+            </>
+          )}
           <span style={{ color: '#e0e0e0' }}>|</span>
           <button onMouseDown={e => e.stopPropagation()}
             onClick={e => { e.stopPropagation(); setModo('reprog'); setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('') }}
@@ -805,7 +810,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock, esTransferencia = false }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -823,6 +828,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   soloVer?: boolean
   bloqueado?: boolean
   onToggleLock?: () => void
+  esTransferencia?: boolean
 }) {
   const { camion, pedidos, pesoTotal, posTotal } = columna
   const [manualExpanded, setManualExpanded] = useState(false)
@@ -927,7 +933,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} esTransferencia={esTransferencia} />)}
       </div>
     </div>
   )
@@ -1009,6 +1015,8 @@ function ProgramacionInner() {
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [contadorTransferencias, setContadorTransferencias] = useState(0)
   const [transferencias, setTransferencias] = useState<any[]>([])
+  const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
+  const dragTransferRef = useRef<Pedido | null>(null)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
@@ -1044,12 +1052,95 @@ function ProgramacionInner() {
 
   async function cargarTransferencias() {
     try {
-      const res = await fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`)
+      const [res, { data: fd }] = await Promise.all([
+        fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`),
+        supabase.from('flota_dia').select('camion_codigo').eq('fecha', fecha).eq('sucursal', sucursal).eq('activo', true),
+      ])
       const data = await res.json()
       const list = Array.isArray(data) ? data : []
       setTransferencias(list)
       setContadorTransferencias(list.length)
+      // Cargar camiones para el kanban de transferencias
+      let codigos = (fd ?? []).map((f: any) => f.camion_codigo)
+      if (codigos.length === 0) {
+        const { data: baseData } = await supabase.from('camiones_flota').select('codigo').eq('sucursal', sucursal).eq('activo', true)
+        codigos = (baseData ?? []).map((b: any) => b.codigo)
+      }
+      if (codigos.length > 0) {
+        const { data: cd } = await supabase.from('camiones_flota').select('*').in('codigo', codigos).eq('activo', true)
+        setCamionesTransfer(
+          (cd ?? []).sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
+        )
+      } else {
+        setCamionesTransfer([])
+      }
     } catch {}
+  }
+
+  function transferToPedido(req: any): Pedido {
+    return {
+      id: req.id,
+      nv: req.nv ?? '—',
+      id_despacho: null,
+      cliente: req.cliente ? `${req.cliente}` : `→ ${req.sucursal_destino}`,
+      direccion: `🔀 Transferencia → ${req.sucursal_destino}`,
+      sucursal: req.sucursal_origen,
+      fecha_entrega: req.fecha_solicitada ?? fecha,
+      vuelta: req.vuelta ?? 1,
+      estado: req.estado,
+      estado_pago: 'cuenta_corriente',
+      peso_total_kg: null,
+      volumen_total_m3: null,
+      notas: req.notas ?? null,
+      camion_id: req.cod_vehiculo ?? null,
+      orden_entrega: null,
+      latitud: null,
+      longitud: null,
+      tipo: 'transferencia',
+      items: (req.requerimiento_items ?? []).map((it: any) => ({
+        nombre: it.nombre_producto,
+        cantidad: it.cantidad_solicitada,
+        unidad: '',
+      })),
+      prioridad: false,
+      barrio_cerrado: false,
+      requiere_volcador: false,
+    }
+  }
+
+  async function asignarCamionTransfer(reqId: string, codigoCamion: string | null) {
+    await fetch('/api/requerimientos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: reqId, cod_vehiculo: codigoCamion }),
+    })
+    setTransferencias(prev => prev.map(r => r.id === reqId ? { ...r, cod_vehiculo: codigoCamion } : r))
+  }
+
+  async function cambiarVueltaTransfer(reqId: string, vuelta: number) {
+    await fetch('/api/requerimientos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: reqId, vuelta }),
+    })
+    setTransferencias(prev => prev.map(r => r.id === reqId ? { ...r, vuelta } : r))
+  }
+
+  async function reprogramarTransfer(reqId: string, nuevaFecha: string, vuelta: number, _motivo: string) {
+    await fetch('/api/requerimientos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: reqId, fecha_solicitada: nuevaFecha, vuelta }),
+    })
+    setTransferencias(prev => prev.map(r => r.id === reqId ? { ...r, fecha_solicitada: nuevaFecha, vuelta } : r))
+    showToast('Transferencia reprogramada')
+  }
+
+  async function cancelarTransfer(reqId: string) {
+    if (!confirm('¿Cancelar esta transferencia?')) return
+    await fetch('/api/requerimientos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: reqId, estado: 'rechazado' }),
+    })
+    setTransferencias(prev => prev.filter(r => r.id !== reqId))
+    setContadorTransferencias(prev => Math.max(0, prev - 1))
   }
 
   async function cargarDatos() {
@@ -1788,31 +1879,75 @@ function ProgramacionInner() {
         )}
 
         {vueltaActiva === VUELTA_TRANSFERENCIAS ? (
-          /* ── Vista especial: Transferencias entre sucursales ── */
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="max-w-2xl mx-auto space-y-2">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-medium" style={{ color: '#B9BBB7' }}>
-                  {transferencias.length} transferencia{transferencias.length !== 1 ? 's' : ''} pendiente{transferencias.length !== 1 ? 's' : ''}
-                  {' '}para despachar desde {sucursal}
-                </p>
-                <button onClick={cargarTransferencias}
-                  className="text-xs px-3 py-1.5 rounded-lg"
-                  style={{ color: '#ea580c', background: '#fff7ed' }}>
-                  Actualizar
-                </button>
-              </div>
-              {transferencias.length === 0 ? (
-                <div className="flex flex-col items-center py-16" style={{ color: '#B9BBB7' }}>
-                  <div className="text-4xl mb-3">🔄</div>
-                  <p>No hay transferencias pendientes desde {sucursal}</p>
-                </div>
-              ) : (
-                transferencias.map((req: any) => (
-                  <TransferCard key={req.id} req={req} />
-                ))
-              )}
+          /* ── Vista transferencias: kanban igual al principal ── */
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <div className="px-4 py-2 flex items-center gap-3 shrink-0" style={{ borderBottom: '1px solid #f0f0f0' }}>
+              <p className="text-xs font-medium" style={{ color: '#B9BBB7' }}>
+                {transferencias.length} transferencia{transferencias.length !== 1 ? 's' : ''} pendiente{transferencias.length !== 1 ? 's' : ''} desde {sucursal}
+              </p>
+              <button onClick={cargarTransferencias} className="text-xs px-3 py-1.5 rounded-lg" style={{ color: '#ea580c', background: '#fff7ed' }}>
+                Actualizar
+              </button>
             </div>
+            {transferencias.length === 0 ? (
+              <div className="flex flex-col items-center justify-center flex-1" style={{ color: '#B9BBB7' }}>
+                <div className="text-4xl mb-3">🔄</div>
+                <p>No hay transferencias pendientes desde {sucursal}</p>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-hidden flex gap-2 p-4">
+                {/* Sin asignar — fija a la izquierda */}
+                <div className="shrink-0 h-full" style={{ zIndex: 10 }}>
+                  <ColumnaCamion sinAsignar esTransferencia
+                    columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: transferencias.filter((r: any) => !r.cod_vehiculo).map(transferToPedido), pesoTotal: 0, posTotal: 0 }}
+                    onDrop={(e) => { e.preventDefault(); if (dragTransferRef.current) { asignarCamionTransfer(dragTransferRef.current.id, null); dragTransferRef.current = null } setDragOver(null) }}
+                    onDragOver={(e) => { e.preventDefault(); setDragOver('__sin_asignar_transfer__') }}
+                    onDragLeave={() => setDragOver(null)}
+                    onDragStart={(e, p) => { dragTransferRef.current = p; e.dataTransfer.effectAllowed = 'move' }}
+                    isDragOver={dragOver === '__sin_asignar_transfer__'}
+                    onCancelar={cancelarTransfer}
+                    onCambiarVuelta={cambiarVueltaTransfer}
+                    onReprogramar={reprogramarTransfer}
+                    onEditarPeso={() => {}}
+                    onToggleVolcador={() => {}}
+                    onSepararPedido={() => {}}
+                    onMoverSucursal={() => {}}
+                    onIncidenciaStock={() => {}}
+                    soloVer={!puedeEditarProg}
+                  />
+                </div>
+                <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
+                {/* Columnas por camión */}
+                <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
+                  <div className="flex gap-2 h-full pr-2">
+                    {camionesTransfer.map(c => (
+                      <ColumnaCamion key={c.codigo} esTransferencia
+                        columna={{ camion: c, pedidos: transferencias.filter((r: any) => r.cod_vehiculo === c.codigo).map(transferToPedido), pesoTotal: 0, posTotal: 0 }}
+                        onDrop={(e) => { e.preventDefault(); if (dragTransferRef.current) { asignarCamionTransfer(dragTransferRef.current.id, c.codigo); dragTransferRef.current = null } setDragOver(null) }}
+                        onDragOver={(e) => { e.preventDefault(); setDragOver(c.codigo + '__transfer__') }}
+                        onDragLeave={() => setDragOver(null)}
+                        onDragStart={(e, p) => { dragTransferRef.current = p; e.dataTransfer.effectAllowed = 'move' }}
+                        isDragOver={dragOver === c.codigo + '__transfer__'}
+                        onCancelar={cancelarTransfer}
+                        onCambiarVuelta={cambiarVueltaTransfer}
+                        onReprogramar={reprogramarTransfer}
+                        onEditarPeso={() => {}}
+                        onToggleVolcador={() => {}}
+                        onSepararPedido={() => {}}
+                        onMoverSucursal={() => {}}
+                        onIncidenciaStock={() => {}}
+                        soloVer={!puedeEditarProg}
+                      />
+                    ))}
+                    {camionesTransfer.length === 0 && (
+                      <div className="flex flex-col items-center justify-center flex-1 py-16" style={{ color: '#B9BBB7' }}>
+                        <p className="text-sm">No hay camiones activos para {sucursal} hoy</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         ) : cargando ? (
           <div className="flex justify-center py-24">

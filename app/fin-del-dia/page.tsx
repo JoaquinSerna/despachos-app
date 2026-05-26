@@ -21,6 +21,7 @@ export default function FinDelDiaPage() {
   const [prioridades, setPrioridades] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [reprogramados, setReprogramados] = useState(false)
+  const [motivo, setMotivo] = useState('')
   const [userId, setUserId] = useState('')
   const [userNombre, setUserNombre] = useState('')
 
@@ -48,7 +49,7 @@ export default function FinDelDiaPage() {
       .order('vuelta').order('cliente')
     const ps = data ?? []
     setPedidos(ps)
-    setSeleccionados(new Set(ps.map((p: any) => p.id)))
+    setSeleccionados(new Set())
     setPrioridades(new Set(ps.filter((p: any) => p.prioridad).map((p: any) => p.id)))
     setCargando(false)
   }
@@ -69,7 +70,7 @@ export default function FinDelDiaPage() {
     try {
       await Promise.all(aReprogramar.map(p => {
         const esPrioridad = prioridades.has(p.id)
-        const nota = `⚡ No entregado el ${fecha} V${p.vuelta}${esPrioridad ? ' — PRIORIDAD' : ''}`
+        const nota = `⚡ No entregado el ${fecha} V${p.vuelta}${motivo.trim() ? ` — ${motivo.trim()}` : ''}${esPrioridad ? ' — PRIORIDAD' : ''}`
         const notaFinal = p.notas ? `${p.notas} | ${nota}` : nota
         return fetch('/api/pedidos', {
           method: 'PATCH',
@@ -182,6 +183,19 @@ export default function FinDelDiaPage() {
 
             {/* Acciones */}
             <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+              {/* Selección rápida */}
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium" style={{ color: '#B9BBB7' }}>
+                  {seleccionados.size} de {pedidos.length} seleccionado{seleccionados.size !== 1 ? 's' : ''}
+                  {prioridades.size > 0 && <span className="ml-2" style={{ color: '#b45309' }}>· {prioridades.size} ⭐</span>}
+                </span>
+                <button
+                  onClick={() => setSeleccionados(seleccionados.size === pedidos.length ? new Set() : new Set(pedidos.map((p: any) => p.id)))}
+                  className="ml-auto text-xs px-3 py-1.5 rounded-lg font-medium"
+                  style={{ background: '#e8edf8', color: '#254A96' }}>
+                  {seleccionados.size === pedidos.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                </button>
+              </div>
               <div className="flex items-center gap-3">
                 <div className="flex-1">
                   <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Reprogramar para</label>
@@ -190,9 +204,12 @@ export default function FinDelDiaPage() {
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />
                 </div>
-                <div className="pt-5 text-sm" style={{ color: '#B9BBB7' }}>
-                  {seleccionados.size} seleccionado{seleccionados.size !== 1 ? 's' : ''}
-                  {prioridades.size > 0 && <span className="ml-2" style={{ color: '#b45309' }}>· {prioridades.size} ⭐ prioridad</span>}
+                <div className="flex-1">
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Motivo de reprogramación</label>
+                  <input type="text" value={motivo} onChange={e => setMotivo(e.target.value)}
+                    placeholder="ej: lluvia, cliente ausente, ruta cortada…"
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }} />
                 </div>
               </div>
               <button

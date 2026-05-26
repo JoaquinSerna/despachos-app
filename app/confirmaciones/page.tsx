@@ -342,6 +342,12 @@ export default function ConfirmacionesPage() {
                               style={{ color: '#254A96' }}>
                               {pedido.telefono}
                             </a>
+                            <a href={`https://wa.me/${pedido.telefono.replace(/\D/g, '')}`}
+                              target="_blank" rel="noopener noreferrer"
+                              className="ml-1 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                              style={{ background: '#dcfce7', color: '#166534' }}>
+                              💬 WA
+                            </a>
                           </div>
                         )}
 

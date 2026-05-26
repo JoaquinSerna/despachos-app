@@ -364,13 +364,13 @@ export default function AbastecimientoPage() {
           <TabVerificacion rol={rol} userEmail={userEmail} showToast={showToast} />
         )}
         {tab === 'transferencias' && (
-          <TabRequerimientos filtroEstados={['pendiente', 'conf_stock', 'preparacion']} rol={rol} showToast={showToast} />
+          <TabRequerimientos filtroEstados={['pendiente', 'conf_stock', 'preparacion']} rol={rol} showToast={showToast} userEmail={userEmail} />
         )}
         {tab === 'transito' && (
-          <TabRequerimientos filtroEstados={['en_transito']} rol={rol} showToast={showToast} />
+          <TabRequerimientos filtroEstados={['en_transito']} rol={rol} showToast={showToast} userEmail={userEmail} />
         )}
         {tab === 'historial' && (
-          <TabRequerimientos filtroEstados={['entregado', 'rechazado']} rol={rol} showToast={showToast} />
+          <TabRequerimientos filtroEstados={['entregado', 'rechazado']} rol={rol} showToast={showToast} userEmail={userEmail} />
         )}
         {tab === 'importar' && (
           <TabImportar rol={rol} showToast={showToast} />
@@ -744,6 +744,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
                 onToggle={() => setExpandedBranches(prev => {
                   const s = new Set(prev); s.has(suc) ? s.delete(suc) : s.add(suc); return s
                 })}
+                showToast={showToast}
+                userEmail={userEmail}
               />
             ))}
         </div>
@@ -753,8 +755,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 }
 
 // ─── Grupo por sucursal ────────────────────────────────────────────────────────
-function SucursalGroup({ sucursal, rows, expanded, onToggle }: {
+function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail }: {
   sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string
 }) {
   const sinStock = rows.filter(r => r.cobertura === 'sin_stock').length
   const parcial  = rows.filter(r => r.cobertura === 'parcial').length
@@ -789,7 +792,7 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle }: {
               const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
               return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
             })
-            .map(row => <ProductoRow key={row.id_producto} row={row} />)
+            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} />)
           }
         </div>
       )}
@@ -798,66 +801,168 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle }: {
 }
 
 // ─── Fila de producto (vista agregada) ────────────────────────────────────────
-function ProductoRow({ row }: { row: SugerenciaRow }) {
+function ProductoRow({ row, showToast, userEmail }: {
+  row: SugerenciaRow
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void
+  userEmail: string
+}) {
+  const [formTransfer, setFormTransfer] = useState<null | { abierto: true }>(null)
+  const [tfCantidad, setTfCantidad] = useState(row.deficit)
+  const [tfOrigen, setTfOrigen] = useState(row.sucursal_mejor)
+  const [tfFecha, setTfFecha] = useState('')
+  const [enviando, setEnviando] = useState(false)
+
   const cob = {
     cubierto:  { bg: '#d1fae5', color: '#065f46', label: 'Cubierto' },
     parcial:   { bg: '#fef3c7', color: '#b45309', label: 'Cobertura parcial' },
     sin_stock: { bg: '#fde8e8', color: '#E52322', label: 'Sin stock disponible' },
   }[row.cobertura]
 
+  async function crearTransferencia() {
+    setEnviando(true)
+    try {
+      const res = await fetch('/api/requerimientos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'abastecimiento',
+          sucursal_origen: tfOrigen,
+          sucursal_destino: row.sucursal,
+          estado: 'pendiente',
+          fecha_req: hoy(),
+          fecha_solicitada: tfFecha || null,
+          solicitado_por: userEmail,
+          items: [{ id_producto: row.id_producto, nombre_producto: row.nombre_producto, cantidad_solicitada: tfCantidad }],
+        }),
+      })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando transferencia') }
+      showToast('✓ Transferencia creada')
+      setFormTransfer(null)
+    } catch (e: any) {
+      showToast(`Error: ${e.message}`, 'err')
+    }
+    setEnviando(false)
+  }
+
   return (
-    <div className="flex items-center gap-4 px-4 py-3 flex-wrap"
-      style={{ background: row.cobertura === 'sin_stock' ? '#fefafa' : '#fff' }}>
+    <div>
+      <div className="flex items-center gap-4 px-4 py-3 flex-wrap"
+        style={{ background: row.cobertura === 'sin_stock' ? '#fefafa' : '#fff' }}>
 
-      {/* Nombre + badges */}
-      <div className="flex-1 min-w-48">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-sm"
-            style={{ color: row.cobertura === 'sin_stock' ? '#dc2626' : '#1a1a1a',
-                     fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
-            {row.nombre_producto}
-          </span>
-          {row.categoria && (
-            <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-              style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>
+        {/* Nombre + badges */}
+        <div className="flex-1 min-w-48">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-sm"
+              style={{ color: row.cobertura === 'sin_stock' ? '#dc2626' : '#1a1a1a',
+                       fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
+              {row.nombre_producto}
+            </span>
+            {row.categoria && (
+              <span className="text-xs px-1.5 py-0.5 rounded font-medium"
+                style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>
+            )}
+            {!row.activo && (
+              <span className="text-xs px-1.5 py-0.5 rounded font-bold"
+                style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
+            )}
+          </div>
+        </div>
+
+        {/* Cobertura badge */}
+        <span className="text-xs px-2.5 py-1 rounded-full font-semibold whitespace-nowrap"
+          style={{ background: cob.bg, color: cob.color }}>{cob.label}</span>
+
+        {/* Stats numéricos */}
+        <div className="flex items-center gap-5 text-center text-xs shrink-0">
+          <div>
+            <div className="text-xl font-bold leading-none" style={{ color: '#254A96' }}>{row.demandado}</div>
+            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Demandado</div>
+          </div>
+          <div>
+            <div className="text-xl font-bold leading-none"
+              style={{ color: row.stock_local === 0 ? '#E52322' : row.stock_local >= row.demandado ? '#10b981' : '#d97706' }}>
+              {row.stock_local}
+            </div>
+            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Stock local</div>
+          </div>
+          {row.deficit > 0 && (
+            <div>
+              <div className="text-xl font-bold leading-none" style={{ color: '#E52322' }}>{row.deficit}</div>
+              <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Déficit</div>
+            </div>
           )}
-          {!row.activo && (
-            <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-              style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
+          {row.disponible_otros > 0 && (
+            <div>
+              <div className="text-xl font-bold leading-none" style={{ color: '#f97316' }}>{row.disponible_otros}</div>
+              <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Disp. en {row.sucursal_mejor}</div>
+            </div>
           )}
         </div>
+
+        {/* Botón Transferir */}
+        {row.cobertura !== 'cubierto' && (
+          <button
+            onClick={() => {
+              if (formTransfer) {
+                setFormTransfer(null)
+              } else {
+                setTfCantidad(row.deficit)
+                setTfOrigen(row.sucursal_mejor)
+                setTfFecha('')
+                setFormTransfer({ abierto: true })
+              }
+            }}
+            className="text-xs px-2.5 py-1 rounded-lg font-semibold shrink-0"
+            style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #fed7aa' }}>
+            🔄 Transferir
+          </button>
+        )}
       </div>
 
-      {/* Cobertura badge */}
-      <span className="text-xs px-2.5 py-1 rounded-full font-semibold whitespace-nowrap"
-        style={{ background: cob.bg, color: cob.color }}>{cob.label}</span>
-
-      {/* Stats numéricos */}
-      <div className="flex items-center gap-5 text-center text-xs shrink-0">
-        <div>
-          <div className="text-xl font-bold leading-none" style={{ color: '#254A96' }}>{row.demandado}</div>
-          <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Demandado</div>
+      {/* Formulario inline de transferencia */}
+      {formTransfer && (
+        <div className="px-4 pb-4 pt-2 border-t" style={{ background: '#fffbf5', borderColor: '#fed7aa' }}>
+          <div className="flex items-end gap-3 flex-wrap">
+            <div>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Cantidad</label>
+              <input type="number" min={1} value={tfCantidad}
+                onChange={e => setTfCantidad(parseInt(e.target.value) || 1)}
+                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-24"
+                style={{ borderColor: '#fed7aa' }} />
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Sucursal origen</label>
+              <select value={tfOrigen} onChange={e => setTfOrigen(e.target.value)}
+                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                style={{ borderColor: '#fed7aa' }}>
+                <option value="">— Seleccionar —</option>
+                {SUCURSALES.filter(s => s !== row.sucursal).map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Fecha solicitada</label>
+              <input type="date" value={tfFecha} onChange={e => setTfFecha(e.target.value)}
+                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                style={{ borderColor: '#fed7aa' }} />
+            </div>
+            <button
+              onClick={crearTransferencia}
+              disabled={enviando || !tfOrigen}
+              className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+              style={{ background: '#10b981' }}>
+              {enviando ? 'Creando…' : 'Crear transferencia'}
+            </button>
+            <button
+              onClick={() => setFormTransfer(null)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium"
+              style={{ background: '#f4f4f3', color: '#666' }}>
+              Cancelar
+            </button>
+          </div>
         </div>
-        <div>
-          <div className="text-xl font-bold leading-none"
-            style={{ color: row.stock_local === 0 ? '#E52322' : row.stock_local >= row.demandado ? '#10b981' : '#d97706' }}>
-            {row.stock_local}
-          </div>
-          <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Stock local</div>
-        </div>
-        {row.deficit > 0 && (
-          <div>
-            <div className="text-xl font-bold leading-none" style={{ color: '#E52322' }}>{row.deficit}</div>
-            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Déficit</div>
-          </div>
-        )}
-        {row.disponible_otros > 0 && (
-          <div>
-            <div className="text-xl font-bold leading-none" style={{ color: '#f97316' }}>{row.disponible_otros}</div>
-            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Disp. en {row.sucursal_mejor}</div>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   )
 }
@@ -865,10 +970,11 @@ function ProductoRow({ row }: { row: SugerenciaRow }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: REQUERIMIENTOS (Transferencias / En tránsito / Historial)
 // ═══════════════════════════════════════════════════════════════════════════════
-function TabRequerimientos({ filtroEstados, rol, showToast }: {
+function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   filtroEstados: string[]
   rol: string
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
+  userEmail: string
 }) {
   const [reqs, setReqs] = useState<Requerimiento[]>([])
   const [cargando, setCargando] = useState(false)
@@ -882,6 +988,57 @@ function TabRequerimientos({ filtroEstados, rol, showToast }: {
   const [editVehiculo, setEditVehiculo] = useState('')
   const [editFechaRec, setEditFechaRec] = useState('')
   const [editTipoEntrega, setEditTipoEntrega] = useState('')
+
+  // ── Nueva transferencia manual ───────────────────────────────────────────
+  const [modalNueva, setModalNueva] = useState(false)
+  const [nfOrigen, setNfOrigen] = useState('')
+  const [nfDestino, setNfDestino] = useState('')
+  const [nfNV, setNfNV] = useState('')
+  const [nfCliente, setNfCliente] = useState('')
+  const [nfFecha, setNfFecha] = useState('')
+  const [nfNotas, setNfNotas] = useState('')
+  const [nfItems, setNfItems] = useState<{ nombre: string; cantidad: number }[]>([{ nombre: '', cantidad: 1 }])
+  const [creando, setCreando] = useState(false)
+
+  function abrirModalNueva() {
+    setNfOrigen(''); setNfDestino(''); setNfNV(''); setNfCliente('')
+    setNfFecha(''); setNfNotas(''); setNfItems([{ nombre: '', cantidad: 1 }])
+    setModalNueva(true)
+  }
+
+  async function crearNueva() {
+    if (!nfOrigen || !nfDestino) { showToast('Seleccioná origen y destino', 'err'); return }
+    if (nfOrigen === nfDestino) { showToast('Origen y destino deben ser distintos', 'err'); return }
+    const itemsValidos = nfItems.filter(i => i.nombre.trim())
+    if (itemsValidos.length === 0) { showToast('Agregá al menos un producto', 'err'); return }
+    setCreando(true)
+    try {
+      const res = await fetch('/api/requerimientos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tipo: 'abastecimiento',
+          nv: nfNV || null,
+          cliente: nfCliente || null,
+          sucursal_origen: nfOrigen,
+          sucursal_destino: nfDestino,
+          estado: 'pendiente',
+          fecha_req: hoy(),
+          fecha_solicitada: nfFecha || null,
+          solicitado_por: userEmail,
+          notas: nfNotas || null,
+          items: itemsValidos.map(i => ({ nombre_producto: i.nombre.trim(), cantidad_solicitada: i.cantidad })),
+        }),
+      })
+      if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando transferencia') }
+      showToast('✓ Transferencia creada')
+      setModalNueva(false)
+      cargarReqs()
+    } catch (e: any) {
+      showToast(`Error: ${e.message}`, 'err')
+    }
+    setCreando(false)
+  }
 
   const puedeEditar = rol === 'deposito' || rol === 'gerencia'
   const tabKey = filtroEstados.join(',')
@@ -946,6 +1103,13 @@ function TabRequerimientos({ filtroEstados, rol, showToast }: {
     <div className="px-4 md:px-6 py-4">
       {/* Filtros */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
+        {filtroEstados.includes('pendiente') && (
+          <button onClick={abrirModalNueva}
+            className="px-3 py-1.5 text-sm font-semibold text-white rounded-lg shrink-0"
+            style={{ background: '#254A96' }}>
+            + Nueva
+          </button>
+        )}
         <select value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
           className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
           <option value="">Todos los orígenes</option>
@@ -1001,6 +1165,110 @@ function TabRequerimientos({ filtroEstados, rol, showToast }: {
           onCambiarEstado={(est: string) => cambiarEstado(detalle, est)}
           onClose={() => setDetalle(null)}
         />
+      )}
+
+      {/* ── Modal nueva transferencia manual ──────────────────────────────── */}
+      {modalNueva && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.4)' }}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
+            style={{ fontFamily: 'Barlow, sans-serif' }}>
+            {/* Header */}
+            <div className="p-5 border-b flex items-center justify-between" style={{ borderColor: '#e8edf8' }}>
+              <h2 className="font-semibold text-sm" style={{ color: '#254A96' }}>Nueva transferencia manual</h2>
+              <button onClick={() => setModalNueva(false)} className="text-lg" style={{ color: '#B9BBB7' }}>×</button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* Origen / Destino */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Sucursal origen</label>
+                  <select value={nfOrigen} onChange={e => setNfOrigen(e.target.value)}
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                    <option value="">— Seleccionar —</option>
+                    {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Sucursal destino</label>
+                  <select value={nfDestino} onChange={e => setNfDestino(e.target.value)}
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                    <option value="">— Seleccionar —</option>
+                    {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* NV / Cliente */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>NV (opcional)</label>
+                  <input value={nfNV} onChange={e => setNfNV(e.target.value)} placeholder="ej: 1234"
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Cliente (opcional)</label>
+                  <input value={nfCliente} onChange={e => setNfCliente(e.target.value)} placeholder="Nombre cliente"
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                </div>
+              </div>
+
+              {/* Fecha solicitada */}
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha solicitada</label>
+                <input type="date" value={nfFecha} onChange={e => setNfFecha(e.target.value)}
+                  className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+
+              {/* Notas */}
+              <div>
+                <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Notas (opcional)</label>
+                <textarea value={nfNotas} onChange={e => setNfNotas(e.target.value)} rows={2}
+                  className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none resize-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+
+              {/* Items */}
+              <div>
+                <label className="text-xs font-semibold block mb-2" style={{ color: '#254A96' }}>Productos</label>
+                <div className="space-y-2">
+                  {nfItems.map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <input value={item.nombre} onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: e.target.value } : it))}
+                        placeholder="Nombre del producto"
+                        className="flex-1 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                      <input type="number" min={1} value={item.cantidad}
+                        onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, cantidad: parseInt(e.target.value) || 1 } : it))}
+                        className="w-20 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none text-center" style={{ borderColor: '#e8edf8' }} />
+                      {nfItems.length > 1 && (
+                        <button onClick={() => setNfItems(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-sm px-2 py-1 rounded" style={{ color: '#B9BBB7' }}>×</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setNfItems(prev => [...prev, { nombre: '', cantidad: 1 }])}
+                  className="mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg"
+                  style={{ background: '#e8edf8', color: '#254A96' }}>+ Agregar producto</button>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-5 border-t flex gap-2" style={{ borderColor: '#e8edf8' }}>
+              <button onClick={crearNueva} disabled={creando}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: '#10b981' }}>
+                {creando ? 'Creando…' : 'Crear transferencia'}
+              </button>
+              <button onClick={() => setModalNueva(false)}
+                className="px-4 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

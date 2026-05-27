@@ -415,7 +415,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   async function cargarSolicitudes() {
     setLoading(true)
     try {
-      let q = supabase.from('solicitudes_importadas').select('*').order('id')
+      let q = supabase.from('solicitudes_importadas').select('*').order('id').limit(5000)
       if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
       if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
       if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
@@ -425,13 +425,13 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 
       const solIds = sols.map((s: any) => s.id)
       const { data: itemsRaw } = await supabase
-        .from('solicitudes_importadas_items').select('*').in('id_solicitud', solIds)
+        .from('solicitudes_importadas_items').select('*').in('id_solicitud', solIds).limit(20000)
 
       const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
       const stockMap: StockMap = {}
       if (prodIds.length > 0) {
         const { data: stockRaw } = await supabase
-          .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds)
+          .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds).limit(20000)
         for (const s of stockRaw ?? []) {
           const key = String(s.id_producto)
           if (!stockMap[key]) stockMap[key] = {}

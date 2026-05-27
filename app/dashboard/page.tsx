@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import NotificacionBell from '../components/NotificacionBell'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 
@@ -393,33 +394,47 @@ export default function Dashboard() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#B9BBB7' }}>Módulos</p>
             <div className="space-y-2">
-              {cards.map(card => (
-                <button key={card.href} onClick={() => card.disponible && router.push(card.href)}
-                  disabled={!card.disponible}
-                  className="w-full bg-white rounded-xl p-4 flex items-center gap-4 shadow-sm text-left transition-all disabled:opacity-50"
-                  style={{ borderLeft: `4px solid ${card.disponible ? '#254A96' : '#B9BBB7'}` }}
-                  onMouseEnter={e => { if (card.disponible) (e.currentTarget as HTMLElement).style.transform = 'translateX(2px)' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = 'translateX(0)' }}
-                >
-                  <span className="text-2xl">{card.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm" style={{ color: '#254A96' }}>{card.titulo}</span>
-                      {!card.disponible && (
-                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100" style={{ color: '#B9BBB7' }}>Próximamente</span>
-                      )}
-                      {card.href === '/programacion' && pedidosGrandes > 0 && (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                          style={{ background: '#fde68a', color: '#92400e' }}>
-                          ⚠️ {pedidosGrandes} pedido{pedidosGrandes !== 1 ? 's' : ''} grande{pedidosGrandes !== 1 ? 's' : ''}
-                        </span>
-                      )}
+              {cards.map(card => {
+                const cardInner = (
+                  <>
+                    <span className="text-2xl">{card.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm" style={{ color: '#254A96' }}>{card.titulo}</span>
+                        {!card.disponible && (
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100" style={{ color: '#B9BBB7' }}>Próximamente</span>
+                        )}
+                        {card.href === '/programacion' && pedidosGrandes > 0 && (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+                            style={{ background: '#fde68a', color: '#92400e' }}>
+                            ⚠️ {pedidosGrandes} pedido{pedidosGrandes !== 1 ? 's' : ''} grande{pedidosGrandes !== 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>{card.descripcion}</p>
                     </div>
-                    <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>{card.descripcion}</p>
-                  </div>
-                  {card.disponible && <span className="text-lg" style={{ color: '#B9BBB7' }}>›</span>}
-                </button>
-              ))}
+                    {card.disponible && <span className="text-lg" style={{ color: '#B9BBB7' }}>›</span>}
+                  </>
+                )
+                const sharedStyle = { borderLeft: `4px solid ${card.disponible ? '#254A96' : '#B9BBB7'}` }
+                const sharedClass = "w-full bg-white rounded-xl p-4 flex items-center gap-4 shadow-sm text-left transition-all"
+                const hoverHandlers = {
+                  onMouseEnter: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.transform = 'translateX(2px)' },
+                  onMouseLeave: (e: React.MouseEvent<HTMLElement>) => { (e.currentTarget as HTMLElement).style.transform = 'translateX(0)' },
+                }
+                return card.disponible
+                  ? (
+                    <Link key={card.href} href={card.href}
+                      className={sharedClass} style={sharedStyle} {...hoverHandlers}>
+                      {cardInner}
+                    </Link>
+                  ) : (
+                    <div key={card.href}
+                      className={sharedClass + ' opacity-50 cursor-default'} style={sharedStyle}>
+                      {cardInner}
+                    </div>
+                  )
+              })}
             </div>
           </div>
  

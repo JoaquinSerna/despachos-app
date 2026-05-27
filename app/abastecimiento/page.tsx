@@ -156,13 +156,22 @@ function buildSugerencias(
   stock: StockMap,
   catalogo: Record<number, CatalogoEntry>,
 ): SugerenciaRow[] {
-  const demand: Record<string, Record<number, SugerenciaRow>> = {}
+  // Clave única por producto: id_producto si es válido, sino "name:<nombre>"
+  // Esto evita que todos los ítems sin ID colapsen en una sola fila por sucursal
+  function prodKey(item: SdItem): string {
+    return (item.id_producto && item.id_producto > 0 && !isNaN(item.id_producto))
+      ? String(item.id_producto)
+      : `name:${item.nombre_producto.trim().toLowerCase()}`
+  }
+
+  const demand: Record<string, Record<string, SugerenciaRow>> = {}
   for (const sol of solicitudes) {
     for (const item of sol.items) {
-      if (item.nombre_producto === 'Transporte por km') continue
+      if (!item.nombre_producto || item.nombre_producto === 'Transporte por km') continue
       if (!demand[sol.sucursal]) demand[sol.sucursal] = {}
-      if (!demand[sol.sucursal][item.id_producto]) {
-        demand[sol.sucursal][item.id_producto] = {
+      const key = prodKey(item)
+      if (!demand[sol.sucursal][key]) {
+        demand[sol.sucursal][key] = {
           id_producto: item.id_producto, nombre_producto: item.nombre_producto,
           categoria: item.categoria, sucursal: sol.sucursal,
           demandado: 0, stock_local: 0, deficit: 0, disponible_otros: 0,
@@ -170,9 +179,9 @@ function buildSugerencias(
           activo: catalogo[item.id_producto]?.activo !== false, sol_ids: [],
         }
       }
-      demand[sol.sucursal][item.id_producto].demandado += item.cantidad_solicitada
-      if (!demand[sol.sucursal][item.id_producto].sol_ids.includes(sol.id))
-        demand[sol.sucursal][item.id_producto].sol_ids.push(sol.id)
+      demand[sol.sucursal][key].demandado += item.cantidad_solicitada
+      if (!demand[sol.sucursal][key].sol_ids.includes(sol.id))
+        demand[sol.sucursal][key].sol_ids.push(sol.id)
     }
   }
   const rows: SugerenciaRow[] = []
@@ -389,11 +398,15 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 }) {
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
-  const [filtroSucursal, setFiltroSucursal] = useState('')
-  const [filtroCategoria, setFiltroCategoria] = useState('')
-  const [filtroCobertura, setFiltroCobertura] = useState('')
-  const [filtroEstadoSol, setFiltroEstadoSol] = useState('')
+  const [filtrosSucursal, setFiltrosSucursal] = useState<string[]>([])
+  const [filtrosCategorias, setFiltrosCategorias] = useState<string[]>([])
+  const [filtrosCoberturas, setFiltrosCoberturas] = useState<string[]>([])
+  const [filtrosEstado, setFiltrosEstado] = useState<string[]>([])
   const [filtroActivo, setFiltroActivo] = useState('')
+
+  function togFiltro(arr: string[], val: string) {
+    return arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]
+  }
   const [solicitudes, setSolicitudes] = useState<SdSolicitud[]>([])
   const [stock, setStock] = useState<StockMap>({})
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
@@ -401,18 +414,10 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
-  const [fechasDisp, setFechasDisp] = useState<string[]>([])
   const [stockFecha, setStockFecha] = useState<string | null>(null)
   const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(SUCURSALES))
 
   useEffect(() => {
-    supabase.from('solicitudes_importadas')
-      .select('fecha_despacho').order('fecha_despacho', { ascending: false }).limit(60)
-      .then(({ data }) => {
-        const unique = [...new Set((data ?? []).map((r: any) => r.fecha_despacho).filter(Boolean))] as string[]
-        setFechasDisp(unique)
-        if (unique.length > 0) setFechaDesde(unique[0])
-      })
     supabase.from('stock_sucursal')
       .select('actualizado_en').order('actualizado_en', { ascending: false }).limit(1)
       .then(({ data }) => {
@@ -423,24 +428,50 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   async function cargarSolicitudes() {
     setLoading(true)
     try {
-      let q = supabase.from('solicitudes_importadas').select('*').order('id')
-      if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
-      if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
-      if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
-      const { data: sols } = await q
+      // PostgREST caps at max-rows (default 1000) even if .limit() says more.
+      // Paginate in chunks of 1000 until all rows are fetched.
+      const PAGE = 1000
+      let allSols: any[] = []
+      let from = 0
+      while (true) {
+        let q = supabase.from('solicitudes_importadas').select('*').order('id').range(from, from + PAGE - 1)
+        if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
+        if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
+        const { data: page } = await q
+        if (!page || page.length === 0) break
+        allSols = allSols.concat(page)
+        if (page.length < PAGE) break   // last page
+        from += PAGE
+      }
+      const sols = allSols
 
-      if (!sols?.length) { setSolicitudes([]); setLoading(false); return }
+      if (!sols.length) { setSolicitudes([]); setLoading(false); return }
 
       const solIds = sols.map((s: any) => s.id)
-      const { data: itemsRaw } = await supabase
-        .from('solicitudes_importadas_items').select('*').in('id_solicitud', solIds)
+      // Batch the IN query to avoid URL length limits (Supabase/PostgREST
+      // sends IDs as a comma-separated URL param; 2000+ IDs can exceed limits)
+      let allItemsRaw: any[] = []
+      const IN_BATCH = 500
+      for (let i = 0; i < solIds.length; i += IN_BATCH) {
+        const { data: batchData } = await supabase
+          .from('solicitudes_importadas_items')
+          .select('*')
+          .in('id_solicitud', solIds.slice(i, i + IN_BATCH))
+          .limit(10000)
+        if (batchData) allItemsRaw = allItemsRaw.concat(batchData)
+      }
+      const itemsRaw = allItemsRaw
 
       const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
+      // Batch stock query: 150 IDs × 5 sucursales = 750 rows per batch (under PostgREST 1000-row cap)
       const stockMap: StockMap = {}
-      if (prodIds.length > 0) {
-        const { data: stockRaw } = await supabase
-          .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds)
-        for (const s of stockRaw ?? []) {
+      const STOCK_BATCH = 150
+      for (let i = 0; i < prodIds.length; i += STOCK_BATCH) {
+        const { data: stockBatch } = await supabase
+          .from('stock_sucursal')
+          .select('id_producto, sucursal, cantidad')
+          .in('id_producto', prodIds.slice(i, i + STOCK_BATCH))
+        for (const s of stockBatch ?? []) {
           const key = String(s.id_producto)
           if (!stockMap[key]) stockMap[key] = {}
           stockMap[key][s.sucursal] = Number(s.cantidad)
@@ -448,14 +479,18 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       }
       setStock(stockMap)
 
+      // Batch catalogo query same way (URL length + row cap)
       if (prodIds.length > 0) {
-        const res = await fetch(`/api/productos-catalogo?ids=${prodIds.join(',')}`)
-        if (res.ok) {
-          const catRaw: CatalogoEntry[] = await res.json()
-          const catMap: Record<number, CatalogoEntry> = {}
-          for (const c of catRaw) catMap[c.id] = c
-          setCatalogo(catMap)
+        const CAT_BATCH = 300
+        const catMap: Record<number, CatalogoEntry> = {}
+        for (let i = 0; i < prodIds.length; i += CAT_BATCH) {
+          const res = await fetch(`/api/productos-catalogo?ids=${prodIds.slice(i, i + CAT_BATCH).join(',')}`)
+          if (res.ok) {
+            const catRaw: CatalogoEntry[] = await res.json()
+            for (const c of catRaw) catMap[c.id] = c
+          }
         }
+        setCatalogo(catMap)
       }
 
       const fechas = [...new Set(sols.map((s: any) => s.fecha_despacho).filter(Boolean))]
@@ -576,18 +611,25 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   }
 
   // ── Datos derivados ────────────────────────────────────────────────────────
-  const todasSugerencias = buildSugerencias(solicitudes, stock, catalogo)
+  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
+
+  // Aplicar filtros de sucursal y estado ANTES de buildSugerencias
+  // para que demanda y sol_ids reflejen solo el subconjunto seleccionado
+  const solicitudesParaSugerencias = solicitudes
+    .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
+    .filter(s => filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
+
+  // ── Debug info (para diagnosticar el pipeline) ─────────────────────────
+  const dbgSolsConItems = solicitudesParaSugerencias.filter(s => s.items.length > 0).length
+  const dbgTotalItems   = solicitudesParaSugerencias.reduce((sum, s) => sum + s.items.length, 0)
+
+  const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
-  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))]
 
   const sugerenciasFiltradas = todasSugerencias
-    .filter(r => !filtroCategoria || r.categoria === filtroCategoria)
-    .filter(r => !filtroCobertura || r.cobertura === filtroCobertura)
+    .filter(r => filtrosCategorias.length === 0 || filtrosCategorias.includes(r.categoria))
+    .filter(r => filtrosCoberturas.length === 0 || filtrosCoberturas.includes(r.cobertura))
     .filter(r => !filtroActivo || Object.keys(catalogo).length === 0 || String(r.activo) === filtroActivo)
-    .filter(r => {
-      if (!filtroEstadoSol) return true
-      return r.sol_ids.some(solId => solicitudes.find(s => s.id === solId)?.estado === filtroEstadoSol)
-    })
 
   const sinStock    = sugerenciasFiltradas.filter(r => r.cobertura === 'sin_stock').length
   const parcial     = sugerenciasFiltradas.filter(r => r.cobertura === 'parcial').length
@@ -611,73 +653,23 @@ function TabVerificacion({ rol, userEmail, showToast }: {
     <div className="px-4 md:px-6 py-4">
 
       {/* ── Barra de filtros ─────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4" style={{ borderColor: '#f0f0f0' }}>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-3 gap-y-3 mb-3">
-          {/* Fecha Desde */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Desde</label>
-            <select value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Sin límite —</option>
-              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
-            </select>
-          </div>
-          {/* Fecha Hasta */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Hasta</label>
-            <select value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Sin límite —</option>
-              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
-            </select>
-          </div>
-          {/* Sucursal */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Sucursal</label>
-            <select value={filtroSucursal} onChange={e => setFiltroSucursal(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">Todas</option>
-              {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          {/* Categoría */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Categoría</label>
-            <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Todas —</option>
-              {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          {/* Cobertura — filtro clave */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Cobertura</label>
-            <select value={filtroCobertura} onChange={e => setFiltroCobertura(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:outline-none"
-              style={{ borderColor: filtroCobertura === 'sin_stock' ? '#fca5a5' : filtroCobertura === 'parcial' ? '#fde68a' : filtroCobertura === 'cubierto' ? '#6ee7b7' : '#e8edf8',
-                       color:       filtroCobertura === 'sin_stock' ? '#dc2626' : filtroCobertura === 'parcial' ? '#d97706'  : filtroCobertura === 'cubierto' ? '#065f46'  : '#1a1a1a' }}>
-              <option value="">Todas</option>
-              <option value="cubierto">Cubierto</option>
-              <option value="parcial">Cobertura parcial</option>
-              <option value="sin_stock">Sin stock disponible</option>
-            </select>
-          </div>
-          {/* Estado de Entrega */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado de Entrega</label>
-            <select value={filtroEstadoSol} onChange={e => setFiltroEstadoSol(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">Todos</option>
-              {estadosDisp.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-          </div>
-        </div>
+      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4 space-y-3" style={{ borderColor: '#f0f0f0' }}>
 
-        {/* Fila 2: Estado Producto + botones */}
+        {/* Fila 1: Fechas + botones */}
         <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Desde</label>
+            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Hasta</label>
+            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+          </div>
           {Object.keys(catalogo).length > 0 && (
             <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado Producto</label>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Producto</label>
               <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
                 className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
                 <option value="">Todos</option>
@@ -687,18 +679,125 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             </div>
           )}
           <button onClick={cargarSolicitudes} disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: '#254A96' }}>
-            🔄 Actualizar
+            {loading ? '…' : '🔄 Actualizar'}
           </button>
           {solicitudes.length > 0 && (
-            <button onClick={confirmar} disabled={confirmando}
-              className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
-              style={{ background: '#10b981' }}>
-              {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
-            </button>
+            <>
+              <span className="text-xs" style={{ color: '#B9BBB7' }}>{solicitudes.length} SDs cargadas</span>
+              <button onClick={confirmar} disabled={confirmando}
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
+                style={{ background: '#10b981' }}>
+                {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
+              </button>
+            </>
           )}
         </div>
+
+        {solicitudes.length > 0 && (<>
+          {/* Fila 2: Sucursal chips */}
+          <div>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>SUCURSAL</label>
+            <div className="flex flex-wrap gap-1.5">
+              {SUCURSALES.map(s => (
+                <button key={s} onClick={() => setFiltrosSucursal(prev => togFiltro(prev, s))}
+                  className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                  style={{
+                    background: filtrosSucursal.includes(s) ? '#254A96' : '#f0f4ff',
+                    color: filtrosSucursal.includes(s) ? '#fff' : '#254A96',
+                    border: `1px solid ${filtrosSucursal.includes(s) ? '#254A96' : '#d0daf5'}`,
+                  }}>
+                  {s}
+                </button>
+              ))}
+              {filtrosSucursal.length > 0 && (
+                <button onClick={() => setFiltrosSucursal([])} className="text-xs px-2 py-1 rounded-full"
+                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+              )}
+            </div>
+          </div>
+
+          {/* Fila 3: Cobertura chips */}
+          <div>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>COBERTURA</label>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { v: 'sin_stock', label: 'Sin stock',  activeBg: '#E52322', activeFg: '#fff', idleBg: '#fde8e8', idleFg: '#E52322' },
+                { v: 'parcial',   label: 'Parcial',    activeBg: '#d97706', activeFg: '#fff', idleBg: '#fef3c7', idleFg: '#b45309' },
+                { v: 'cubierto',  label: 'Cubierto',   activeBg: '#10b981', activeFg: '#fff', idleBg: '#d1fae5', idleFg: '#065f46' },
+              ].map(opt => {
+                const on = filtrosCoberturas.includes(opt.v)
+                return (
+                  <button key={opt.v} onClick={() => setFiltrosCoberturas(prev => togFiltro(prev, opt.v))}
+                    className="text-xs px-2.5 py-1 rounded-full font-semibold transition-colors"
+                    style={{ background: on ? opt.activeBg : opt.idleBg, color: on ? opt.activeFg : opt.idleFg }}>
+                    {opt.label}
+                  </button>
+                )
+              })}
+              {filtrosCoberturas.length > 0 && (
+                <button onClick={() => setFiltrosCoberturas([])} className="text-xs px-2 py-1 rounded-full"
+                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+              )}
+            </div>
+          </div>
+
+          {/* Fila 4: Estado de Entrega chips */}
+          {estadosDisp.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>ESTADO DE ENTREGA</label>
+              <div className="flex flex-wrap gap-1.5">
+                {estadosDisp.map(e => {
+                  const on = filtrosEstado.includes(e)
+                  const cnt = solicitudes.filter(s => s.estado === e).length
+                  return (
+                    <button key={e} onClick={() => setFiltrosEstado(prev => togFiltro(prev, e))}
+                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                      style={{
+                        background: on ? '#254A96' : '#f4f4f3',
+                        color: on ? '#fff' : '#444',
+                        border: `1px solid ${on ? '#254A96' : '#e0e0e0'}`,
+                      }}>
+                      {e} <span style={{ opacity: 0.7 }}>({cnt})</span>
+                    </button>
+                  )
+                })}
+                {filtrosEstado.length > 0 && (
+                  <button onClick={() => setFiltrosEstado([])} className="text-xs px-2 py-1 rounded-full"
+                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Fila 5: Categoría */}
+          {categorias.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>CATEGORÍA</label>
+              <div className="flex flex-wrap gap-1.5">
+                {categorias.map(c => {
+                  const on = filtrosCategorias.includes(c)
+                  return (
+                    <button key={c} onClick={() => setFiltrosCategorias(prev => togFiltro(prev, c))}
+                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                      style={{
+                        background: on ? '#7c3aed' : '#f3f0ff',
+                        color: on ? '#fff' : '#7c3aed',
+                        border: `1px solid ${on ? '#7c3aed' : '#ddd6fe'}`,
+                      }}>
+                      {c}
+                    </button>
+                  )
+                })}
+                {filtrosCategorias.length > 0 && (
+                  <button onClick={() => setFiltrosCategorias([])} className="text-xs px-2 py-1 rounded-full"
+                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+                )}
+              </div>
+            </div>
+          )}
+        </>)}
       </div>
 
       {/* Stock fecha */}
@@ -708,14 +807,27 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         </p>
       )}
 
+      {/* ── Debug pipeline info ──────────────────────────────────────────── */}
+      {solicitudes.length > 0 && (
+        <details className="mb-3 text-xs rounded-lg px-3 py-2 cursor-pointer"
+          style={{ background: '#f9f9f9', border: '1px solid #e8e8e8', color: '#888' }}>
+          <summary className="font-medium select-none" style={{ color: '#aaa' }}>🔍 Info de pipeline (debug)</summary>
+          <div className="mt-2 space-y-0.5 font-mono">
+            <p>SDs cargadas total: <strong>{solicitudes.length}</strong> · estados: {estadosDisp.map(e => `${e}(${solicitudes.filter(s=>s.estado===e).length})`).join(', ')}</p>
+            <p>SDs en filtro actual: <strong>{solicitudesParaSugerencias.length}</strong> · con items: <strong>{dbgSolsConItems}</strong> · items totales: <strong>{dbgTotalItems}</strong></p>
+            <p>buildSugerencias → <strong>{todasSugerencias.length}</strong> filas · filtradas final: <strong>{sugerenciasFiltradas.length}</strong></p>
+          </div>
+        </details>
+      )}
+
       {/* ── Stats ────────────────────────────────────────────────────────── */}
       {solicitudes.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           {STAT_CARDS.map(stat => (
             <button key={stat.label}
-              onClick={() => stat.key && setFiltroCobertura(prev => prev === stat.key ? '' : stat.key)}
+              onClick={() => stat.key && setFiltrosCoberturas(prev => togFiltro(prev, stat.key))}
               className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
-              style={{ borderColor: filtroCobertura === stat.key ? stat.color : '#f0f0f0', borderWidth: filtroCobertura === stat.key ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
+              style={{ borderColor: filtrosCoberturas.includes(stat.key) ? stat.color : '#f0f0f0', borderWidth: filtrosCoberturas.includes(stat.key) ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
               <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
               <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
             </button>
@@ -747,6 +859,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
                 })}
                 showToast={showToast}
                 userEmail={userEmail}
+                solicitudes={solicitudes}
               />
             ))}
         </div>
@@ -756,9 +869,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 }
 
 // ─── Grupo por sucursal ────────────────────────────────────────────────────────
-function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail }: {
+function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail, solicitudes }: {
   sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
-  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string; solicitudes: SdSolicitud[]
 }) {
   const sinStock = rows.filter(r => r.cobertura === 'sin_stock').length
   const parcial  = rows.filter(r => r.cobertura === 'parcial').length
@@ -793,7 +906,7 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
               const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
               return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
             })
-            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} />)
+            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} />)
           }
         </div>
       )}
@@ -802,10 +915,11 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
 }
 
 // ─── Fila de producto (vista agregada) ────────────────────────────────────────
-function ProductoRow({ row, showToast, userEmail }: {
+function ProductoRow({ row, showToast, userEmail, solicitudes }: {
   row: SugerenciaRow
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   userEmail: string
+  solicitudes: SdSolicitud[]
 }) {
   const [formTransfer, setFormTransfer] = useState<null | { abierto: true }>(null)
   const [tfCantidad, setTfCantidad] = useState(row.deficit)
@@ -858,6 +972,12 @@ function ProductoRow({ row, showToast, userEmail }: {
                        fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
               {row.nombre_producto}
             </span>
+            {row.id_producto > 0 && (
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded"
+                style={{ background: '#f4f4f3', color: '#888', border: '1px solid #e8e8e8' }}>
+                #{row.id_producto}
+              </span>
+            )}
             {row.categoria && (
               <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                 style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>
@@ -867,6 +987,21 @@ function ProductoRow({ row, showToast, userEmail }: {
                 style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
             )}
           </div>
+          {/* NV + SD IDs */}
+          {row.sol_ids.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {row.sol_ids.map(solId => {
+                const sol = solicitudes.find(s => s.id === solId)
+                if (!sol) return null
+                return (
+                  <span key={solId} className="text-xs font-mono px-1.5 py-0.5 rounded"
+                    style={{ background: '#f0f4ff', color: '#4b6cb7', border: '1px solid #d0daf5' }}>
+                    NV&nbsp;{sol.id_venta} · SD&nbsp;{sol.id}
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Cobertura badge */}
@@ -1060,6 +1195,8 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   }
 
   const puedeEditar = rol === 'deposito' || rol === 'gerencia'
+  // Cantidad aprobada solo editable en estado pendiente — después se bloquea
+  const puedeEditarCantidad = puedeEditar && detalle?.estado === 'pendiente'
   const tabKey = filtroEstados.join(',')
 
   useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
@@ -1169,6 +1306,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
           rol={rol}
           guardando={guardando}
           puedeEditar={puedeEditar}
+          puedeEditarCantidad={puedeEditarCantidad}
           editItems={editItems}
           editNotas={editNotas}
           editNViaje={editNViaje}
@@ -1252,7 +1390,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-semibold" style={{ color: '#254A96' }}>Productos</label>
-                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Ingresá el código → el nombre se completa solo</span>
+                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Código ID del producto (del ERP) → nombre se completa solo</span>
                 </div>
                 <div className="space-y-2">
                   {nfItems.map((item, idx) => (
@@ -1391,7 +1529,7 @@ const TIPO_ENTREGA_LABEL: Record<string, string> = {
   parcial: 'Parcial', completa: 'Completa', no_llego: 'No llegó', cancelado: 'Cancelado', devuelto: 'Devuelto',
 }
 
-function ModalDetalleReq({ req, rol, guardando, puedeEditar, editItems, editNotas, editNViaje, editVehiculo, editFechaRec, editTipoEntrega,
+function ModalDetalleReq({ req, rol, guardando, puedeEditar, puedeEditarCantidad, editItems, editNotas, editNViaje, editVehiculo, editFechaRec, editTipoEntrega,
   setEditItems, setEditNotas, setEditNViaje, setEditVehiculo, setEditFechaRec, setEditTipoEntrega, onCambiarEstado, onClose }: any) {
   const siguientes = estadosSiguientes(req.estado, rol)
   return (
@@ -1442,7 +1580,7 @@ function ModalDetalleReq({ req, rol, guardando, puedeEditar, editItems, editNota
                     </p>
                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                       <span className="text-xs" style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
-                      {puedeEditar ? (
+                      {puedeEditarCantidad ? (
                         <label className="text-xs flex items-center gap-1.5" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
                           Aprobado:
                           <input type="number" min={0}
@@ -1532,6 +1670,7 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
   const [importandoStock, setImportandoStock] = useState(false)
   const [importandoSols, setImportandoSols] = useState(false)
   const [importandoCatalogo, setImportandoCatalogo] = useState(false)
+  const [limpiandoSols, setLimpiandoSols] = useState(false)
   const [ultimoStock, setUltimoStock] = useState<string | null>(null)
   const [ultimoCatalogo, setUltimoCatalogo] = useState<{ importado_en: string | null; total: number; inactivos: number } | null>(null)
   const [resultSols, setResultSols] = useState<any>(null)
@@ -1571,9 +1710,20 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
     const data = await res.json()
     setImportandoSols(false)
     if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
-    showToast(`${data.total} solicitudes procesadas`)
+    showToast(`${data.total} solicitudes importadas (datos anteriores reemplazados)`)
     setResultSols(data)
     if (fileSolsRef.current) fileSolsRef.current.value = ''
+  }
+
+  async function limpiarSolicitudes() {
+    if (!confirm('¿Borrar todos los datos de solicitudes importadas? Esta acción no se puede deshacer.')) return
+    setLimpiandoSols(true)
+    const res = await fetch('/api/solicitudes-import', { method: 'DELETE' })
+    const data = await res.json()
+    setLimpiandoSols(false)
+    if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
+    showToast('Datos de solicitudes borrados')
+    setResultSols(null)
   }
 
   async function importarCatalogo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1640,21 +1790,29 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 
       {/* Solicitudes de despacho */}
       <div className="bg-white rounded-xl p-5 border" style={{ borderColor: '#f0f0f0' }}>
-        <div className="flex items-start justify-between mb-3">
+        <div className="flex items-start justify-between gap-2 mb-3">
           <div>
             <h3 className="font-semibold text-sm" style={{ color: '#254A96' }}>📋 Solicitudes de despacho</h3>
             <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>Para verificar y cruzar con stock</p>
           </div>
-          <button onClick={() => fileSolsRef.current?.click()} disabled={importandoSols}
-            className="px-4 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
-            style={{ background: '#254A96' }}>
-            {importandoSols ? 'Procesando…' : 'Importar Excel'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={limpiarSolicitudes} disabled={limpiandoSols || importandoSols}
+              className="px-3 py-2 text-sm font-medium rounded-lg disabled:opacity-40"
+              style={{ background: '#fde8e8', color: '#E52322' }}>
+              {limpiandoSols ? 'Borrando…' : '🗑 Limpiar'}
+            </button>
+            <button onClick={() => fileSolsRef.current?.click()} disabled={importandoSols || limpiandoSols}
+              className="px-4 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
+              style={{ background: '#254A96' }}>
+              {importandoSols ? 'Procesando…' : 'Importar Excel'}
+            </button>
+          </div>
           <input ref={fileSolsRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={importarSolicitudes} />
         </div>
         <p className="text-xs" style={{ color: '#B9BBB7' }}>
           Exportá el Excel de solicitudes del ERP (hojas "Solicitudes de Despacho" e "items_solicitudes").
-          Después de importar, usá la pestaña "Verificación SD" para revisar.
+          Cada importación <strong>reemplaza</strong> todos los datos anteriores.
+          Usá "🗑 Limpiar" para borrar sin importar.
         </p>
         {resultSols && (
           <div className="mt-4 rounded-lg p-3 flex gap-4 text-sm flex-wrap" style={{ background: '#f4f4f3' }}>

@@ -139,15 +139,17 @@ export async function POST(req: NextRequest) {
     const cargados = solicitudes.filter(s => nvsEnApp.has(String(s.id_venta)))
     const noCargados = solicitudes.filter(s => !nvsEnApp.has(String(s.id_venta)))
 
-    // Si no es solo análisis, guardar en tabla solicitudes_importadas
+    // Si no es solo análisis, reemplazar TODA la tabla (borrar + insertar)
     if (!soloAnalizar) {
-      // Upsert por id
-      const toUpsert = solicitudes.map(s => ({
-        ...s,
-        importado_en: new Date().toISOString(),
-      }))
-      for (let i = 0; i < toUpsert.length; i += 500) {
-        await admin.from('solicitudes_importadas').upsert(toUpsert.slice(i, i + 500), { onConflict: 'id' })
+      // Borrar items primero (FK), luego solicitudes
+      await admin.from('solicitudes_importadas_items').delete().gte('id_solicitud', 0)
+      await admin.from('solicitudes_importadas').delete().gte('id', 0)
+
+      const now = new Date().toISOString()
+      const toInsert = solicitudes.map(s => ({ ...s, importado_en: now }))
+      for (let i = 0; i < toInsert.length; i += 500) {
+        const { error } = await admin.from('solicitudes_importadas').insert(toInsert.slice(i, i + 500))
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       }
     }
 
@@ -157,7 +159,7 @@ export async function POST(req: NextRequest) {
       const wsItems = wb.Sheets['items_solicitudes']
       const itemRows: any[] = XLSX.utils.sheet_to_json(wsItems)
       itemsCount = itemRows.length
-      const toUpsert = itemRows.map(r => ({
+      const toInsert = itemRows.map(r => ({
         id_solicitud: Number(r['id_solicitud']),
         id_venta: Number(r['id_venta']),
         id_producto: Number(r['id_producto']),
@@ -169,8 +171,9 @@ export async function POST(req: NextRequest) {
         cantidad_entregada: Number(r['cantidad_entregada'] ?? 0),
         hojas_de_ruta: String(r['hojas_de_ruta'] ?? ''),
       }))
-      for (let i = 0; i < toUpsert.length; i += 500) {
-        await admin.from('solicitudes_importadas_items').upsert(toUpsert.slice(i, i + 500))
+      for (let i = 0; i < toInsert.length; i += 500) {
+        const { error } = await admin.from('solicitudes_importadas_items').insert(toInsert.slice(i, i + 500))
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
       }
     }
 
@@ -221,4 +224,17 @@ export async function GET(req: NextRequest) {
   }))
 
   return NextResponse.json(result)
+}
+
+// DELETE /api/solicitudes-import — borrar todos los datos importados
+export async function DELETE() {
+  const admin = getAdmin()
+  try {
+    await admin.from('solicitudes_importadas_items').delete().gte('id_solicitud', 0)
+    const { error } = await admin.from('solicitudes_importadas').delete().gte('id', 0)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ success: true })
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
 }

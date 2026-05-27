@@ -28,6 +28,16 @@ const VUELTAS_MAX_DEFAULT: Record<string, number> = {
   'LP139': 3, 'Cañuelas': 3, 'Pinamar': 3,
 }
 
+/** Velocidad promedio de traslado para estimación de fallback (cuando Valhalla no responde).
+ *  Pinamar tiene rutas de ruta nacional con poco tráfico; el resto trabaja en ciudad/periferia. */
+const VEL_FALLBACK_KMH: Record<string, number> = {
+  'Pinamar': 40,
+}
+const VEL_FALLBACK_DEFAULT = 25
+function getVelFallback(sucursal: string): number {
+  return VEL_FALLBACK_KMH[sucursal] ?? VEL_FALLBACK_DEFAULT
+}
+
 /** Calcula vueltas_max efectivas considerando km por vuelta y límite diario */
 function calcVueltasMaxEfectivas(sucursal: string, vueltasRealizadas: number, distanciaKmTotal: number, kmMaxDia: number): number {
   const defaultMax = VUELTAS_MAX_DEFAULT[sucursal] ?? 3
@@ -134,7 +144,10 @@ function calcularTiempoDescargaMin(pedidos: PedidoDetalle[], esTrailer: boolean)
       palletMin += pos * 3
     }
   }
-  return Math.round(hierrosMin + palletMin)
+  // 5 min por parada única (mismo cliente + misma dirección = misma parada)
+  const paradasUnicas = new Set(pedidos.map(p => `${p.cliente}||${p.direccion}`)).size
+  const paradasMin = paradasUnicas * 5
+  return Math.round(hierrosMin + palletMin + paradasMin)
 }
 
 interface PedidoDetalle {
@@ -450,7 +463,8 @@ export default function MetricasPage() {
             hora_entregado: p.hora_entregado ?? null,
           }))
           const descMin = calcularTiempoDescargaMin(detEx, esTrailerEx)
-          const trasMin = distKmEx > 0 ? Math.round(distKmEx * 1.3 / 40 * 60) : 0
+          const velKmhEx = getVelFallback(cam?.sucursal ?? '')
+          const trasMin = distKmEx > 0 ? Math.round(distKmEx * 1.3 / velKmhEx * 60) : 0
           const totalMin = trasMin + descMin
 
           // Tiempos reales por vuelta (desde vueltas_tiempos)
@@ -1222,9 +1236,10 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
                           const descMin = calcularTiempoDescargaMin(v.detalle, esTrailer)
                           const trasMin = v.tiempoTrasladoMin
                           // Fallback: estimación de traslado desde km en línea recta
-                          // (factor 1.3 de desvío de ruta × 40 km/h promedio)
+                          // (factor 1.3 de desvío de ruta × vel promedio según sucursal)
+                          const velKmh = getVelFallback(d.sucursal)
                           const trasEst = trasMin === null && v.distanciaKm > 0
-                            ? Math.round(v.distanciaKm * 1.3 / 40 * 60)
+                            ? Math.round(v.distanciaKm * 1.3 / velKmh * 60)
                             : null
                           const trasUsado = trasMin ?? trasEst
                           if (descMin === 0 && trasUsado === null) return null

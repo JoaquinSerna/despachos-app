@@ -389,11 +389,15 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 }) {
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
-  const [filtroSucursal, setFiltroSucursal] = useState('')
-  const [filtroCategoria, setFiltroCategoria] = useState('')
-  const [filtroCobertura, setFiltroCobertura] = useState('')
-  const [filtroEstadoSol, setFiltroEstadoSol] = useState('')
+  const [filtrosSucursal, setFiltrosSucursal] = useState<string[]>([])
+  const [filtrosCategorias, setFiltrosCategorias] = useState<string[]>([])
+  const [filtrosCoberturas, setFiltrosCoberturas] = useState<string[]>([])
+  const [filtrosEstado, setFiltrosEstado] = useState<string[]>([])
   const [filtroActivo, setFiltroActivo] = useState('')
+
+  function togFiltro(arr: string[], val: string) {
+    return arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]
+  }
   const [solicitudes, setSolicitudes] = useState<SdSolicitud[]>([])
   const [stock, setStock] = useState<StockMap>({})
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
@@ -418,7 +422,6 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       let q = supabase.from('solicitudes_importadas').select('*').order('id').limit(5000)
       if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
       if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
-      if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
       const { data: sols } = await q
 
       if (!sols?.length) { setSolicitudes([]); setLoading(false); return }
@@ -570,18 +573,18 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   // ── Datos derivados ────────────────────────────────────────────────────────
   const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
 
-  // Filtrar solicitudes por estado ANTES de buildSugerencias, para que
-  // la demanda y sol_ids reflejen solo el subconjunto seleccionado
-  const solicitudesParaSugerencias = filtroEstadoSol
-    ? solicitudes.filter(s => s.estado === filtroEstadoSol)
-    : solicitudes
+  // Aplicar filtros de sucursal y estado ANTES de buildSugerencias
+  // para que demanda y sol_ids reflejen solo el subconjunto seleccionado
+  const solicitudesParaSugerencias = solicitudes
+    .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
+    .filter(s => filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
 
   const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
 
   const sugerenciasFiltradas = todasSugerencias
-    .filter(r => !filtroCategoria || r.categoria === filtroCategoria)
-    .filter(r => !filtroCobertura || r.cobertura === filtroCobertura)
+    .filter(r => filtrosCategorias.length === 0 || filtrosCategorias.includes(r.categoria))
+    .filter(r => filtrosCoberturas.length === 0 || filtrosCoberturas.includes(r.cobertura))
     .filter(r => !filtroActivo || Object.keys(catalogo).length === 0 || String(r.activo) === filtroActivo)
 
   const sinStock    = sugerenciasFiltradas.filter(r => r.cobertura === 'sin_stock').length
@@ -606,67 +609,23 @@ function TabVerificacion({ rol, userEmail, showToast }: {
     <div className="px-4 md:px-6 py-4">
 
       {/* ── Barra de filtros ─────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4" style={{ borderColor: '#f0f0f0' }}>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-x-3 gap-y-3 mb-3">
-          {/* Fecha Desde */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Desde</label>
-            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-          </div>
-          {/* Fecha Hasta */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Hasta</label>
-            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-          </div>
-          {/* Sucursal */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Sucursal</label>
-            <select value={filtroSucursal} onChange={e => setFiltroSucursal(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">Todas</option>
-              {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </div>
-          {/* Categoría */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Categoría</label>
-            <select value={filtroCategoria} onChange={e => setFiltroCategoria(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Todas —</option>
-              {categorias.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          {/* Cobertura — filtro clave */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Cobertura</label>
-            <select value={filtroCobertura} onChange={e => setFiltroCobertura(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm font-medium focus:outline-none"
-              style={{ borderColor: filtroCobertura === 'sin_stock' ? '#fca5a5' : filtroCobertura === 'parcial' ? '#fde68a' : filtroCobertura === 'cubierto' ? '#6ee7b7' : '#e8edf8',
-                       color:       filtroCobertura === 'sin_stock' ? '#dc2626' : filtroCobertura === 'parcial' ? '#d97706'  : filtroCobertura === 'cubierto' ? '#065f46'  : '#1a1a1a' }}>
-              <option value="">Todas</option>
-              <option value="cubierto">Cubierto</option>
-              <option value="parcial">Cobertura parcial</option>
-              <option value="sin_stock">Sin stock disponible</option>
-            </select>
-          </div>
-          {/* Estado de Entrega */}
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado de Entrega</label>
-            <select value={filtroEstadoSol} onChange={e => setFiltroEstadoSol(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">Todos</option>
-              {estadosDisp.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-          </div>
-        </div>
+      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4 space-y-3" style={{ borderColor: '#f0f0f0' }}>
 
-        {/* Fila 2: Estado Producto + botones */}
+        {/* Fila 1: Fechas + botones */}
         <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Desde</label>
+            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Hasta</label>
+            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+          </div>
           {Object.keys(catalogo).length > 0 && (
             <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Estado Producto</label>
+              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Producto</label>
               <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
                 className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
                 <option value="">Todos</option>
@@ -676,18 +635,125 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             </div>
           )}
           <button onClick={cargarSolicitudes} disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: '#254A96' }}>
-            🔄 Actualizar
+            {loading ? '…' : '🔄 Actualizar'}
           </button>
           {solicitudes.length > 0 && (
-            <button onClick={confirmar} disabled={confirmando}
-              className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
-              style={{ background: '#10b981' }}>
-              {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
-            </button>
+            <>
+              <span className="text-xs" style={{ color: '#B9BBB7' }}>{solicitudes.length} SDs cargadas</span>
+              <button onClick={confirmar} disabled={confirmando}
+                className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
+                style={{ background: '#10b981' }}>
+                {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
+              </button>
+            </>
           )}
         </div>
+
+        {solicitudes.length > 0 && (<>
+          {/* Fila 2: Sucursal chips */}
+          <div>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>SUCURSAL</label>
+            <div className="flex flex-wrap gap-1.5">
+              {SUCURSALES.map(s => (
+                <button key={s} onClick={() => setFiltrosSucursal(prev => togFiltro(prev, s))}
+                  className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                  style={{
+                    background: filtrosSucursal.includes(s) ? '#254A96' : '#f0f4ff',
+                    color: filtrosSucursal.includes(s) ? '#fff' : '#254A96',
+                    border: `1px solid ${filtrosSucursal.includes(s) ? '#254A96' : '#d0daf5'}`,
+                  }}>
+                  {s}
+                </button>
+              ))}
+              {filtrosSucursal.length > 0 && (
+                <button onClick={() => setFiltrosSucursal([])} className="text-xs px-2 py-1 rounded-full"
+                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+              )}
+            </div>
+          </div>
+
+          {/* Fila 3: Cobertura chips */}
+          <div>
+            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>COBERTURA</label>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { v: 'sin_stock', label: 'Sin stock',  activeBg: '#E52322', activeFg: '#fff', idleBg: '#fde8e8', idleFg: '#E52322' },
+                { v: 'parcial',   label: 'Parcial',    activeBg: '#d97706', activeFg: '#fff', idleBg: '#fef3c7', idleFg: '#b45309' },
+                { v: 'cubierto',  label: 'Cubierto',   activeBg: '#10b981', activeFg: '#fff', idleBg: '#d1fae5', idleFg: '#065f46' },
+              ].map(opt => {
+                const on = filtrosCoberturas.includes(opt.v)
+                return (
+                  <button key={opt.v} onClick={() => setFiltrosCoberturas(prev => togFiltro(prev, opt.v))}
+                    className="text-xs px-2.5 py-1 rounded-full font-semibold transition-colors"
+                    style={{ background: on ? opt.activeBg : opt.idleBg, color: on ? opt.activeFg : opt.idleFg }}>
+                    {opt.label}
+                  </button>
+                )
+              })}
+              {filtrosCoberturas.length > 0 && (
+                <button onClick={() => setFiltrosCoberturas([])} className="text-xs px-2 py-1 rounded-full"
+                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+              )}
+            </div>
+          </div>
+
+          {/* Fila 4: Estado de Entrega chips */}
+          {estadosDisp.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>ESTADO DE ENTREGA</label>
+              <div className="flex flex-wrap gap-1.5">
+                {estadosDisp.map(e => {
+                  const on = filtrosEstado.includes(e)
+                  const cnt = solicitudes.filter(s => s.estado === e).length
+                  return (
+                    <button key={e} onClick={() => setFiltrosEstado(prev => togFiltro(prev, e))}
+                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                      style={{
+                        background: on ? '#254A96' : '#f4f4f3',
+                        color: on ? '#fff' : '#444',
+                        border: `1px solid ${on ? '#254A96' : '#e0e0e0'}`,
+                      }}>
+                      {e} <span style={{ opacity: 0.7 }}>({cnt})</span>
+                    </button>
+                  )
+                })}
+                {filtrosEstado.length > 0 && (
+                  <button onClick={() => setFiltrosEstado([])} className="text-xs px-2 py-1 rounded-full"
+                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Fila 5: Categoría */}
+          {categorias.length > 0 && (
+            <div>
+              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>CATEGORÍA</label>
+              <div className="flex flex-wrap gap-1.5">
+                {categorias.map(c => {
+                  const on = filtrosCategorias.includes(c)
+                  return (
+                    <button key={c} onClick={() => setFiltrosCategorias(prev => togFiltro(prev, c))}
+                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                      style={{
+                        background: on ? '#7c3aed' : '#f3f0ff',
+                        color: on ? '#fff' : '#7c3aed',
+                        border: `1px solid ${on ? '#7c3aed' : '#ddd6fe'}`,
+                      }}>
+                      {c}
+                    </button>
+                  )
+                })}
+                {filtrosCategorias.length > 0 && (
+                  <button onClick={() => setFiltrosCategorias([])} className="text-xs px-2 py-1 rounded-full"
+                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+                )}
+              </div>
+            </div>
+          )}
+        </>)}
       </div>
 
       {/* Stock fecha */}
@@ -702,9 +768,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           {STAT_CARDS.map(stat => (
             <button key={stat.label}
-              onClick={() => stat.key && setFiltroCobertura(prev => prev === stat.key ? '' : stat.key)}
+              onClick={() => stat.key && setFiltrosCoberturas(prev => togFiltro(prev, stat.key))}
               className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
-              style={{ borderColor: filtroCobertura === stat.key ? stat.color : '#f0f0f0', borderWidth: filtroCobertura === stat.key ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
+              style={{ borderColor: filtrosCoberturas.includes(stat.key) ? stat.color : '#f0f0f0', borderWidth: filtrosCoberturas.includes(stat.key) ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
               <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
               <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
             </button>

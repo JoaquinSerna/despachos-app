@@ -844,67 +844,90 @@ export default function MetricasPage() {
   async function cargarRango() {
     if (!rangoDesde || !rangoHasta) return
     setLoadingRango(true)
+    setDatosRango([])
 
-    let flotaQ = supabase.from('flota_dia')
-      .select('fecha, camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta, sucursal')
-      .gte('fecha', rangoDesde).lte('fecha', rangoHasta).eq('activo', true)
-    if (filtroSucursal) flotaQ = flotaQ.eq('sucursal', filtroSucursal)
+    try {
+      let flotaQ = supabase.from('flota_dia')
+        .select('fecha, camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta, sucursal')
+        .gte('fecha', rangoDesde).lte('fecha', rangoHasta).eq('activo', true)
+        .limit(5000)
+      if (filtroSucursal) flotaQ = flotaQ.eq('sucursal', filtroSucursal)
 
-    const [{ data: flotaData }, { data: pedidosData }, { data: camionesData }, { data: chofData }] = await Promise.all([
-      flotaQ,
-      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
-        .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
-        .neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
-      supabase.from('usuarios').select('id, nombre'),
-    ])
+      const [flotaRes, pedidosRes, camionesRes, chofRes] = await Promise.all([
+        flotaQ,
+        supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
+          .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
+          .neq('estado', 'cancelado').not('camion_id', 'is', null)
+          .limit(10000),
+        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+        supabase.from('usuarios').select('id, nombre'),
+      ])
 
-    const camionMap: Record<string, any> = {}
-    for (const c of camionesData ?? []) camionMap[c.codigo] = c
-    const choferMap: Record<string, string> = {}
-    for (const u of chofData ?? []) choferMap[u.id] = u.nombre
-
-    const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number }> = {}
-    for (const p of pedidosData ?? []) {
-      const k = `${p.camion_id}|${p.fecha_entrega}`
-      if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0 }
-      pedGroupMap[k].pedidos++
-      pedGroupMap[k].kg += p.peso_total_kg ?? 0
-      pedGroupMap[k].pos += p.volumen_total_m3 ?? 0
-    }
-
-    let rows: DatosRangoDia[] = (flotaData ?? []).map((f: any) => {
-      const cam = camionMap[f.camion_codigo]
-      const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0 }
-      const durMin = f.hora_inicio && f.hora_fin
-        ? Math.round((new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000)
-        : null
-      const chofer = f.chofer_id ? (choferMap[f.chofer_id] ?? 'Sin nombre') : 'Sin chofer'
-      return {
-        fecha: f.fecha,
-        diaSemana: new Date(f.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short' }),
-        camion_codigo: f.camion_codigo,
-        tipo_unidad: cam?.tipo_unidad ?? '',
-        sucursal: cam?.sucursal ?? f.sucursal ?? '',
-        chofer_nombre: chofer,
-        pedidos: pg.pedidos,
-        kgUsados: Math.round(pg.kg),
-        posUsadas: Math.round(pg.pos),
-        pctKg: cam?.tonelaje_max_kg ? pct(pg.kg, cam.tonelaje_max_kg) : 0,
-        pctPos: cam?.posiciones_total ? pct(pg.pos, cam.posiciones_total) : 0,
-        kmReal: f.km_ruta ?? null,
-        hora_inicio: f.hora_inicio ?? null,
-        hora_fin: f.hora_fin ?? null,
-        duracionMin: durMin,
+      if (flotaRes.error) {
+        console.error('flota_dia error:', flotaRes.error)
+        showToast(`Error cargando flota: ${flotaRes.error.message}`)
+        return
       }
-    })
+      if (pedidosRes.error) console.error('pedidos rango error:', pedidosRes.error)
+      if (camionesRes.error) console.error('camiones error:', camionesRes.error)
+      if (chofRes.error) console.error('choferes error:', chofRes.error)
 
-    if (filtroRangoCamion) rows = rows.filter(r => r.camion_codigo === filtroRangoCamion)
-    if (filtroRangoChofer) rows = rows.filter(r => r.chofer_nombre === filtroRangoChofer)
-    rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
+      const flotaData = flotaRes.data ?? []
+      const pedidosData = pedidosRes.data ?? []
+      const camionesData = camionesRes.data ?? []
+      const chofData = chofRes.data ?? []
 
-    setDatosRango(rows)
-    setLoadingRango(false)
+      const camionMap: Record<string, any> = {}
+      for (const c of camionesData) camionMap[c.codigo] = c
+      const choferMap: Record<string, string> = {}
+      for (const u of chofData) choferMap[u.id] = u.nombre
+
+      const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number }> = {}
+      for (const p of pedidosData) {
+        const k = `${p.camion_id}|${p.fecha_entrega}`
+        if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0 }
+        pedGroupMap[k].pedidos++
+        pedGroupMap[k].kg += p.peso_total_kg ?? 0
+        pedGroupMap[k].pos += p.volumen_total_m3 ?? 0
+      }
+
+      let rows: DatosRangoDia[] = flotaData.map((f: any) => {
+        const cam = camionMap[f.camion_codigo]
+        const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0 }
+        const durMin = f.hora_inicio && f.hora_fin
+          ? Math.round((new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000)
+          : null
+        const chofer = f.chofer_id ? (choferMap[f.chofer_id] ?? 'Sin nombre') : 'Sin chofer'
+        return {
+          fecha: f.fecha,
+          diaSemana: new Date(f.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short' }),
+          camion_codigo: f.camion_codigo,
+          tipo_unidad: cam?.tipo_unidad ?? '',
+          sucursal: cam?.sucursal ?? f.sucursal ?? '',
+          chofer_nombre: chofer,
+          pedidos: pg.pedidos,
+          kgUsados: Math.round(pg.kg),
+          posUsadas: Math.round(pg.pos),
+          pctKg: cam?.tonelaje_max_kg ? pct(pg.kg, cam.tonelaje_max_kg) : 0,
+          pctPos: cam?.posiciones_total ? pct(pg.pos, cam.posiciones_total) : 0,
+          kmReal: f.km_ruta ?? null,
+          hora_inicio: f.hora_inicio ?? null,
+          hora_fin: f.hora_fin ?? null,
+          duracionMin: durMin,
+        }
+      })
+
+      if (filtroRangoCamion) rows = rows.filter(r => r.camion_codigo === filtroRangoCamion)
+      if (filtroRangoChofer) rows = rows.filter(r => r.chofer_nombre === filtroRangoChofer)
+      rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
+
+      setDatosRango(rows)
+    } catch (e: any) {
+      console.error('cargarRango exception:', e)
+      showToast(`Error al cargar período: ${e.message ?? 'error desconocido'}`)
+    } finally {
+      setLoadingRango(false)
+    }
   }
 
   async function exportarRango() {

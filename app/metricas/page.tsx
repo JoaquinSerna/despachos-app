@@ -125,15 +125,18 @@ function formatMinutos(min: number): string {
 }
 
 const TIPOS_CARGA_HIERRO = new Set(['hierro_suelto', 'chapa', 'pretensado'])
+const TIPOS_CARGA_GRANEL = new Set(['granel'])
 
 function calcularTiempoDescargaMin(pedidos: PedidoDetalle[], esTrailer: boolean): number {
   if (pedidos.length === 0) return 0
   // Hierros (barras, chapas, pretensado): descarga única 20 min para todos los hierros de la vuelta
   const tieneHierros = pedidos.some(p => p.esHierros)
   const hierrosMin = tieneHierros ? 20 : 0
+  // Granel (volcador/bolsonería): 5 min por pedido granel (descarga rápida, sin contar posiciones)
+  const granelMin = pedidos.filter(p => p.esGranel).length * 5
   // Pallets/bolsones: 3 min/pos por pedido, con reglas de barrio cerrado
   let palletMin = 0
-  for (const p of pedidos.filter(q => !q.esHierros)) {
+  for (const p of pedidos.filter(q => !q.esHierros && !q.esGranel)) {
     const pos = p.volumen_total_m3 ?? 0
     if (pos <= 0) continue
     if (p.barrio_cerrado) {
@@ -147,7 +150,7 @@ function calcularTiempoDescargaMin(pedidos: PedidoDetalle[], esTrailer: boolean)
   // 5 min por parada única (mismo cliente + misma dirección = misma parada)
   const paradasUnicas = new Set(pedidos.map(p => `${p.cliente}||${p.direccion}`)).size
   const paradasMin = paradasUnicas * 5
-  return Math.round(hierrosMin + palletMin + paradasMin)
+  return Math.round(hierrosMin + granelMin + palletMin + paradasMin)
 }
 
 interface PedidoDetalle {
@@ -167,6 +170,7 @@ interface PedidoDetalle {
   longitud: number | null
   barrio_cerrado: boolean | null
   esHierros: boolean
+  esGranel: boolean
   hora_entregado: string | null
 }
 
@@ -313,8 +317,11 @@ export default function MetricasPage() {
       const matTipoMapEx: Record<string, string> = {}
       for (const m of matsExport ?? []) matTipoMapEx[m.nombre] = m.tipo_carga
       const pedidoEsHierrosEx: Record<string, boolean> = {}
+      const pedidoEsGranelEx: Record<string, boolean> = {}
       for (const item of itemsExport ?? []) {
-        if (TIPOS_CARGA_HIERRO.has(matTipoMapEx[item.nombre] ?? '')) pedidoEsHierrosEx[item.pedido_id] = true
+        const tipo = matTipoMapEx[item.nombre] ?? ''
+        if (TIPOS_CARGA_HIERRO.has(tipo)) pedidoEsHierrosEx[item.pedido_id] = true
+        if (TIPOS_CARGA_GRANEL.has(tipo)) pedidoEsGranelEx[item.pedido_id] = true
       }
 
       // Mapa flota: "camion|fecha" → { hora_inicio, hora_fin, km_ruta }
@@ -459,7 +466,9 @@ export default function MetricasPage() {
             notas: p.notas ?? null, tipo: p.tipo ?? null,
             peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
             orden_entrega: p.orden_entrega ?? null, latitud: p.latitud ?? null, longitud: p.longitud ?? null,
-            barrio_cerrado: p.barrio_cerrado ?? null, esHierros: pedidoEsHierrosEx[p.id] ?? false,
+            barrio_cerrado: p.barrio_cerrado ?? null,
+            esHierros: pedidoEsHierrosEx[p.id] ?? false,
+            esGranel: pedidoEsGranelEx[p.id] ?? false,
             hora_entregado: p.hora_entregado ?? null,
           }))
           const descMin = calcularTiempoDescargaMin(detEx, esTrailerEx)
@@ -558,12 +567,13 @@ export default function MetricasPage() {
     const matTipoMap: Record<string, string> = {}
     for (const m of materialesData ?? []) matTipoMap[m.nombre] = m.tipo_carga
 
-    // Determinar si cada pedido es de hierros (hierro_suelto, chapa, pretensado)
+    // Determinar si cada pedido es de hierros (hierro_suelto, chapa, pretensado) o granel
     const pedidoEsHierros: Record<string, boolean> = {}
+    const pedidoEsGranel: Record<string, boolean> = {}
     for (const item of itemsData ?? []) {
-      if (TIPOS_CARGA_HIERRO.has(matTipoMap[item.nombre] ?? '')) {
-        pedidoEsHierros[item.pedido_id] = true
-      }
+      const tipo = matTipoMap[item.nombre] ?? ''
+      if (TIPOS_CARGA_HIERRO.has(tipo)) pedidoEsHierros[item.pedido_id] = true
+      if (TIPOS_CARGA_GRANEL.has(tipo)) pedidoEsGranel[item.pedido_id] = true
     }
 
     const choferMap: Record<string, string> = {}
@@ -624,6 +634,7 @@ export default function MetricasPage() {
               latitud: p.latitud ?? null, longitud: p.longitud ?? null,
               barrio_cerrado: p.barrio_cerrado ?? null,
               esHierros: pedidoEsHierros[p.id] ?? false,
+              esGranel: pedidoEsGranel[p.id] ?? false,
               hora_entregado: p.hora_entregado ?? null,
             })),
         }
@@ -994,6 +1005,8 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
 }) {
   const router = useRouter()
   const [filtroFlota, setFiltroFlota] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
+  const [filtroCamion, setFiltroCamion] = useState('')
+  const [filtroChofer, setFiltroChofer] = useState('')
   const [modalVuelta, setModalVuelta] = useState<{ camion: string; vuelta: DatosVuelta } | null>(null)
 
   if (datos.length === 0) return (
@@ -1004,9 +1017,13 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
     </div>
   )
 
-  const datosFiltrados = filtroFlota === 'con_pedidos' ? datos.filter(d => d.pedidos > 0)
-    : filtroFlota === 'sin_pedidos' ? datos.filter(d => d.pedidos === 0)
-    : datos
+  const camionesUnicos = [...new Set(datos.map(d => d.camion_codigo))].sort()
+  const choferesUnicos = [...new Set(datos.map(d => d.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort()
+
+  const datosFiltrados = datos
+    .filter(d => filtroFlota === 'con_pedidos' ? d.pedidos > 0 : filtroFlota === 'sin_pedidos' ? d.pedidos === 0 : true)
+    .filter(d => !filtroCamion || d.camion_codigo === filtroCamion)
+    .filter(d => !filtroChofer || d.chofer_nombre === filtroChofer)
 
   const totalPedidos = datosFiltrados.reduce((a, d) => a + d.pedidos, 0)
   const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctKg, 0) / datosFiltrados.length) : 0
@@ -1019,8 +1036,8 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
   return (
     <div className="space-y-4">
 
-      {/* Filtro con/sin pedidos */}
-      <div className="flex items-center gap-2">
+      {/* Filtros */}
+      <div className="flex flex-wrap items-center gap-2">
         {([
           { key: 'todos', label: `Todos (${datos.length})` },
           { key: 'con_pedidos', label: `Con pedidos (${conPedidos})` },
@@ -1035,6 +1052,24 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
             {f.label}
           </button>
         ))}
+        <div className="w-px h-4 bg-gray-200 mx-1" />
+        <select value={filtroCamion} onChange={e => setFiltroCamion(e.target.value)}
+          className="border rounded-lg px-2.5 py-1.5 text-xs focus:outline-none"
+          style={{ borderColor: '#e8edf8', color: filtroCamion ? '#254A96' : '#999' }}>
+          <option value="">🚛 Todos los camiones</option>
+          {camionesUnicos.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={filtroChofer} onChange={e => setFiltroChofer(e.target.value)}
+          className="border rounded-lg px-2.5 py-1.5 text-xs focus:outline-none"
+          style={{ borderColor: '#e8edf8', color: filtroChofer ? '#254A96' : '#999' }}>
+          <option value="">👤 Todos los choferes</option>
+          {choferesUnicos.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {(filtroCamion || filtroChofer) && (
+          <button onClick={() => { setFiltroCamion(''); setFiltroChofer('') }}
+            className="text-xs px-2 py-1.5 rounded-lg"
+            style={{ color: '#B9BBB7', background: '#f4f4f3' }}>✕ Limpiar</button>
+        )}
       </div>
 
       {/* Resumen */}
@@ -1421,12 +1456,14 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
                           {p.hora_entregado ? formatHora(p.hora_entregado) : '—'}
                         </td>
                         <td className="px-3 py-2.5">
-                          <button
-                            onClick={() => router.push(`/pedidos?nv=${encodeURIComponent(p.nv)}`)}
-                            className="text-xs px-2 py-1 rounded-lg font-semibold whitespace-nowrap"
+                          <a
+                            href={`/pedidos?nv=${encodeURIComponent(p.nv)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs px-2 py-1 rounded-lg font-semibold whitespace-nowrap inline-block"
                             style={{ background: '#e8edf8', color: '#254A96' }}
-                            title="Ver detalle completo"
-                          >→</button>
+                            title="Ver detalle completo (nueva pestaña)"
+                          >→</a>
                         </td>
                       </tr>
                     )

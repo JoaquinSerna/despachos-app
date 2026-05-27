@@ -117,6 +117,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data ?? [])
   }
 
+  const codigo = searchParams.get('codigo')
+  if (codigo) {
+    // Buscar por codigo_sku (case-insensitive)
+    const { data } = await admin
+      .from('productos_catalogo')
+      .select('id, codigo_sku, nombre, activo, descripcion, categoria, subcategoria')
+      .ilike('codigo_sku', codigo.trim())
+      .limit(1)
+    return NextResponse.json(data?.[0] ?? null)
+  }
+
   // Stats
   const { count: total } = await admin
     .from('productos_catalogo')

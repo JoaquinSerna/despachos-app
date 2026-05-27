@@ -998,13 +998,31 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   const [nfCliente, setNfCliente] = useState('')
   const [nfFecha, setNfFecha] = useState('')
   const [nfNotas, setNfNotas] = useState('')
-  const [nfItems, setNfItems] = useState<{ nombre: string; cantidad: number }[]>([{ nombre: '', cantidad: 1 }])
+  const [nfItems, setNfItems] = useState<{ codigo: string; nombre: string; cantidad: number; id_producto: number | null; buscando: boolean; notFound: boolean }[]>([{ codigo: '', nombre: '', cantidad: 1, id_producto: null, buscando: false, notFound: false }])
   const [creando, setCreando] = useState(false)
 
   function abrirModalNueva() {
     setNfOrigen(''); setNfDestino(''); setNfNV(''); setNfCliente('')
-    setNfFecha(''); setNfNotas(''); setNfItems([{ nombre: '', cantidad: 1 }])
+    setNfFecha(''); setNfNotas(''); setNfItems([{ codigo: '', nombre: '', cantidad: 1, id_producto: null, buscando: false, notFound: false }])
     setModalNueva(true)
+  }
+
+  async function buscarPorCodigo(idx: number, codigo: string) {
+    if (!codigo.trim()) return
+    setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, buscando: true, notFound: false } : it))
+    try {
+      const res = await fetch(`/api/productos-catalogo?codigo=${encodeURIComponent(codigo.trim())}`)
+      const data = res.ok ? await res.json() : null
+      if (data?.id) {
+        setNfItems(prev => prev.map((it, i) => i === idx
+          ? { ...it, buscando: false, nombre: data.nombre, id_producto: data.id, notFound: false }
+          : it))
+      } else {
+        setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, buscando: false, notFound: true } : it))
+      }
+    } catch {
+      setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, buscando: false } : it))
+    }
   }
 
   async function crearNueva() {
@@ -1028,7 +1046,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
           fecha_solicitada: nfFecha || null,
           solicitado_por: userEmail,
           notas: nfNotas || null,
-          items: itemsValidos.map(i => ({ nombre_producto: i.nombre.trim(), cantidad_solicitada: i.cantidad })),
+          items: itemsValidos.map(i => ({ id_producto: i.id_producto ?? null, nombre_producto: i.nombre.trim(), cantidad_solicitada: i.cantidad })),
         }),
       })
       if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando transferencia') }
@@ -1232,24 +1250,62 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
 
               {/* Items */}
               <div>
-                <label className="text-xs font-semibold block mb-2" style={{ color: '#254A96' }}>Productos</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold" style={{ color: '#254A96' }}>Productos</label>
+                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Ingresá el código → el nombre se completa solo</span>
+                </div>
                 <div className="space-y-2">
                   {nfItems.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <input value={item.nombre} onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: e.target.value } : it))}
-                        placeholder="Nombre del producto"
-                        className="flex-1 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-                      <input type="number" min={1} value={item.cantidad}
-                        onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, cantidad: parseInt(e.target.value) || 1 } : it))}
-                        className="w-20 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none text-center" style={{ borderColor: '#e8edf8' }} />
-                      {nfItems.length > 1 && (
-                        <button onClick={() => setNfItems(prev => prev.filter((_, i) => i !== idx))}
-                          className="text-sm px-2 py-1 rounded" style={{ color: '#B9BBB7' }}>×</button>
+                    <div key={idx} className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        {/* Código SKU */}
+                        <input
+                          value={item.codigo}
+                          onChange={e => setNfItems(prev => prev.map((it, i) => i === idx
+                            ? { ...it, codigo: e.target.value, id_producto: null, notFound: false }
+                            : it))}
+                          onBlur={e => { if (e.target.value.trim()) buscarPorCodigo(idx, e.target.value.trim()) }}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (item.codigo.trim()) buscarPorCodigo(idx, item.codigo.trim()) } }}
+                          placeholder="Código"
+                          className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none font-mono"
+                          style={{
+                            width: 110,
+                            borderColor: item.notFound ? '#fca5a5' : item.id_producto ? '#86efac' : '#e8edf8',
+                          }}
+                        />
+                        {/* Nombre (auto-filled o manual) */}
+                        <input
+                          value={item.nombre}
+                          onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: e.target.value } : it))}
+                          placeholder={item.buscando ? 'Buscando…' : 'Nombre del producto'}
+                          disabled={item.buscando}
+                          className="flex-1 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                          style={{
+                            borderColor: '#e8edf8',
+                            background: item.id_producto ? '#f0fdf4' : 'white',
+                            color: item.id_producto ? '#166534' : undefined,
+                          }}
+                        />
+                        {/* Cantidad */}
+                        <input type="number" min={1} value={item.cantidad}
+                          onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, cantidad: parseInt(e.target.value) || 1 } : it))}
+                          className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none text-center"
+                          style={{ width: 72, borderColor: '#e8edf8' }} />
+                        {nfItems.length > 1 && (
+                          <button onClick={() => setNfItems(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-sm px-2 py-1.5 rounded shrink-0" style={{ color: '#B9BBB7' }}>×</button>
+                        )}
+                      </div>
+                      {item.notFound && (
+                        <p className="text-xs pl-1" style={{ color: '#dc2626' }}>⚠ Código no encontrado en catálogo — podés escribir el nombre manualmente</p>
+                      )}
+                      {item.id_producto && (
+                        <p className="text-xs pl-1" style={{ color: '#16a34a' }}>✓ ID {item.id_producto}</p>
                       )}
                     </div>
                   ))}
                 </div>
-                <button onClick={() => setNfItems(prev => [...prev, { nombre: '', cantidad: 1 }])}
+                <button onClick={() => setNfItems(prev => [...prev, { codigo: '', nombre: '', cantidad: 1, id_producto: null, buscando: false, notFound: false }])}
                   className="mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg"
                   style={{ background: '#e8edf8', color: '#254A96' }}>+ Agregar producto</button>
               </div>

@@ -1252,7 +1252,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-semibold" style={{ color: '#254A96' }}>Productos</label>
-                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Ingresá el código → el nombre se completa solo</span>
+                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Código ID del producto (del ERP) → nombre se completa solo</span>
                 </div>
                 <div className="space-y-2">
                   {nfItems.map((item, idx) => (

@@ -119,11 +119,24 @@ export async function GET(req: NextRequest) {
 
   const codigo = searchParams.get('codigo')
   if (codigo) {
-    // Buscar por codigo_sku (case-insensitive)
+    const trimmed = codigo.trim()
+    const numId = parseInt(trimmed, 10)
+
+    // Si es numérico → buscar por id (código de ERP)
+    if (!isNaN(numId) && String(numId) === trimmed) {
+      const { data } = await admin
+        .from('productos_catalogo')
+        .select('id, codigo_sku, nombre, activo, descripcion, categoria, subcategoria')
+        .eq('id', numId)
+        .limit(1)
+      return NextResponse.json(data?.[0] ?? null)
+    }
+
+    // Si es texto → buscar por codigo_sku (case-insensitive)
     const { data } = await admin
       .from('productos_catalogo')
       .select('id, codigo_sku, nombre, activo, descripcion, categoria, subcategoria')
-      .ilike('codigo_sku', codigo.trim())
+      .ilike('codigo_sku', trimmed)
       .limit(1)
     return NextResponse.json(data?.[0] ?? null)
   }

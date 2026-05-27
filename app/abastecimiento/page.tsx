@@ -568,18 +568,21 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   }
 
   // ── Datos derivados ────────────────────────────────────────────────────────
-  const todasSugerencias = buildSugerencias(solicitudes, stock, catalogo)
+  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
+
+  // Filtrar solicitudes por estado ANTES de buildSugerencias, para que
+  // la demanda y sol_ids reflejen solo el subconjunto seleccionado
+  const solicitudesParaSugerencias = filtroEstadoSol
+    ? solicitudes.filter(s => s.estado === filtroEstadoSol)
+    : solicitudes
+
+  const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
-  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))]
 
   const sugerenciasFiltradas = todasSugerencias
     .filter(r => !filtroCategoria || r.categoria === filtroCategoria)
     .filter(r => !filtroCobertura || r.cobertura === filtroCobertura)
     .filter(r => !filtroActivo || Object.keys(catalogo).length === 0 || String(r.activo) === filtroActivo)
-    .filter(r => {
-      if (!filtroEstadoSol) return true
-      return r.sol_ids.some(solId => solicitudes.find(s => s.id === solId)?.estado === filtroEstadoSol)
-    })
 
   const sinStock    = sugerenciasFiltradas.filter(r => r.cobertura === 'sin_stock').length
   const parcial     = sugerenciasFiltradas.filter(r => r.cobertura === 'parcial').length

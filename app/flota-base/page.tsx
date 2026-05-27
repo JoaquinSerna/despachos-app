@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -169,11 +170,11 @@ export default function FlotaBasePage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-4xl mx-auto px-4 md:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg"
               style={{ color: '#254A96', background: '#e8edf8' }}>
               ← Volver
-            </button>
+            </Link>
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div>
               <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Flota base</span>

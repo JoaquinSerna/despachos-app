@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { puedeEditar, tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
 
@@ -792,11 +793,11 @@ export default function PedidosPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-[2000px] mx-auto px-3 h-14 flex items-center">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
               style={{ background: '#e8edf8', color: '#254A96' }}>
               ← Volver
-            </button>
+            </Link>
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div>
               <span className="font-bold text-sm" style={{ color: '#254A96' }}>Pedidos</span>

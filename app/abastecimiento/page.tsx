@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/app/supabase'
 import { tieneAcceso } from '@/app/lib/permisos'
 
@@ -328,9 +329,9 @@ export default function AbastecimientoPage() {
       <nav className="bg-white border-b shrink-0" style={{ borderColor: '#e8edf8' }}>
         <div className="px-4 md:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-sm font-medium px-3 py-1.5 rounded-lg"
-              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</button>
+              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</Link>
             <img src="/logo.png" alt="" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div className="hidden sm:block">
               <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Abastecimiento</span>

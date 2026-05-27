@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/app/supabase'
 
 type RolKey = 'gerencia' | 'admin_flota' | 'ruteador' | 'deposito' | 'comercial' | 'confirmador' | 'chofer'
@@ -325,9 +326,9 @@ export default function AyudaPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-sm font-medium px-3 py-1.5 rounded-lg"
-              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</button>
+              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</Link>
             <img src="/logo.png" alt="" className="h-7 w-auto rounded-lg hidden sm:block" />
             <span className="font-semibold text-sm hidden sm:block" style={{ color: '#254A96' }}>Manual de uso</span>
           </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '../supabase'
 import { logAuditoria } from '../lib/auditoria'
 
@@ -132,7 +133,7 @@ export default function BorradoMasivoPage() {
       <div className="max-w-5xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="flex items-center gap-3 mb-6">
-          <button onClick={() => router.push('/')} className="text-sm hover:underline" style={{ color: '#254A96' }}>← Volver</button>
+          <Link href="/" className="text-sm hover:underline" style={{ color: '#254A96' }}>← Volver</Link>
           <div>
             <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>🗑️ Eliminación masiva</h1>
             <p className="text-sm" style={{ color: '#B9BBB7' }}>Buscá y eliminá pedidos del sistema</p>

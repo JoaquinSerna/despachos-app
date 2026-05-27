@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
 
@@ -183,9 +184,9 @@ export default function ConfirmacionesPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-xs px-2 py-1.5 rounded-lg font-medium shrink-0"
-              style={{ background: '#e8edf8', color: '#254A96' }}>← Volver</button>
+              style={{ background: '#e8edf8', color: '#254A96' }}>← Volver</Link>
             <div className="w-px h-5 bg-gray-200 hidden sm:block" />
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div>

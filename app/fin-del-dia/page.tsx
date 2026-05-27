@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/app/supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { logAuditoria } from '@/app/lib/auditoria'
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -107,9 +108,9 @@ export default function FinDelDiaPage() {
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-3xl mx-auto px-4 md:px-6 h-14 flex items-center gap-4">
-          <button onClick={() => router.push('/dashboard')}
+          <Link href="/dashboard"
             className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg shrink-0"
-            style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</button>
+            style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</Link>
           <div className="w-px h-5 bg-gray-200" />
           <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
           <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Fin del día — Pedidos no entregados</span>
@@ -220,12 +221,12 @@ export default function FinDelDiaPage() {
                 {procesando ? 'Reprogramando…' : `Reprogramar ${seleccionados.size} pedido${seleccionados.size !== 1 ? 's' : ''} al ${fechaDestino}`}
               </button>
               {reprogramados && (
-                <button
-                  onClick={() => router.push(`/programacion?fecha=${fechaDestino}&sucursal=${sucursal}`)}
+                <Link
+                  href={`/programacion?fecha=${fechaDestino}&sucursal=${sucursal}`}
                   className="w-full py-2.5 rounded-xl text-sm font-medium"
                   style={{ background: '#d1fae5', color: '#065f46' }}>
                   📅 Ir a programación del {fechaDestino} →
-                </button>
+                </Link>
               )}
             </div>
           </>

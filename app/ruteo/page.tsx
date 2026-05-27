@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { logAuditoria } from '../lib/auditoria'
 import { tieneAcceso } from '../lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
@@ -1070,11 +1071,11 @@ export default function RuteoPage() {
         <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {datosUsuario?.rol !== 'chofer' && (
-              <button onClick={() => router.push('/dashboard')}
+              <Link href="/dashboard"
                 className="text-xs px-2 py-1.5 rounded-lg font-medium"
                 style={{ background: '#e8edf8', color: '#254A96' }}>
                 ← Volver
-              </button>
+              </Link>
             )}
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div>

@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 const CATEGORIAS = [
   'Accesorios','Adhesivos y Aditivos','Áridos','Cementos','Chapas',
@@ -472,9 +473,9 @@ export default function MaterialesPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
-              style={{ background: '#e8edf8', color: '#254A96' }}>← Volver</button>
+              style={{ background: '#e8edf8', color: '#254A96' }}>← Volver</Link>
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <span className="font-bold text-sm" style={{ color: '#254A96' }}>Materiales</span>
           </div>

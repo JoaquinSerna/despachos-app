@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase' // solo para auth check
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import * as XLSX from 'xlsx'
 import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG } from '../lib/roles'
 import { MODULOS, MODULO_LABEL, MODULO_ICON, nivelEfectivo } from '../lib/permisos'
@@ -517,11 +518,11 @@ export default function UsuariosPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="text-xs px-2 py-1.5 rounded-lg font-medium"
               style={{ background: '#e8edf8', color: '#254A96' }}>
               ← Volver
-            </button>
+            </Link>
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <div>
               <span className="font-bold text-sm" style={{ color: '#254A96' }}>Gestión de Usuarios</span>

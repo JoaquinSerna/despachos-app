@@ -1,6 +1,7 @@
 'use client'
 
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
 import { puedeEditar } from '@/app/lib/permisos'
@@ -1013,7 +1014,6 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
   return resultado
 }
 function ProgramacionInner() {
-  const router = useRouter()
   const params = useSearchParams()
   const [fecha, setFecha] = useState(params.get('fecha') ?? hoy())
   const [sucursal, setSucursal] = useState(params.get('sucursal') ?? 'LP520')
@@ -1718,8 +1718,8 @@ function ProgramacionInner() {
         <div className="px-4 md:px-6">
           <div className="h-14 flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
-              <button onClick={() => router.push('/dashboard')} className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg shrink-0"
-                style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</button>
+              <Link href="/dashboard" className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg shrink-0"
+                style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</Link>
               <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
               <div className="hidden sm:block">
                 <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Programación</span>
@@ -2032,7 +2032,7 @@ function ProgramacionInner() {
           <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
             <div className="text-5xl mb-4">🚛</div>
             <p className="font-medium">No hay camiones configurados para esta fecha</p>
-            <button onClick={() => router.push('/flota')} className="mt-3 text-sm font-medium" style={{ color: '#254A96' }}>Ir a Flota del día →</button>
+            <Link href="/flota" className="mt-3 text-sm font-medium" style={{ color: '#254A96' }}>Ir a Flota del día →</Link>
           </div>
         ) : (
           <div className="flex-1 overflow-hidden flex gap-2">

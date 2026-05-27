@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { puedeEditar } from '../lib/permisos'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 import { logAuditoria } from '../lib/auditoria'
@@ -786,9 +787,9 @@ export default function NuevoDespacho() {
           <button onClick={resetForm} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: '#254A96' }}>
             Nuevo pedido
           </button>
-          <button onClick={() => router.push('/dashboard')} className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
+          <Link href="/dashboard" className="px-6 py-2.5 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
             Ir al panel
-          </button>
+          </Link>
         </div>
       </div>
     </div>
@@ -816,9 +817,9 @@ export default function NuevoDespacho() {
             <button onClick={resetRetiro} className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white" style={{ background: '#254A96' }}>
               Nueva solicitud
             </button>
-            <button onClick={() => router.push('/dashboard')} className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
+            <Link href="/dashboard" className="flex-1 py-2.5 rounded-xl text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>
               Ir al panel
-            </button>
+            </Link>
           </div>
         </div>
       </div>
@@ -839,11 +840,11 @@ export default function NuevoDespacho() {
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-3xl mx-auto px-4 md:px-6 h-14 flex items-center gap-4">
-          <button onClick={() => router.push('/dashboard')}
+          <Link href="/dashboard"
             className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg"
             style={{ color: '#254A96', background: '#e8edf8' }}>
             ← Volver
-          </button>
+          </Link>
           <div className="w-px h-5 bg-gray-200" />
           <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
           <span className="font-semibold text-sm" style={{ color: '#254A96' }}>

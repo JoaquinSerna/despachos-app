@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { tieneAcceso } from '../lib/permisos'
 
 function hoy() { return new Date().toISOString().split('T')[0] }
@@ -827,9 +828,9 @@ export default function MetricasPage() {
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-[1400px] mx-auto px-4 md:px-6 h-14 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <button onClick={() => router.push('/dashboard')}
+            <Link href="/dashboard"
               className="flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg"
-              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</button>
+              style={{ color: '#254A96', background: '#e8edf8' }}>← Volver</Link>
             <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
             <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Métricas de flota</span>
           </div>

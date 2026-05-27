@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
-import { useRouter, usePathname } from 'next/navigation'
+import { usePathname } from 'next/navigation'
+import Link from 'next/link'
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function hace30Dias() {
@@ -35,7 +36,6 @@ interface Props {
 const ROLES_LOGISTICA = ['gerencia', 'admin_flota', 'ruteador', 'confirmador', 'deposito']
 
 export default function NotificacionBell({ mode = 'fixed' }: Props) {
-  const router = useRouter()
   const pathname = usePathname()
   const [count, setCount] = useState(0)
   const [pedidos, setPedidos] = useState<PedidoPendiente[]>([])
@@ -198,16 +198,16 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
         {count > 8 && <p className="text-xs text-center py-2" style={{ color: '#B9BBB7' }}>y {count - 8} más…</p>}
       </div>
       <div className="px-4 py-3 flex gap-2 border-t" style={{ borderColor: '#f0f0f0' }}>
-        <button onClick={() => { setOpen(false); router.push('/programacion') }}
+        <Link href="/programacion" onClick={() => setOpen(false)}
           className="flex-1 py-2 rounded-lg text-xs font-semibold text-white"
           style={{ background: '#254A96' }}>
           Ir a Programación
-        </button>
-        <button onClick={() => { setOpen(false); router.push('/pedidos') }}
+        </Link>
+        <Link href="/pedidos" onClick={() => setOpen(false)}
           className="flex-1 py-2 rounded-lg text-xs font-semibold"
           style={{ background: '#f4f4f3', color: '#555' }}>
           Ver pedidos
-        </button>
+        </Link>
       </div>
     </div>
   )
@@ -257,11 +257,11 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
         )}
       </div>
       <div className="px-4 py-3 border-t" style={{ borderColor: '#f0f0f0' }}>
-        <button onClick={() => { setOpen(false); router.push('/despachos') }}
+        <Link href="/despachos" onClick={() => setOpen(false)}
           className="w-full py-2 rounded-lg text-xs font-semibold text-white"
           style={{ background: '#f59e0b' }}>
           📋 Ir a Despachos — cargar nuevo ID
-        </button>
+        </Link>
       </div>
     </div>
   )

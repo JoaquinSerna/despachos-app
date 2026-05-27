@@ -401,18 +401,10 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
-  const [fechasDisp, setFechasDisp] = useState<string[]>([])
   const [stockFecha, setStockFecha] = useState<string | null>(null)
   const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(SUCURSALES))
 
   useEffect(() => {
-    supabase.from('solicitudes_importadas')
-      .select('fecha_despacho').order('fecha_despacho', { ascending: false }).limit(60)
-      .then(({ data }) => {
-        const unique = [...new Set((data ?? []).map((r: any) => r.fecha_despacho).filter(Boolean))] as string[]
-        setFechasDisp(unique)
-        if (unique.length > 0) setFechaDesde(unique[0])
-      })
     supabase.from('stock_sucursal')
       .select('actualizado_en').order('actualizado_en', { ascending: false }).limit(1)
       .then(({ data }) => {
@@ -616,20 +608,14 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           {/* Fecha Desde */}
           <div>
             <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Desde</label>
-            <select value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Sin límite —</option>
-              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
-            </select>
+            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
           </div>
           {/* Fecha Hasta */}
           <div>
             <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Fecha Hasta</label>
-            <select value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
-              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-              <option value="">— Sin límite —</option>
-              {fechasDisp.map(d => <option key={d} value={d}>{fmtFecha(d)}</option>)}
-            </select>
+            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+              className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
           </div>
           {/* Sucursal */}
           <div>
@@ -747,6 +733,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
                 })}
                 showToast={showToast}
                 userEmail={userEmail}
+                solicitudes={solicitudes}
               />
             ))}
         </div>
@@ -756,9 +743,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
 }
 
 // ─── Grupo por sucursal ────────────────────────────────────────────────────────
-function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail }: {
+function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail, solicitudes }: {
   sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
-  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string; solicitudes: SdSolicitud[]
 }) {
   const sinStock = rows.filter(r => r.cobertura === 'sin_stock').length
   const parcial  = rows.filter(r => r.cobertura === 'parcial').length
@@ -793,7 +780,7 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
               const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
               return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
             })
-            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} />)
+            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} />)
           }
         </div>
       )}
@@ -802,10 +789,11 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
 }
 
 // ─── Fila de producto (vista agregada) ────────────────────────────────────────
-function ProductoRow({ row, showToast, userEmail }: {
+function ProductoRow({ row, showToast, userEmail, solicitudes }: {
   row: SugerenciaRow
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   userEmail: string
+  solicitudes: SdSolicitud[]
 }) {
   const [formTransfer, setFormTransfer] = useState<null | { abierto: true }>(null)
   const [tfCantidad, setTfCantidad] = useState(row.deficit)
@@ -867,6 +855,21 @@ function ProductoRow({ row, showToast, userEmail }: {
                 style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
             )}
           </div>
+          {/* NV + SD IDs */}
+          {row.sol_ids.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {row.sol_ids.map(solId => {
+                const sol = solicitudes.find(s => s.id === solId)
+                if (!sol) return null
+                return (
+                  <span key={solId} className="text-xs font-mono px-1.5 py-0.5 rounded"
+                    style={{ background: '#f0f4ff', color: '#4b6cb7', border: '1px solid #d0daf5' }}>
+                    NV&nbsp;{sol.id_venta} · SD&nbsp;{sol.id}
+                  </span>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Cobertura badge */}
@@ -1060,6 +1063,8 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   }
 
   const puedeEditar = rol === 'deposito' || rol === 'gerencia'
+  // Cantidad aprobada solo editable en estado pendiente — después se bloquea
+  const puedeEditarCantidad = puedeEditar && detalle?.estado === 'pendiente'
   const tabKey = filtroEstados.join(',')
 
   useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
@@ -1169,6 +1174,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
           rol={rol}
           guardando={guardando}
           puedeEditar={puedeEditar}
+          puedeEditarCantidad={puedeEditarCantidad}
           editItems={editItems}
           editNotas={editNotas}
           editNViaje={editNViaje}
@@ -1391,7 +1397,7 @@ const TIPO_ENTREGA_LABEL: Record<string, string> = {
   parcial: 'Parcial', completa: 'Completa', no_llego: 'No llegó', cancelado: 'Cancelado', devuelto: 'Devuelto',
 }
 
-function ModalDetalleReq({ req, rol, guardando, puedeEditar, editItems, editNotas, editNViaje, editVehiculo, editFechaRec, editTipoEntrega,
+function ModalDetalleReq({ req, rol, guardando, puedeEditar, puedeEditarCantidad, editItems, editNotas, editNViaje, editVehiculo, editFechaRec, editTipoEntrega,
   setEditItems, setEditNotas, setEditNViaje, setEditVehiculo, setEditFechaRec, setEditTipoEntrega, onCambiarEstado, onClose }: any) {
   const siguientes = estadosSiguientes(req.estado, rol)
   return (
@@ -1442,7 +1448,7 @@ function ModalDetalleReq({ req, rol, guardando, puedeEditar, editItems, editNota
                     </p>
                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                       <span className="text-xs" style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
-                      {puedeEditar ? (
+                      {puedeEditarCantidad ? (
                         <label className="text-xs flex items-center gap-1.5" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
                           Aprobado:
                           <input type="number" min={0}

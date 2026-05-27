@@ -463,11 +463,15 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       const itemsRaw = allItemsRaw
 
       const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
+      // Batch stock query: 150 IDs × 5 sucursales = 750 rows per batch (under PostgREST 1000-row cap)
       const stockMap: StockMap = {}
-      if (prodIds.length > 0) {
-        const { data: stockRaw } = await supabase
-          .from('stock_sucursal').select('id_producto, sucursal, cantidad').in('id_producto', prodIds).limit(20000)
-        for (const s of stockRaw ?? []) {
+      const STOCK_BATCH = 150
+      for (let i = 0; i < prodIds.length; i += STOCK_BATCH) {
+        const { data: stockBatch } = await supabase
+          .from('stock_sucursal')
+          .select('id_producto, sucursal, cantidad')
+          .in('id_producto', prodIds.slice(i, i + STOCK_BATCH))
+        for (const s of stockBatch ?? []) {
           const key = String(s.id_producto)
           if (!stockMap[key]) stockMap[key] = {}
           stockMap[key][s.sucursal] = Number(s.cantidad)
@@ -475,14 +479,18 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       }
       setStock(stockMap)
 
+      // Batch catalogo query same way (URL length + row cap)
       if (prodIds.length > 0) {
-        const res = await fetch(`/api/productos-catalogo?ids=${prodIds.join(',')}`)
-        if (res.ok) {
-          const catRaw: CatalogoEntry[] = await res.json()
-          const catMap: Record<number, CatalogoEntry> = {}
-          for (const c of catRaw) catMap[c.id] = c
-          setCatalogo(catMap)
+        const CAT_BATCH = 300
+        const catMap: Record<number, CatalogoEntry> = {}
+        for (let i = 0; i < prodIds.length; i += CAT_BATCH) {
+          const res = await fetch(`/api/productos-catalogo?ids=${prodIds.slice(i, i + CAT_BATCH).join(',')}`)
+          if (res.ok) {
+            const catRaw: CatalogoEntry[] = await res.json()
+            for (const c of catRaw) catMap[c.id] = c
+          }
         }
+        setCatalogo(catMap)
       }
 
       const fechas = [...new Set(sols.map((s: any) => s.fecha_despacho).filter(Boolean))]

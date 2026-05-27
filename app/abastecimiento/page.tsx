@@ -1538,6 +1538,7 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
   const [importandoStock, setImportandoStock] = useState(false)
   const [importandoSols, setImportandoSols] = useState(false)
   const [importandoCatalogo, setImportandoCatalogo] = useState(false)
+  const [limpiandoSols, setLimpiandoSols] = useState(false)
   const [ultimoStock, setUltimoStock] = useState<string | null>(null)
   const [ultimoCatalogo, setUltimoCatalogo] = useState<{ importado_en: string | null; total: number; inactivos: number } | null>(null)
   const [resultSols, setResultSols] = useState<any>(null)
@@ -1577,9 +1578,20 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
     const data = await res.json()
     setImportandoSols(false)
     if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
-    showToast(`${data.total} solicitudes procesadas`)
+    showToast(`${data.total} solicitudes importadas (datos anteriores reemplazados)`)
     setResultSols(data)
     if (fileSolsRef.current) fileSolsRef.current.value = ''
+  }
+
+  async function limpiarSolicitudes() {
+    if (!confirm('¿Borrar todos los datos de solicitudes importadas? Esta acción no se puede deshacer.')) return
+    setLimpiandoSols(true)
+    const res = await fetch('/api/solicitudes-import', { method: 'DELETE' })
+    const data = await res.json()
+    setLimpiandoSols(false)
+    if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
+    showToast('Datos de solicitudes borrados')
+    setResultSols(null)
   }
 
   async function importarCatalogo(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1646,21 +1658,29 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 
       {/* Solicitudes de despacho */}
       <div className="bg-white rounded-xl p-5 border" style={{ borderColor: '#f0f0f0' }}>
-        <div className="flex items-start justify-between mb-3">
+        <div className="flex items-start justify-between gap-2 mb-3">
           <div>
             <h3 className="font-semibold text-sm" style={{ color: '#254A96' }}>📋 Solicitudes de despacho</h3>
             <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>Para verificar y cruzar con stock</p>
           </div>
-          <button onClick={() => fileSolsRef.current?.click()} disabled={importandoSols}
-            className="px-4 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
-            style={{ background: '#254A96' }}>
-            {importandoSols ? 'Procesando…' : 'Importar Excel'}
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={limpiarSolicitudes} disabled={limpiandoSols || importandoSols}
+              className="px-3 py-2 text-sm font-medium rounded-lg disabled:opacity-40"
+              style={{ background: '#fde8e8', color: '#E52322' }}>
+              {limpiandoSols ? 'Borrando…' : '🗑 Limpiar'}
+            </button>
+            <button onClick={() => fileSolsRef.current?.click()} disabled={importandoSols || limpiandoSols}
+              className="px-4 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
+              style={{ background: '#254A96' }}>
+              {importandoSols ? 'Procesando…' : 'Importar Excel'}
+            </button>
+          </div>
           <input ref={fileSolsRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={importarSolicitudes} />
         </div>
         <p className="text-xs" style={{ color: '#B9BBB7' }}>
           Exportá el Excel de solicitudes del ERP (hojas "Solicitudes de Despacho" e "items_solicitudes").
-          Después de importar, usá la pestaña "Verificación SD" para revisar.
+          Cada importación <strong>reemplaza</strong> todos los datos anteriores.
+          Usá "🗑 Limpiar" para borrar sin importar.
         </p>
         {resultSols && (
           <div className="mt-4 rounded-lg p-3 flex gap-4 text-sm flex-wrap" style={{ background: '#f4f4f3' }}>

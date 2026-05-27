@@ -428,12 +428,24 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   async function cargarSolicitudes() {
     setLoading(true)
     try {
-      let q = supabase.from('solicitudes_importadas').select('*').order('id').limit(5000)
-      if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
-      if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
-      const { data: sols } = await q
+      // PostgREST caps at max-rows (default 1000) even if .limit() says more.
+      // Paginate in chunks of 1000 until all rows are fetched.
+      const PAGE = 1000
+      let allSols: any[] = []
+      let from = 0
+      while (true) {
+        let q = supabase.from('solicitudes_importadas').select('*').order('id').range(from, from + PAGE - 1)
+        if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
+        if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
+        const { data: page } = await q
+        if (!page || page.length === 0) break
+        allSols = allSols.concat(page)
+        if (page.length < PAGE) break   // last page
+        from += PAGE
+      }
+      const sols = allSols
 
-      if (!sols?.length) { setSolicitudes([]); setLoading(false); return }
+      if (!sols.length) { setSolicitudes([]); setLoading(false); return }
 
       const solIds = sols.map((s: any) => s.id)
       // Batch the IN query to avoid URL length limits (Supabase/PostgREST

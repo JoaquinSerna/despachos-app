@@ -952,6 +952,12 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
                        fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
               {row.nombre_producto}
             </span>
+            {row.id_producto > 0 && (
+              <span className="text-xs font-mono px-1.5 py-0.5 rounded"
+                style={{ background: '#f4f4f3', color: '#888', border: '1px solid #e8e8e8' }}>
+                #{row.id_producto}
+              </span>
+            )}
             {row.categoria && (
               <span className="text-xs px-1.5 py-0.5 rounded font-medium"
                 style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>

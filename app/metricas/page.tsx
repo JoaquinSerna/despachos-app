@@ -229,11 +229,29 @@ interface DatosCamionMes {
   avgMinKm: string
 }
 
+interface DatosRangoDia {
+  fecha: string
+  diaSemana: string
+  camion_codigo: string
+  tipo_unidad: string
+  sucursal: string
+  chofer_nombre: string
+  pedidos: number
+  kgUsados: number
+  posUsadas: number
+  pctKg: number
+  pctPos: number
+  kmReal: number | null
+  hora_inicio: string | null
+  hora_fin: string | null
+  duracionMin: number | null
+}
+
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
 export default function MetricasPage() {
   const router = useRouter()
-  const [vista, setVista] = useState<'diaria' | 'mensual'>('diaria')
+  const [vista, setVista] = useState<'diaria' | 'mensual' | 'rango'>('diaria')
   const [fecha, setFecha] = useState(hoy())
   const [mes, setMes] = useState(mesActual())
   const [filtroSucursal, setFiltroSucursal] = useState('')
@@ -248,6 +266,12 @@ export default function MetricasPage() {
   const [fechaExportHasta, setFechaExportHasta] = useState(hoy)
   const [exportSucursales, setExportSucursales] = useState<string[]>([])
   const [camionesNoActivados, setCamionesNoActivados] = useState<{ camion_codigo: string; sucursal: string }[]>([])
+  const [rangoDesde, setRangoDesde] = useState(primerDiaMes)
+  const [rangoHasta, setRangoHasta] = useState(hoy)
+  const [filtroRangoCamion, setFiltroRangoCamion] = useState('')
+  const [filtroRangoChofer, setFiltroRangoChofer] = useState('')
+  const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
+  const [loadingRango, setLoadingRango] = useState(false)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000) }
 
@@ -271,7 +295,8 @@ export default function MetricasPage() {
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
-    else cargarMensual()
+    else if (vista === 'mensual') cargarMensual()
+    else cargarRango()
   }
 
   async function exportarExcel() {
@@ -816,6 +841,105 @@ export default function MetricasPage() {
     setLoading(false)
   }
 
+  async function cargarRango() {
+    if (!rangoDesde || !rangoHasta) return
+    setLoadingRango(true)
+
+    let flotaQ = supabase.from('flota_dia')
+      .select('fecha, camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta, sucursal')
+      .gte('fecha', rangoDesde).lte('fecha', rangoHasta).eq('activo', true)
+    if (filtroSucursal) flotaQ = flotaQ.eq('sucursal', filtroSucursal)
+
+    const [{ data: flotaData }, { data: pedidosData }, { data: camionesData }, { data: chofData }] = await Promise.all([
+      flotaQ,
+      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
+        .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
+        .neq('estado', 'cancelado').not('camion_id', 'is', null),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+      supabase.from('usuarios').select('id, nombre'),
+    ])
+
+    const camionMap: Record<string, any> = {}
+    for (const c of camionesData ?? []) camionMap[c.codigo] = c
+    const choferMap: Record<string, string> = {}
+    for (const u of chofData ?? []) choferMap[u.id] = u.nombre
+
+    const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number }> = {}
+    for (const p of pedidosData ?? []) {
+      const k = `${p.camion_id}|${p.fecha_entrega}`
+      if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0 }
+      pedGroupMap[k].pedidos++
+      pedGroupMap[k].kg += p.peso_total_kg ?? 0
+      pedGroupMap[k].pos += p.volumen_total_m3 ?? 0
+    }
+
+    let rows: DatosRangoDia[] = (flotaData ?? []).map((f: any) => {
+      const cam = camionMap[f.camion_codigo]
+      const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0 }
+      const durMin = f.hora_inicio && f.hora_fin
+        ? Math.round((new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000)
+        : null
+      const chofer = f.chofer_id ? (choferMap[f.chofer_id] ?? 'Sin nombre') : 'Sin chofer'
+      return {
+        fecha: f.fecha,
+        diaSemana: new Date(f.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'short' }),
+        camion_codigo: f.camion_codigo,
+        tipo_unidad: cam?.tipo_unidad ?? '',
+        sucursal: cam?.sucursal ?? f.sucursal ?? '',
+        chofer_nombre: chofer,
+        pedidos: pg.pedidos,
+        kgUsados: Math.round(pg.kg),
+        posUsadas: Math.round(pg.pos),
+        pctKg: cam?.tonelaje_max_kg ? pct(pg.kg, cam.tonelaje_max_kg) : 0,
+        pctPos: cam?.posiciones_total ? pct(pg.pos, cam.posiciones_total) : 0,
+        kmReal: f.km_ruta ?? null,
+        hora_inicio: f.hora_inicio ?? null,
+        hora_fin: f.hora_fin ?? null,
+        duracionMin: durMin,
+      }
+    })
+
+    if (filtroRangoCamion) rows = rows.filter(r => r.camion_codigo === filtroRangoCamion)
+    if (filtroRangoChofer) rows = rows.filter(r => r.chofer_nombre === filtroRangoChofer)
+    rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
+
+    setDatosRango(rows)
+    setLoadingRango(false)
+  }
+
+  async function exportarRango() {
+    if (datosRango.length === 0) { showToast('Primero buscá datos para exportar'); return }
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+        datosRango.map(r => ({
+          'Fecha': r.fecha,
+          'Día': r.diaSemana,
+          'Camión': r.camion_codigo,
+          'Tipo': r.tipo_unidad,
+          'Sucursal': r.sucursal,
+          'Chofer': r.chofer_nombre,
+          'Pedidos': r.pedidos,
+          'Kg': r.kgUsados,
+          'Pos': r.posUsadas,
+          'Ocup.Kg%': r.pctKg,
+          'Ocup.Pos%': r.pctPos,
+          'Km reales': r.kmReal ?? '',
+          'Inicio': r.hora_inicio ? formatHora(r.hora_inicio) : '',
+          'Fin': r.hora_fin ? formatHora(r.hora_fin) : '',
+          'Duración (min)': r.duracionMin ?? '',
+          'Duración': r.duracionMin !== null ? formatMinutos(r.duracionMin) : '',
+        }))
+      ), 'Período')
+      const suf = filtroSucursal ? `-${filtroSucursal}` : ''
+      XLSX.writeFile(wb, `metricas-periodo-${rangoDesde}-${rangoHasta}${suf}.xlsx`)
+      showToast(`Excel descargado (${datosRango.length} filas)`)
+    } catch (e: any) {
+      showToast(`Error: ${e.message}`)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
 
@@ -845,6 +969,11 @@ export default function MetricasPage() {
               style={{ background: vista === 'mensual' ? '#254A96' : '#f4f4f3', color: vista === 'mensual' ? 'white' : '#666' }}>
               Mensual
             </button>
+            <button onClick={() => setVista('rango')}
+              className="px-4 py-1.5 rounded-lg text-sm font-medium"
+              style={{ background: vista === 'rango' ? '#254A96' : '#f4f4f3', color: vista === 'rango' ? 'white' : '#666' }}>
+              Período
+            </button>
           </div>
         </div>
       </nav>
@@ -863,13 +992,50 @@ export default function MetricasPage() {
                   className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: '#e8edf8' }} />
               </div>
-            ) : (
+            ) : vista === 'mensual' ? (
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Mes</label>
                 <input type="month" value={mes} onChange={e => setMes(e.target.value)}
                   className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: '#e8edf8' }} />
               </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Desde</label>
+                  <input type="date" value={rangoDesde} onChange={e => setRangoDesde(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Hasta</label>
+                  <input type="date" value={rangoHasta} onChange={e => setRangoHasta(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Camión</label>
+                  <select value={filtroRangoCamion} onChange={e => setFiltroRangoCamion(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8', color: filtroRangoCamion ? '#254A96' : '#999' }}>
+                    <option value="">Todos</option>
+                    {[...new Set(datosRango.map(r => r.camion_codigo))].sort().map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Chofer</label>
+                  <select value={filtroRangoChofer} onChange={e => setFiltroRangoChofer(e.target.value)}
+                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8', color: filtroRangoChofer ? '#254A96' : '#999' }}>
+                    <option value="">Todos</option>
+                    {[...new Set(datosRango.map(r => r.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort().map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
             <div>
               <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Sucursal</label>
@@ -955,6 +1121,8 @@ export default function MetricasPage() {
           </div>
         ) : vista === 'diaria' ? (
           <VistaDiaria datos={datosDia} fecha={fecha} camionesNoActivados={camionesNoActivados} />
+        ) : vista === 'rango' ? (
+          <VistaRango datos={datosRango} loading={loadingRango} onExport={exportarRango} />
         ) : (
           <VistaMensual datos={datosMes} mes={mes} />
         )}
@@ -1567,6 +1735,129 @@ function VistaMensual({ datos, mes }: { datos: DatosCamionMes[]; mes: string }) 
                       <span className="text-xs px-2 py-1 rounded-full font-semibold whitespace-nowrap" style={{ background: sem.bg, color: sem.color }}>
                         {sem.label}
                       </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Vista Rango ─────────────────────────────────────────────────────────────────
+
+function VistaRango({ datos, loading, onExport }: { datos: DatosRangoDia[]; loading: boolean; onExport: () => void }) {
+  if (loading) return (
+    <div className="flex justify-center py-24">
+      <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+        style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
+    </div>
+  )
+
+  if (datos.length === 0) return (
+    <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
+      <div className="text-5xl mb-4">📅</div>
+      <p className="font-medium">Aplicá filtros y hacé clic en Buscar</p>
+      <p className="text-sm mt-1">Se mostrarán los datos día a día para el rango seleccionado</p>
+    </div>
+  )
+
+  const totalPedidos = datos.reduce((a, r) => a + r.pedidos, 0)
+  const diasUnicos = new Set(datos.map(r => r.fecha)).size
+  const avgPctKg = datos.length > 0 ? Math.round(datos.reduce((a, r) => a + r.pctKg, 0) / datos.length) : 0
+  const avgPctPos = datos.length > 0 ? Math.round(datos.reduce((a, r) => a + r.pctPos, 0) / datos.length) : 0
+
+  const DIAS_FIN_SEMANA = new Set(['sáb', 'dom', 'sab'])
+
+  return (
+    <div className="space-y-4">
+      {/* Resumen */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          { label: 'Días con datos', value: diasUnicos, emoji: '📅', bg: '#e8edf8', color: '#254A96' },
+          { label: 'Total pedidos', value: totalPedidos, emoji: '📦', bg: '#f3e8ff', color: '#7c3aed' },
+          { label: 'Ocup. prom. kg', value: `${avgPctKg}%`, emoji: '⚖️', bg: colorSemaforo(avgPctKg).bg, color: colorSemaforo(avgPctKg).color },
+          { label: 'Ocup. prom. pos', value: `${avgPctPos}%`, emoji: '📐', bg: colorSemaforo(avgPctPos).bg, color: colorSemaforo(avgPctPos).color },
+        ].map(s => (
+          <div key={s.label} className="bg-white rounded-xl p-4 flex items-center gap-3 shadow-sm" style={{ border: '1px solid #f0f0f0' }}>
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center text-xl shrink-0" style={{ background: s.bg }}>{s.emoji}</div>
+            <div>
+              <p className="text-xl font-bold leading-none" style={{ color: s.color }}>{s.value}</p>
+              <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>{s.label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabla */}
+      <div className="bg-white rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid #f0f0f0' }}>
+        <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: '#f0f0f0', background: '#f9f9f9' }}>
+          <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#B9BBB7' }}>
+            {datos.length} registros
+          </p>
+          <button onClick={onExport}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold"
+            style={{ background: '#f4f4f3', color: '#254A96', border: '1px solid #e8edf8' }}>
+            ⬇️ Exportar Excel
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" style={{ minWidth: 900 }}>
+            <thead>
+              <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
+                {['Fecha', 'Día', 'Camión', 'Sucursal', 'Chofer', 'Pedidos', 'Kg', 'Pos', 'Ocup.Kg%', 'Ocup.Pos%', 'Km', 'Inicio', 'Fin', 'Duración'].map(h => (
+                  <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {datos.map((r, i) => {
+                const esFinde = DIAS_FIN_SEMANA.has(r.diaSemana.toLowerCase())
+                return (
+                  <tr key={`${r.fecha}|${r.camion_codigo}`} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
+                    <td className="px-3 py-2.5 text-xs font-medium whitespace-nowrap" style={{ color: '#1a1a1a' }}>{r.fecha}</td>
+                    <td className="px-3 py-2.5 text-xs font-semibold whitespace-nowrap"
+                      style={{ color: esFinde ? '#b45309' : '#254A96' }}>
+                      {r.diaSemana}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs font-bold whitespace-nowrap" style={{ color: '#254A96' }}>{r.camion_codigo}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>{r.sucursal}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#666' }}>{r.chofer_nombre}</td>
+                    <td className="px-3 py-2.5 text-xs font-medium" style={{ color: '#1a1a1a' }}>{r.pedidos}</td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#1a1a1a' }}>
+                      {r.kgUsados.toLocaleString('es-AR')}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#1a1a1a' }}>{r.posUsadas}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-12 h-2 rounded-full" style={{ background: '#f0f0f0' }}>
+                          <div className="h-2 rounded-full" style={{ width: `${Math.min(r.pctKg, 100)}%`, background: colorBarra(r.pctKg) }} />
+                        </div>
+                        <span className="text-xs font-semibold whitespace-nowrap" style={{ color: colorBarra(r.pctKg) }}>{r.pctKg}%</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-12 h-2 rounded-full" style={{ background: '#f0f0f0' }}>
+                          <div className="h-2 rounded-full" style={{ width: `${Math.min(r.pctPos, 100)}%`, background: colorBarra(r.pctPos) }} />
+                        </div>
+                        <span className="text-xs font-semibold whitespace-nowrap" style={{ color: colorBarra(r.pctPos) }}>{r.pctPos}%</span>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                      {r.kmReal !== null ? `${r.kmReal} km` : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                      {formatHora(r.hora_inicio)}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                      {formatHora(r.hora_fin)}
+                    </td>
+                    <td className="px-3 py-2.5 text-xs whitespace-nowrap" style={{ color: '#B9BBB7' }}>
+                      {r.duracionMin !== null ? formatMinutos(r.duracionMin) : '—'}
                     </td>
                   </tr>
                 )

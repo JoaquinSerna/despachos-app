@@ -436,8 +436,19 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       if (!sols?.length) { setSolicitudes([]); setLoading(false); return }
 
       const solIds = sols.map((s: any) => s.id)
-      const { data: itemsRaw } = await supabase
-        .from('solicitudes_importadas_items').select('*').in('id_solicitud', solIds).limit(20000)
+      // Batch the IN query to avoid URL length limits (Supabase/PostgREST
+      // sends IDs as a comma-separated URL param; 2000+ IDs can exceed limits)
+      let allItemsRaw: any[] = []
+      const IN_BATCH = 500
+      for (let i = 0; i < solIds.length; i += IN_BATCH) {
+        const { data: batchData } = await supabase
+          .from('solicitudes_importadas_items')
+          .select('*')
+          .in('id_solicitud', solIds.slice(i, i + IN_BATCH))
+          .limit(10000)
+        if (batchData) allItemsRaw = allItemsRaw.concat(batchData)
+      }
+      const itemsRaw = allItemsRaw
 
       const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
       const stockMap: StockMap = {}
@@ -587,6 +598,10 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const solicitudesParaSugerencias = solicitudes
     .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
     .filter(s => filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
+
+  // ── Debug info (para diagnosticar el pipeline) ─────────────────────────
+  const dbgSolsConItems = solicitudesParaSugerencias.filter(s => s.items.length > 0).length
+  const dbgTotalItems   = solicitudesParaSugerencias.reduce((sum, s) => sum + s.items.length, 0)
 
   const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
@@ -770,6 +785,19 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
           ⏱ Stock evaluado al: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(stockFecha)}</strong>
         </p>
+      )}
+
+      {/* ── Debug pipeline info ──────────────────────────────────────────── */}
+      {solicitudes.length > 0 && (
+        <details className="mb-3 text-xs rounded-lg px-3 py-2 cursor-pointer"
+          style={{ background: '#f9f9f9', border: '1px solid #e8e8e8', color: '#888' }}>
+          <summary className="font-medium select-none" style={{ color: '#aaa' }}>🔍 Info de pipeline (debug)</summary>
+          <div className="mt-2 space-y-0.5 font-mono">
+            <p>SDs cargadas total: <strong>{solicitudes.length}</strong> · estados: {estadosDisp.map(e => `${e}(${solicitudes.filter(s=>s.estado===e).length})`).join(', ')}</p>
+            <p>SDs en filtro actual: <strong>{solicitudesParaSugerencias.length}</strong> · con items: <strong>{dbgSolsConItems}</strong> · items totales: <strong>{dbgTotalItems}</strong></p>
+            <p>buildSugerencias → <strong>{todasSugerencias.length}</strong> filas · filtradas final: <strong>{sugerenciasFiltradas.length}</strong></p>
+          </div>
+        </details>
       )}
 
       {/* ── Stats ────────────────────────────────────────────────────────── */}

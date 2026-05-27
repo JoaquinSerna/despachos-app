@@ -156,13 +156,22 @@ function buildSugerencias(
   stock: StockMap,
   catalogo: Record<number, CatalogoEntry>,
 ): SugerenciaRow[] {
-  const demand: Record<string, Record<number, SugerenciaRow>> = {}
+  // Clave única por producto: id_producto si es válido, sino "name:<nombre>"
+  // Esto evita que todos los ítems sin ID colapsen en una sola fila por sucursal
+  function prodKey(item: SdItem): string {
+    return (item.id_producto && item.id_producto > 0 && !isNaN(item.id_producto))
+      ? String(item.id_producto)
+      : `name:${item.nombre_producto.trim().toLowerCase()}`
+  }
+
+  const demand: Record<string, Record<string, SugerenciaRow>> = {}
   for (const sol of solicitudes) {
     for (const item of sol.items) {
-      if (item.nombre_producto === 'Transporte por km') continue
+      if (!item.nombre_producto || item.nombre_producto === 'Transporte por km') continue
       if (!demand[sol.sucursal]) demand[sol.sucursal] = {}
-      if (!demand[sol.sucursal][item.id_producto]) {
-        demand[sol.sucursal][item.id_producto] = {
+      const key = prodKey(item)
+      if (!demand[sol.sucursal][key]) {
+        demand[sol.sucursal][key] = {
           id_producto: item.id_producto, nombre_producto: item.nombre_producto,
           categoria: item.categoria, sucursal: sol.sucursal,
           demandado: 0, stock_local: 0, deficit: 0, disponible_otros: 0,
@@ -170,9 +179,9 @@ function buildSugerencias(
           activo: catalogo[item.id_producto]?.activo !== false, sol_ids: [],
         }
       }
-      demand[sol.sucursal][item.id_producto].demandado += item.cantidad_solicitada
-      if (!demand[sol.sucursal][item.id_producto].sol_ids.includes(sol.id))
-        demand[sol.sucursal][item.id_producto].sol_ids.push(sol.id)
+      demand[sol.sucursal][key].demandado += item.cantidad_solicitada
+      if (!demand[sol.sucursal][key].sol_ids.includes(sol.id))
+        demand[sol.sucursal][key].sol_ids.push(sol.id)
     }
   }
   const rows: SugerenciaRow[] = []

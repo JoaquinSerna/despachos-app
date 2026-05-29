@@ -155,6 +155,13 @@ export default function RuteoPage() {
     setContactosSoporte(data.contactos ?? [])
   }
 
+  // Normaliza cualquier formato de cod_vehiculo al canónico de camiones_flota
+  // Ej: 'ca 49' | 'CA49' | 'ca-49' → 'CA-49'
+  function normalizarCodigo(cod: string): string {
+    const stripped = cod.trim().toUpperCase().replace(/[-\s]+/g, '')
+    return stripped.replace(/^([A-Z]+)(\d+)$/, '$1-$2')
+  }
+
   const cargarCamionesDisponibles = async () => {
     // Traer camiones que tienen pedidos programados para esta fecha
     const { data: pedidosData } = await supabase
@@ -164,16 +171,18 @@ export default function RuteoPage() {
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .not('camion_id', 'is', null)
 
+    // Transferencias: fecha_solicitada = fecha, o si es null → fecha_req = fecha
     const { data: requerData } = await supabase
       .from('requerimientos')
       .select('cod_vehiculo')
-      .eq('fecha_solicitada', fecha)
+      .or(`fecha_solicitada.eq.${fecha},and(fecha_solicitada.is.null,fecha_req.eq.${fecha})`)
       .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
       .not('cod_vehiculo', 'is', null)
 
     const codigosSet = new Set([
       ...(pedidosData ?? []).map((p: any) => p.camion_id),
-      ...(requerData ?? []).map((r: any) => r.cod_vehiculo),
+      // Normalizar el formato antes de buscar en camiones_flota
+      ...(requerData ?? []).map((r: any) => normalizarCodigo(r.cod_vehiculo)),
     ])
     const codigos = [...codigosSet]
 
@@ -353,11 +362,20 @@ export default function RuteoPage() {
       .order('vuelta')
       .order('orden_entrega', { ascending: true, nullsFirst: false })
 
+    // Buscar por todas las variantes de formato del código de camión
+    const camionVariants = [...new Set([
+      camionSeleccionado,
+      normalizarCodigo(camionSeleccionado),
+      camionSeleccionado.toLowerCase(),
+      camionSeleccionado.toLowerCase().replace(/-/g, ' '),
+      camionSeleccionado.replace(/-/g, ''),
+    ].filter(Boolean))]
+
     const { data: transfersRaw } = await supabase
       .from('requerimientos')
       .select('*, requerimiento_items(*)')
-      .eq('fecha_solicitada', fecha)
-      .eq('cod_vehiculo', camionSeleccionado)
+      .or(`fecha_solicitada.eq.${fecha},and(fecha_solicitada.is.null,fecha_req.eq.${fecha})`)
+      .in('cod_vehiculo', camionVariants)
       .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
       .order('vuelta')
 

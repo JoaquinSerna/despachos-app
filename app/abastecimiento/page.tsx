@@ -1086,9 +1086,382 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
   )
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TAB: REQUERIMIENTOS (Transferencias / En tránsito / Historial)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Estados siguientes según rol ─────────────────────────────────────────────
+function estadosSiguientes(estado: string, rol: string): string[] {
+  if (rol === 'ruteador') return []
+  const map: Record<string, string[]> = {
+    pendiente:   ['conf_stock', 'rechazado'],
+    conf_stock:  ['preparacion', 'rechazado'],
+    preparacion: ['en_transito', 'rechazado'],
+    en_transito: ['entregado', 'rechazado'],
+    entregado:   [],
+    rechazado:   [],
+  }
+  return map[estado] ?? []
+}
+
+const TIPO_ENTREGA_OPTS = ['parcial', 'completa', 'no_llego', 'cancelado', 'devuelto']
+const TIPO_ENTREGA_LABEL: Record<string, string> = {
+  parcial: 'Parcial', completa: 'Completa', no_llego: 'No llegó', cancelado: 'Cancelado', devuelto: 'Devuelto',
+}
+
+// ─── Fila expandible de requerimiento ─────────────────────────────────────────
+function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated }: {
+  req: Requerimiento; rol: string
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void
+  userEmail: string; onUpdated: () => void
+}) {
+  const [req, setReq] = useState(initialReq)
+  const [expanded, setExpanded] = useState(false)
+  const [guardando, setGuardando] = useState(false)
+  const [editItems, setEditItems] = useState<Record<string, number | null>>({})
+  const [editNotas, setEditNotas] = useState(req.notas ?? '')
+  const [editNViaje, setEditNViaje] = useState(req.n_viaje ?? '')
+  const [editVehiculo, setEditVehiculo] = useState(req.cod_vehiculo ?? '')
+  const [editFechaRec, setEditFechaRec] = useState(req.fecha_recepcion ?? '')
+  const [editTipoEntrega, setEditTipoEntrega] = useState(req.tipo_entrega ?? '')
+
+  useEffect(() => {
+    setReq(initialReq)
+    setEditNotas(initialReq.notas ?? '')
+    setEditNViaje(initialReq.n_viaje ?? '')
+    setEditVehiculo(initialReq.cod_vehiculo ?? '')
+    setEditFechaRec(initialReq.fecha_recepcion ?? '')
+    setEditTipoEntrega(initialReq.tipo_entrega ?? '')
+  }, [initialReq])
+
+  const puedeEditar = rol === 'deposito' || rol === 'gerencia'
+  const puedeEditarCantidad = puedeEditar && req.estado === 'pendiente'
+  const siguientes = estadosSiguientes(req.estado, rol)
+  const deadline = req.fecha_solicitada
+    ? calcDeadline(req.sucursal_origen, req.sucursal_destino, req.fecha_solicitada)
+    : null
+  const totalItems = req.requerimiento_items?.length ?? 0
+  const resumen = (req.requerimiento_items ?? []).slice(0, 2).map(it => it.nombre_producto).join(', ')
+    + (totalItems > 2 ? ` +${totalItems - 2} más` : '')
+
+  async function cambiarEstado(nuevoEstado: string) {
+    setGuardando(true)
+    const updates: any = { estado: nuevoEstado }
+    if (nuevoEstado === 'en_transito') { updates.n_viaje = editNViaje; updates.cod_vehiculo = editVehiculo }
+    if (nuevoEstado === 'entregado') { updates.fecha_recepcion = editFechaRec || hoy(); updates.tipo_entrega = editTipoEntrega || 'completa' }
+    if (editNotas) updates.notas = editNotas
+    const items_update = Object.entries(editItems).filter(([, v]) => v !== null).map(([id, cantidad_aprobada]) => ({ id, cantidad_aprobada }))
+    const res = await fetch('/api/requerimientos', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: req.id, ...updates, items_update }),
+    })
+    const data = await res.json()
+    setGuardando(false)
+    if (!data.success) { showToast(`Error: ${data.error}`, 'err'); return }
+    showToast(`Estado actualizado: ${ESTADO_LABEL[nuevoEstado]}`)
+    setExpanded(false)
+    onUpdated()
+  }
+
+  return (
+    <div className="bg-white rounded-xl border overflow-hidden transition-shadow hover:shadow-sm"
+      style={{ borderColor: expanded ? '#d0daf5' : '#f0f0f0', borderLeft: '4px solid #f59e0b' }}>
+
+      {/* ── Fila colapsada ── */}
+      <div className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
+        onClick={() => setExpanded(v => !v)}>
+        <span className="text-xs shrink-0 transition-transform"
+          style={{ color: '#254A96', transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <BadgeEstado estado={req.estado} />
+            {req.nv && <span className="text-xs font-semibold" style={{ color: '#254A96' }}>NV {req.nv}</span>}
+            {req.cliente && <span className="text-xs truncate" style={{ color: '#B9BBB7' }}>{req.cliente}</span>}
+            <span className="text-xs font-medium" style={{ color: '#1a1a1a' }}>{req.sucursal_origen} → {req.sucursal_destino}</span>
+            {req.n_viaje && <span className="text-xs font-medium" style={{ color: '#0f766e' }}>Viaje #{req.n_viaje}</span>}
+          </div>
+          {resumen && <p className="text-xs mt-0.5 truncate" style={{ color: '#B9BBB7' }}>{resumen}</p>}
+        </div>
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {deadline && (
+            <span className="text-xs px-2 py-0.5 rounded hidden sm:inline"
+              style={{ background: '#fef3c7', color: '#b45309' }}>⏰ {deadline.label}</span>
+          )}
+          <span className="text-xs" style={{ color: '#B9BBB7' }}>{fmtFecha(req.fecha_solicitada ?? req.fecha_req)}</span>
+        </div>
+      </div>
+
+      {/* ── Detalle expandido ── */}
+      {expanded && (
+        <div className="border-t px-4 pb-4 pt-3 space-y-3" style={{ borderColor: '#f0f0f0', background: '#fafbff' }}>
+
+          {/* Fechas + deadline */}
+          <div className="flex gap-4 text-xs flex-wrap">
+            <span style={{ color: '#B9BBB7' }}>Solicitado: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(req.fecha_req)}</strong></span>
+            <span style={{ color: '#B9BBB7' }}>Necesario: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(req.fecha_solicitada)}</strong></span>
+            {deadline && (
+              <span className="px-2 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>
+                ⏰ Despachar desde {req.sucursal_origen} antes del: {deadline.label}
+              </span>
+            )}
+          </div>
+
+          {/* Productos */}
+          <div>
+            <p className="text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>PRODUCTOS</p>
+            <div className="space-y-1">
+              {(req.requerimiento_items ?? []).map((item: ReqItem) => {
+                const qtyAprobada = editItems[item.id] ?? item.cantidad_aprobada ?? item.cantidad_solicitada
+                const isOver = item.cantidad_solicitada != null && Number(qtyAprobada) > item.cantidad_solicitada
+                return (
+                  <div key={item.id} className="flex items-center gap-3 px-3 py-2 rounded-lg flex-wrap"
+                    style={{ background: isOver ? '#fde8e8' : '#f4f4f3', border: `1px solid ${isOver ? '#fca5a5' : 'transparent'}` }}>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-medium" style={isOver ? { color: '#dc2626' } : { color: '#1a1a1a' }}>
+                        {item.nombre_producto}
+                      </span>
+                      {item.id_producto && (
+                        <span className="text-xs font-mono ml-1.5" style={{ color: '#aaa' }}>#{item.id_producto}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs">
+                      <span style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
+                      {puedeEditarCantidad ? (
+                        <label className="flex items-center gap-1" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
+                          Aprobado:
+                          <input type="number" min={0} value={qtyAprobada}
+                            onChange={e => setEditItems(prev => ({ ...prev, [item.id]: parseInt(e.target.value) || 0 }))}
+                            className="w-16 border rounded px-1.5 py-0.5 text-xs font-bold text-center focus:outline-none"
+                            style={{ borderColor: isOver ? '#fca5a5' : '#e8edf8', color: isOver ? '#dc2626' : undefined }} />
+                          {isOver && <span className="px-1 py-0.5 rounded text-xs font-bold" style={{ background: '#dc2626', color: '#fff' }}>⬆</span>}
+                        </label>
+                      ) : item.cantidad_aprobada != null ? (
+                        <span className="font-semibold" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
+                          Aprobado: {item.cantidad_aprobada}{isOver && ' ⬆'}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Edición (depósito / gerencia) */}
+          {puedeEditar && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>N° Viaje (ERP)</label>
+                  <input value={editNViaje} onChange={e => setEditNViaje(e.target.value)} placeholder="ej: 1360"
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Vehículo</label>
+                  <input value={editVehiculo} onChange={e => setEditVehiculo(e.target.value)} placeholder="ej: LP142"
+                    className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                </div>
+              </div>
+              {(req.estado === 'en_transito' || req.estado === 'entregado') && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Fecha recepción</label>
+                    <input type="date" value={editFechaRec} onChange={e => setEditFechaRec(e.target.value)}
+                      className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Tipo entrega</label>
+                    <select value={editTipoEntrega} onChange={e => setEditTipoEntrega(e.target.value)}
+                      className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+                      <option value="">— seleccionar —</option>
+                      {TIPO_ENTREGA_OPTS.map(o => <option key={o} value={o}>{TIPO_ENTREGA_LABEL[o]}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Observaciones</label>
+                <textarea value={editNotas} onChange={e => setEditNotas(e.target.value)} rows={2}
+                  className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none resize-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+            </div>
+          )}
+          {!puedeEditar && req.notas && (
+            <p className="text-sm rounded-lg px-3 py-2" style={{ background: '#fef3c7', color: '#b45309' }}>{req.notas}</p>
+          )}
+
+          {/* Botones de avance */}
+          {siguientes.length > 0 && (
+            <div className="flex gap-2 flex-wrap pt-1">
+              {siguientes.map(sig => (
+                <button key={sig} disabled={guardando} onClick={() => cambiarEstado(sig)}
+                  className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                  style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
+                  {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Hoja de ruteo para depósito ──────────────────────────────────────────────
+function HojaRuteo({ reqs, onClose }: { reqs: Requerimiento[]; onClose: () => void }) {
+  const [origen, setOrigen] = useState(SUCURSALES[0])
+  const ESTADOS_RUTEO = ['conf_stock', 'preparacion', 'en_transito']
+  const reqsFiltrados = reqs.filter(r => r.sucursal_origen === origen && ESTADOS_RUTEO.includes(r.estado))
+
+  // Agrupar por destino
+  const byDestino: Record<string, Requerimiento[]> = {}
+  for (const r of reqsFiltrados) {
+    if (!byDestino[r.sucursal_destino]) byDestino[r.sucursal_destino] = []
+    byDestino[r.sucursal_destino].push(r)
+  }
+
+  const totalItems = reqsFiltrados.reduce((sum, r) => sum + (r.requerimiento_items?.length ?? 0), 0)
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-white" style={{ fontFamily: 'Barlow, sans-serif' }}>
+      {/* Controles — se ocultan al imprimir */}
+      <div className="print:hidden flex items-center gap-3 px-6 py-3 border-b flex-wrap" style={{ borderColor: '#e8edf8', background: '#fafbff' }}>
+        <span className="font-semibold text-sm" style={{ color: '#254A96' }}>📋 Hoja de ruteo — Depósito</span>
+        <div className="flex items-center gap-2 ml-4">
+          <label className="text-xs font-medium" style={{ color: '#254A96' }}>Sucursal origen:</label>
+          <select value={origen} onChange={e => setOrigen(e.target.value)}
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+            {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <span className="text-xs ml-2" style={{ color: '#B9BBB7' }}>
+          {reqsFiltrados.length} transferencia{reqsFiltrados.length !== 1 ? 's' : ''} · {totalItems} líneas de producto
+        </span>
+        <div className="ml-auto flex gap-2">
+          <button onClick={() => window.print()}
+            className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white"
+            style={{ background: '#254A96' }}>🖨 Imprimir / PDF</button>
+          <button onClick={onClose}
+            className="px-3 py-1.5 rounded-lg text-sm font-medium"
+            style={{ background: '#f4f4f3', color: '#666' }}>Cerrar</button>
+        </div>
+      </div>
+
+      {/* Contenido imprimible */}
+      <div className="flex-1 overflow-auto px-8 py-6 print:p-0 print:overflow-visible">
+        {/* Encabezado del documento */}
+        <div className="mb-6 pb-4 border-b-2" style={{ borderColor: '#254A96' }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-2xl font-bold" style={{ color: '#254A96' }}>HOJA DE RUTEO — DEPÓSITO</h1>
+              <p className="text-lg font-semibold mt-0.5">{origen}</p>
+            </div>
+            <div className="text-right text-sm" style={{ color: '#666' }}>
+              <p>Fecha: <strong>{fmtFecha(hoy())}</strong></p>
+              <p>{reqsFiltrados.length} transferencias pendientes</p>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-3 flex-wrap">
+            {ESTADOS_RUTEO.map(e => {
+              const cnt = reqsFiltrados.filter(r => r.estado === e).length
+              if (!cnt) return null
+              const c = ESTADO_COLOR[e] ?? { bg: '#f4f4f3', text: '#666' }
+              return (
+                <span key={e} className="text-xs px-2.5 py-1 rounded-full font-semibold"
+                  style={{ background: c.bg, color: c.text }}>
+                  {ESTADO_LABEL[e]}: {cnt}
+                </span>
+              )
+            })}
+          </div>
+        </div>
+
+        {reqsFiltrados.length === 0 ? (
+          <div className="text-center py-16" style={{ color: '#B9BBB7' }}>
+            <p className="text-4xl mb-3">📦</p>
+            <p>No hay transferencias en preparación para {origen}</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(byDestino).sort(([a], [b]) => a.localeCompare(b)).map(([destino, items]) => (
+              <div key={destino}>
+                {/* Cabecera destino */}
+                <div className="flex items-center gap-3 mb-2 px-3 py-2 rounded-lg"
+                  style={{ background: '#e8edf8' }}>
+                  <span className="font-bold text-sm" style={{ color: '#254A96' }}>
+                    {origen} → {destino}
+                  </span>
+                  <span className="text-xs" style={{ color: '#254A96' }}>
+                    {items.length} transferencia{items.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
+                {/* Transferencias hacia ese destino */}
+                <div className="space-y-3 ml-3">
+                  {items.map(req => (
+                    <div key={req.id} className="border rounded-lg overflow-hidden" style={{ borderColor: '#e0e0e0' }}>
+                      {/* Cabecera de la transferencia */}
+                      <div className="flex items-center gap-3 px-3 py-2 flex-wrap"
+                        style={{ background: '#fafafa', borderBottom: '1px solid #e0e0e0' }}>
+                        <BadgeEstado estado={req.estado} />
+                        {req.nv && <span className="text-xs font-semibold" style={{ color: '#254A96' }}>NV {req.nv}</span>}
+                        {req.cliente && <span className="text-xs" style={{ color: '#666' }}>{req.cliente}</span>}
+                        {req.n_viaje && <span className="text-xs font-medium" style={{ color: '#0f766e' }}>Viaje #{req.n_viaje}</span>}
+                        {req.cod_vehiculo && <span className="text-xs" style={{ color: '#666' }}>🚛 {req.cod_vehiculo}</span>}
+                        <span className="text-xs ml-auto" style={{ color: '#999' }}>
+                          Necesario: {fmtFecha(req.fecha_solicitada)}
+                        </span>
+                      </div>
+
+                      {/* Tabla de productos */}
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr style={{ background: '#f9f9f9' }}>
+                            <th className="text-left px-3 py-1.5 text-xs font-semibold" style={{ color: '#666' }}>Producto</th>
+                            <th className="text-center px-3 py-1.5 text-xs font-semibold w-24" style={{ color: '#666' }}>Solicitado</th>
+                            <th className="text-center px-3 py-1.5 text-xs font-semibold w-24" style={{ color: '#666' }}>Aprobado</th>
+                            <th className="text-center px-3 py-1.5 text-xs font-semibold w-20 print:block hidden" style={{ color: '#666' }}>✓ Preparado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(req.requerimiento_items ?? []).map(item => (
+                            <tr key={item.id} className="border-t" style={{ borderColor: '#f0f0f0' }}>
+                              <td className="px-3 py-1.5">
+                                <span className="font-medium">{item.nombre_producto}</span>
+                                {item.id_producto && <span className="text-xs ml-1.5" style={{ color: '#aaa' }}>#{item.id_producto}</span>}
+                              </td>
+                              <td className="px-3 py-1.5 text-center font-semibold">{item.cantidad_solicitada}</td>
+                              <td className="px-3 py-1.5 text-center font-bold" style={{ color: '#0f766e' }}>
+                                {item.cantidad_aprobada ?? item.cantidad_solicitada}
+                              </td>
+                              <td className="px-3 py-1.5 text-center print:block hidden">
+                                <span style={{ border: '1px solid #999', display: 'inline-block', width: 16, height: 16 }} />
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {req.notas && (
+                        <p className="px-3 py-1.5 text-xs italic" style={{ color: '#b45309', background: '#fffbeb', borderTop: '1px solid #f0f0f0' }}>
+                          📝 {req.notas}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Firma al pie */}
+        <div className="mt-10 pt-4 border-t grid grid-cols-3 gap-8 text-xs" style={{ borderColor: '#e0e0e0', color: '#666' }}>
+          <div><p className="mb-8">Preparado por:</p><div style={{ borderTop: '1px solid #999' }} /></div>
+          <div><p className="mb-8">Verificado por:</p><div style={{ borderTop: '1px solid #999' }} /></div>
+          <div><p className="mb-8">Despachado por:</p><div style={{ borderTop: '1px solid #999' }} /></div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   filtroEstados: string[]
   rol: string
@@ -1097,16 +1470,50 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
 }) {
   const [reqs, setReqs] = useState<Requerimiento[]>([])
   const [cargando, setCargando] = useState(false)
-  const [detalle, setDetalle] = useState<Requerimiento | null>(null)
-  const [guardando, setGuardando] = useState(false)
   const [filtroOrigen, setFiltroOrigen] = useState('')
   const [filtroDestino, setFiltroDestino] = useState('')
-  const [editItems, setEditItems] = useState<Record<string, number | null>>({})
-  const [editNotas, setEditNotas] = useState('')
-  const [editNViaje, setEditNViaje] = useState('')
-  const [editVehiculo, setEditVehiculo] = useState('')
-  const [editFechaRec, setEditFechaRec] = useState('')
-  const [editTipoEntrega, setEditTipoEntrega] = useState('')
+  // Filtros de búsqueda
+  const [filtroNV, setFiltroNV] = useState('')
+  const [filtroSD, setFiltroSD] = useState('')
+  const [filtroIdProd, setFiltroIdProd] = useState('')
+  const [filtroDescProd, setFiltroDescProd] = useState('')
+  const [filtroEstadoReq, setFiltroEstadoReq] = useState<string[]>([])
+  // Hoja de ruteo
+  const [showHojaRuteo, setShowHojaRuteo] = useState(false)
+
+  const tabKey = filtroEstados.join(',')
+  useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
+
+  async function cargarReqs() {
+    setCargando(true)
+    const tab = filtroEstados.includes('entregado') ? 'historial'
+      : filtroEstados.includes('en_transito') ? 'transito'
+      : 'pendientes'
+    const params = new URLSearchParams({ tab })
+    if (filtroOrigen) params.set('sucursal_origen', filtroOrigen)
+    if (filtroDestino) params.set('sucursal_destino', filtroDestino)
+    const res = await fetch(`/api/requerimientos?${params}`)
+    const data = await res.json()
+    setReqs(Array.isArray(data) ? data : [])
+    setCargando(false)
+  }
+
+  // Filtros cliente
+  const reqsFiltrados = reqs.filter(req => {
+    if (filtroNV && !req.nv?.toLowerCase().includes(filtroNV.toLowerCase())) return false
+    if (filtroSD && !req.notas?.includes(`SD #${filtroSD}`)) return false
+    if (filtroIdProd) {
+      const hasId = req.requerimiento_items?.some(it => String(it.id_producto ?? '').includes(filtroIdProd))
+      if (!hasId) return false
+    }
+    if (filtroDescProd) {
+      const hasDesc = req.requerimiento_items?.some(it =>
+        it.nombre_producto?.toLowerCase().includes(filtroDescProd.toLowerCase()))
+      if (!hasDesc) return false
+    }
+    if (filtroEstadoReq.length > 0 && !filtroEstadoReq.includes(req.estado)) return false
+    return true
+  })
 
   // ── Nueva transferencia manual ───────────────────────────────────────────
   const [modalNueva, setModalNueva] = useState(false)
@@ -1177,92 +1584,94 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
     setCreando(false)
   }
 
-  const puedeEditar = rol === 'deposito' || rol === 'gerencia'
-  // Cantidad aprobada solo editable en estado pendiente — después se bloquea
-  const puedeEditarCantidad = puedeEditar && detalle?.estado === 'pendiente'
-  const tabKey = filtroEstados.join(',')
-
-  useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
-
-  async function cargarReqs() {
-    setCargando(true)
-    const tab = filtroEstados.includes('entregado') ? 'historial'
-      : filtroEstados.includes('en_transito') ? 'transito'
-      : 'pendientes'
-    const params = new URLSearchParams({ tab })
-    if (filtroOrigen) params.set('sucursal_origen', filtroOrigen)
-    if (filtroDestino) params.set('sucursal_destino', filtroDestino)
-    const res = await fetch(`/api/requerimientos?${params}`)
-    const data = await res.json()
-    setReqs(Array.isArray(data) ? data : [])
-    setCargando(false)
-  }
-
-  async function cambiarEstado(req: Requerimiento, nuevoEstado: string) {
-    setGuardando(true)
-    const updates: any = { estado: nuevoEstado }
-    if (nuevoEstado === 'en_transito') {
-      updates.n_viaje = editNViaje || req.n_viaje
-      updates.cod_vehiculo = editVehiculo || req.cod_vehiculo
-    }
-    if (nuevoEstado === 'entregado') {
-      updates.fecha_recepcion = editFechaRec || hoy()
-      updates.tipo_entrega = editTipoEntrega || 'completa'
-    }
-    if (editNotas) updates.notas = editNotas
-
-    const items_update = Object.entries(editItems)
-      .filter(([, v]) => v !== null)
-      .map(([id, cantidad_aprobada]) => ({ id, cantidad_aprobada }))
-
-    const res = await fetch('/api/requerimientos', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: req.id, ...updates, items_update }),
-    })
-    const data = await res.json()
-    setGuardando(false)
-    if (!data.success) { showToast(`Error: ${data.error}`, 'err'); return }
-    showToast(`Estado actualizado: ${ESTADO_LABEL[nuevoEstado]}`)
-    setDetalle(null)
-    cargarReqs()
-  }
-
-  function abrirDetalle(req: Requerimiento) {
-    setDetalle(req)
-    setEditItems({})
-    setEditNotas(req.notas ?? '')
-    setEditNViaje(req.n_viaje ?? '')
-    setEditVehiculo(req.cod_vehiculo ?? '')
-    setEditFechaRec(req.fecha_recepcion ?? '')
-    setEditTipoEntrega(req.tipo_entrega ?? '')
-  }
-
   return (
     <div className="px-4 md:px-6 py-4">
-      {/* Filtros */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        {filtroEstados.includes('pendiente') && (
-          <button onClick={abrirModalNueva}
-            className="px-3 py-1.5 text-sm font-semibold text-white rounded-lg shrink-0"
-            style={{ background: '#254A96' }}>
-            + Nueva
-          </button>
-        )}
-        <select value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
-          className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-          <option value="">Todos los orígenes</option>
-          {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <span style={{ color: '#B9BBB7' }}>→</span>
-        <select value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)}
-          className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-          <option value="">Todos los destinos</option>
-          {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <span className="text-sm ml-auto" style={{ color: '#B9BBB7' }}>
-          {reqs.length} requerimiento{reqs.length !== 1 ? 's' : ''}
-        </span>
+
+      {/* Hoja de ruteo overlay */}
+      {showHojaRuteo && <HojaRuteo reqs={reqs} onClose={() => setShowHojaRuteo(false)} />}
+
+      {/* ── Barra de filtros ── */}
+      <div className="bg-white rounded-xl border px-4 py-3 mb-4 space-y-2" style={{ borderColor: '#f0f0f0' }}>
+        {/* Fila 1: acciones + origen/destino */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {filtroEstados.includes('pendiente') && (
+            <button onClick={abrirModalNueva}
+              className="px-3 py-1.5 text-sm font-semibold text-white rounded-lg shrink-0"
+              style={{ background: '#254A96' }}>
+              + Nueva
+            </button>
+          )}
+          {filtroEstados.includes('pendiente') && (
+            <button onClick={() => setShowHojaRuteo(true)}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg shrink-0"
+              style={{ background: '#e8edf8', color: '#254A96' }}>
+              📋 Hoja de ruteo
+            </button>
+          )}
+          <select value={filtroOrigen} onChange={e => setFiltroOrigen(e.target.value)}
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+            <option value="">Todos los orígenes</option>
+            {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <span style={{ color: '#B9BBB7' }}>→</span>
+          <select value={filtroDestino} onChange={e => setFiltroDestino(e.target.value)}
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+            <option value="">Todos los destinos</option>
+            {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <span className="text-xs ml-auto" style={{ color: '#B9BBB7' }}>
+            {reqsFiltrados.length}/{reqs.length} transferencia{reqs.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        {/* Fila 2: búsqueda */}
+        <div className="flex gap-2 flex-wrap">
+          <input value={filtroNV} onChange={e => setFiltroNV(e.target.value)} placeholder="Buscar NV…"
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-32" style={{ borderColor: '#e8edf8' }} />
+          <input value={filtroSD} onChange={e => setFiltroSD(e.target.value)} placeholder="Buscar SD #…"
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-32" style={{ borderColor: '#e8edf8' }} />
+          <input value={filtroIdProd} onChange={e => setFiltroIdProd(e.target.value)} placeholder="ID producto…"
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-32" style={{ borderColor: '#e8edf8' }} />
+          <input value={filtroDescProd} onChange={e => setFiltroDescProd(e.target.value)} placeholder="Descripción producto…"
+            className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none flex-1 min-w-40" style={{ borderColor: '#e8edf8' }} />
+          {(filtroNV || filtroSD || filtroIdProd || filtroDescProd || filtroEstadoReq.length > 0) && (
+            <button onClick={() => { setFiltroNV(''); setFiltroSD(''); setFiltroIdProd(''); setFiltroDescProd(''); setFiltroEstadoReq([]) }}
+              className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>
+              ✕ limpiar
+            </button>
+          )}
+        </div>
+        {/* Fila 3: chips de estado */}
+        {(() => {
+          const estadoCounts = reqs.reduce<Record<string, number>>((acc, r) => {
+            acc[r.estado] = (acc[r.estado] ?? 0) + 1
+            return acc
+          }, {})
+          const estados = Object.keys(ESTADO_LABEL).filter(e => estadoCounts[e])
+          if (estados.length === 0) return null
+          return (
+            <div className="flex gap-1.5 flex-wrap">
+              {estados.map(e => {
+                const active = filtroEstadoReq.includes(e)
+                const c = ESTADO_COLOR[e] ?? { bg: '#f4f4f3', text: '#666' }
+                return (
+                  <button key={e}
+                    onClick={() => setFiltroEstadoReq(prev =>
+                      prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e]
+                    )}
+                    className="text-xs px-2.5 py-1 rounded-full font-medium transition-opacity"
+                    style={{
+                      background: active ? c.bg : '#f4f4f3',
+                      color: active ? c.text : '#999',
+                      border: `1.5px solid ${active ? c.text + '55' : '#e8e8e8'}`,
+                      opacity: filtroEstadoReq.length > 0 && !active ? 0.55 : 1,
+                    }}>
+                    {ESTADO_LABEL[e]} <span className="opacity-70">{estadoCounts[e]}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })()}
       </div>
 
       {cargando ? (
@@ -1270,41 +1679,17 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
           <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
             style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
         </div>
-      ) : reqs.length === 0 ? (
+      ) : reqsFiltrados.length === 0 ? (
         <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
           <div className="text-5xl mb-4">📦</div>
-          <p className="font-medium">No hay transferencias en esta sección</p>
+          <p className="font-medium">{reqs.length === 0 ? 'No hay transferencias en esta sección' : 'Sin resultados para los filtros'}</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {reqs.map(req => (
-            <ReqCard key={req.id} req={req} onClick={() => abrirDetalle(req)} />
+          {reqsFiltrados.map(req => (
+            <ReqRow key={req.id} req={req} rol={rol} showToast={showToast} userEmail={userEmail} onUpdated={cargarReqs} />
           ))}
         </div>
-      )}
-
-      {detalle && (
-        <ModalDetalleReq
-          req={detalle}
-          rol={rol}
-          guardando={guardando}
-          puedeEditar={puedeEditar}
-          puedeEditarCantidad={puedeEditarCantidad}
-          editItems={editItems}
-          editNotas={editNotas}
-          editNViaje={editNViaje}
-          editVehiculo={editVehiculo}
-          editFechaRec={editFechaRec}
-          editTipoEntrega={editTipoEntrega}
-          setEditItems={setEditItems}
-          setEditNotas={setEditNotas}
-          setEditNViaje={setEditNViaje}
-          setEditVehiculo={setEditVehiculo}
-          setEditFechaRec={setEditFechaRec}
-          setEditTipoEntrega={setEditTipoEntrega}
-          onCambiarEstado={(est: string) => cambiarEstado(detalle, est)}
-          onClose={() => setDetalle(null)}
-        />
       )}
 
       {/* ── Modal nueva transferencia manual ──────────────────────────────── */}
@@ -1452,199 +1837,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   )
 }
 
-function ReqCard({ req, onClick }: { req: Requerimiento; onClick: () => void }) {
-  const totalItems = req.requerimiento_items?.length ?? 0
-  const resumen = req.requerimiento_items?.slice(0, 2).map(it => it.nombre_producto).join(', ')
-    + (totalItems > 2 ? ` +${totalItems - 2} más` : '')
 
-  const deadline = req.fecha_solicitada
-    ? calcDeadline(req.sucursal_origen, req.sucursal_destino, req.fecha_solicitada)
-    : null
-
-  return (
-    <div onClick={onClick}
-      className="bg-white rounded-xl border p-4 cursor-pointer hover:shadow-md transition-shadow"
-      style={{ borderColor: '#f0f0f0', borderLeft: '4px solid #f59e0b' }}>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <BadgeEstado estado={req.estado} />
-          {req.nv && <span className="text-xs font-medium" style={{ color: '#254A96' }}>NV {req.nv}</span>}
-          {req.cliente && <span className="text-xs" style={{ color: '#B9BBB7' }}>{req.cliente}</span>}
-        </div>
-        <div className="flex items-center gap-2 text-xs shrink-0" style={{ color: '#B9BBB7' }}>
-          {req.n_viaje && <span className="font-medium" style={{ color: '#0f766e' }}>Viaje #{req.n_viaje}</span>}
-          <span>{fmtFecha(req.fecha_solicitada ?? req.fecha_req)}</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2 mt-2 flex-wrap">
-        <span className="text-sm font-semibold" style={{ color: '#254A96' }}>{req.sucursal_origen}</span>
-        <span className="text-sm" style={{ color: '#B9BBB7' }}>→</span>
-        <span className="text-sm font-semibold" style={{ color: '#0f766e' }}>{req.sucursal_destino}</span>
-        {deadline && (
-          <span className="text-xs px-2 py-0.5 rounded ml-auto" style={{ background: '#fef3c7', color: '#b45309' }}>
-            ⏰ Límite: {deadline.label}
-          </span>
-        )}
-      </div>
-      {resumen && (
-        <p className="text-xs mt-1.5 leading-tight" style={{ color: '#B9BBB7' }}>{resumen}</p>
-      )}
-    </div>
-  )
-}
-
-// ─── Estados siguientes según rol ─────────────────────────────────────────────
-function estadosSiguientes(estado: string, rol: string): string[] {
-  if (rol === 'ruteador') return []
-  const map: Record<string, string[]> = {
-    pendiente:   ['conf_stock', 'rechazado'],
-    conf_stock:  ['preparacion', 'rechazado'],
-    preparacion: ['en_transito', 'rechazado'],
-    en_transito: ['entregado', 'rechazado'],
-    entregado:   [],
-    rechazado:   [],
-  }
-  return map[estado] ?? []
-}
-
-const TIPO_ENTREGA_OPTS = ['parcial', 'completa', 'no_llego', 'cancelado', 'devuelto']
-const TIPO_ENTREGA_LABEL: Record<string, string> = {
-  parcial: 'Parcial', completa: 'Completa', no_llego: 'No llegó', cancelado: 'Cancelado', devuelto: 'Devuelto',
-}
-
-function ModalDetalleReq({ req, rol, guardando, puedeEditar, puedeEditarCantidad, editItems, editNotas, editNViaje, editVehiculo, editFechaRec, editTipoEntrega,
-  setEditItems, setEditNotas, setEditNViaje, setEditVehiculo, setEditFechaRec, setEditTipoEntrega, onCambiarEstado, onClose }: any) {
-  const siguientes = estadosSiguientes(req.estado, rol)
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col"
-        style={{ fontFamily: 'Barlow, sans-serif' }}>
-        <div className="p-5 border-b flex items-start justify-between gap-3" style={{ borderColor: '#f0f0f0' }}>
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <BadgeEstado estado={req.estado} />
-            </div>
-            <p className="font-semibold text-sm" style={{ color: '#254A96' }}>
-              {req.sucursal_origen} → {req.sucursal_destino}
-            </p>
-            {req.nv && <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>NV {req.nv} {req.cliente ? `· ${req.cliente}` : ''}</p>}
-          </div>
-          <button onClick={onClose} className="text-lg" style={{ color: '#B9BBB7' }}>×</button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><span style={{ color: '#B9BBB7' }}>Solicitado:</span> <strong>{fmtFecha(req.fecha_req)}</strong></div>
-            <div><span style={{ color: '#B9BBB7' }}>Necesario:</span> <strong>{fmtFecha(req.fecha_solicitada)}</strong></div>
-          </div>
-
-          {/* Deadline de transfer */}
-          {req.fecha_solicitada && (
-            <div className="rounded-lg px-3 py-2" style={{ background: '#fef3c7', border: '1px solid #fde68a' }}>
-              <p className="text-xs font-medium" style={{ color: '#b45309' }}>
-                ⏰ Fecha límite para despachar desde {req.sucursal_origen}:{' '}
-                <strong>{calcDeadline(req.sucursal_origen, req.sucursal_destino, req.fecha_solicitada).label}</strong>
-              </p>
-            </div>
-          )}
-
-          {/* Productos */}
-          <div>
-            <p className="text-xs font-semibold mb-2" style={{ color: '#254A96' }}>PRODUCTOS</p>
-            <div className="space-y-1.5">
-              {req.requerimiento_items?.map((item: ReqItem) => {
-                const qtyAprobada = editItems[item.id] ?? item.cantidad_aprobada ?? item.cantidad_solicitada
-                const isOver = item.cantidad_solicitada != null && Number(qtyAprobada) > item.cantidad_solicitada
-                return (
-                  <div key={item.id} className="rounded-lg px-3 py-2"
-                    style={{ background: isOver ? '#fde8e8' : '#f9f9f9', border: `1px solid ${isOver ? '#fca5a5' : '#f0f0f0'}` }}>
-                    <p className="text-sm font-medium" style={isOver ? { color: '#dc2626', fontWeight: 600 } : {}}>
-                      {item.nombre_producto}
-                    </p>
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      <span className="text-xs" style={{ color: '#B9BBB7' }}>Solicitado: <strong>{item.cantidad_solicitada}</strong></span>
-                      {puedeEditarCantidad ? (
-                        <label className="text-xs flex items-center gap-1.5" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
-                          Aprobado:
-                          <input type="number" min={0}
-                            value={qtyAprobada}
-                            onChange={e => setEditItems((prev: any) => ({ ...prev, [item.id]: parseInt(e.target.value) || 0 }))}
-                            className="w-16 border rounded px-1.5 py-0.5 text-xs focus:outline-none font-bold text-center"
-                            style={{ borderColor: isOver ? '#fca5a5' : '#e8edf8', color: isOver ? '#dc2626' : undefined }} />
-                          {isOver && <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#dc2626', color: '#fff' }}>⬆</span>}
-                        </label>
-                      ) : item.cantidad_aprobada != null ? (
-                        <span className="text-xs font-semibold flex items-center gap-1" style={{ color: isOver ? '#dc2626' : '#0f766e' }}>
-                          Aprobado: {item.cantidad_aprobada}
-                          {isOver && <span className="px-1.5 py-0.5 rounded text-xs font-bold" style={{ background: '#dc2626', color: '#fff' }}>⬆</span>}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {puedeEditar && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium block mb-1" style={{ color: '#254A96' }}>N° Viaje (del ERP)</label>
-                  <input value={editNViaje} onChange={e => setEditNViaje(e.target.value)} placeholder="ej: 1360"
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-                </div>
-                <div>
-                  <label className="text-xs font-medium block mb-1" style={{ color: '#254A96' }}>Vehículo</label>
-                  <input value={editVehiculo} onChange={e => setEditVehiculo(e.target.value)} placeholder="ej: LP142"
-                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-                </div>
-              </div>
-              {(req.estado === 'en_transito' || req.estado === 'entregado') && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs font-medium block mb-1" style={{ color: '#254A96' }}>Fecha recepción</label>
-                    <input type="date" value={editFechaRec} onChange={e => setEditFechaRec(e.target.value)}
-                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium block mb-1" style={{ color: '#254A96' }}>Tipo entrega</label>
-                    <select value={editTipoEntrega} onChange={e => setEditTipoEntrega(e.target.value)}
-                      className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-                      <option value="">— seleccionar —</option>
-                      {TIPO_ENTREGA_OPTS.map(o => <option key={o} value={o}>{TIPO_ENTREGA_LABEL[o]}</option>)}
-                    </select>
-                  </div>
-                </div>
-              )}
-              <div>
-                <label className="text-xs font-medium block mb-1" style={{ color: '#254A96' }}>Observaciones</label>
-                <textarea value={editNotas} onChange={e => setEditNotas(e.target.value)} rows={2}
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none resize-none" style={{ borderColor: '#e8edf8' }} />
-              </div>
-            </div>
-          )}
-          {!puedeEditar && req.notas && (
-            <p className="text-sm rounded-lg px-3 py-2" style={{ background: '#fef3c7', color: '#b45309' }}>{req.notas}</p>
-          )}
-        </div>
-
-        {siguientes.length > 0 && (
-          <div className="p-5 border-t flex gap-2 flex-wrap" style={{ borderColor: '#f0f0f0' }}>
-            {siguientes.map((sig: string) => (
-              <button key={sig} disabled={guardando}
-                onClick={() => onCambiarEstado(sig)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
-                style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
-                {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: IMPORTAR

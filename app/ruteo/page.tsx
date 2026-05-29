@@ -26,6 +26,7 @@ interface Pedido {
   telefono: string | null
   items?: { nombre: string; cantidad: number; unidad: string }[]
   tipo?: string
+  _esTransfer?: boolean
 }
 
 interface CamionDisponible {
@@ -163,7 +164,18 @@ export default function RuteoPage() {
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .not('camion_id', 'is', null)
 
-    const codigos = [...new Set((pedidosData ?? []).map((p: any) => p.camion_id))]
+    const { data: requerData } = await supabase
+      .from('requerimientos')
+      .select('cod_vehiculo')
+      .eq('fecha_solicitada', fecha)
+      .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
+      .not('cod_vehiculo', 'is', null)
+
+    const codigosSet = new Set([
+      ...(pedidosData ?? []).map((p: any) => p.camion_id),
+      ...(requerData ?? []).map((r: any) => r.cod_vehiculo),
+    ])
+    const codigos = [...codigosSet]
 
     if (codigos.length === 0) {
       setCamionesDisponibles([])
@@ -238,13 +250,24 @@ export default function RuteoPage() {
 
     // Actualizar SOLO los pedidos de esta vuelta por ID — no bulk filter
     const aIniciar = pedidos.filter(p => p.vuelta === vueltaActiva && p.estado === 'programado')
+    const aIniciarPedidos = aIniciar.filter(p => !p._esTransfer)
+    const aIniciarTransfers = aIniciar.filter(p => p._esTransfer)
     const errores = await Promise.all(
-      aIniciar.map(p =>
+      aIniciarPedidos.map(p =>
         fetch('/api/pedidos', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: p.id, estado: 'en_camino' }),
         }).then(r => r.json())
+      )
+    )
+    await Promise.all(
+      aIniciarTransfers.map(p =>
+        fetch('/api/requerimientos', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: p.id, estado: 'en_transito' }),
+        })
       )
     )
     const hayError = errores.some(r => r.error)
@@ -330,7 +353,40 @@ export default function RuteoPage() {
       .order('vuelta')
       .order('orden_entrega', { ascending: true, nullsFirst: false })
 
-    const todosPedidos = data ?? []
+    const { data: transfersRaw } = await supabase
+      .from('requerimientos')
+      .select('*, requerimiento_items(*)')
+      .eq('fecha_solicitada', fecha)
+      .eq('cod_vehiculo', camionSeleccionado)
+      .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
+      .order('vuelta')
+
+    const transfers: Pedido[] = (transfersRaw ?? []).map((t: any) => ({
+      id: t.id,
+      nv: t.nv ?? '',
+      cliente: `→ ${t.sucursal_destino}`,
+      direccion: t.sucursal_destino,
+      sucursal: t.sucursal_origen,
+      vuelta: t.vuelta ?? 1,
+      estado: t.estado === 'en_transito' ? 'en_camino' : (t.estado === 'entregado' || t.estado === 'rechazado') ? t.estado : 'programado',
+      estado_pago: '',
+      peso_total_kg: null,
+      notas: t.notas ?? null,
+      camion_id: t.cod_vehiculo,
+      orden_entrega: null,
+      latitud: null,
+      longitud: null,
+      telefono: null,
+      items: (t.requerimiento_items ?? []).map((it: any) => ({
+        nombre: it.nombre_producto,
+        cantidad: Number(it.cantidad_aprobada ?? it.cantidad_solicitada),
+        unidad: 'un.',
+      })),
+      tipo: 'transferencia',
+      _esTransfer: true,
+    }))
+
+    const todosPedidos = [...(data ?? []), ...transfers]
     setPedidos(todosPedidos)
 
     // Marcar vueltas que ya tienen actividad (en_camino o entregado)
@@ -487,6 +543,37 @@ export default function RuteoPage() {
 
   const confirmarEntrega = async (accion: 'entregar' | 'rechazar') => {
     if (!modalPedido) return
+
+    // Transfer: simplified confirmation, no photo required
+    if (modalPedido._esTransfer) {
+      setConfirmando(true)
+      try {
+        const nuevoEstado = accion === 'rechazar' ? 'rechazado' : 'entregado'
+        const patchBody: any = { id: modalPedido.id, estado: nuevoEstado }
+        if (nota) patchBody.notas = nota
+        if (accion === 'rechazar' && motivoRechazo) patchBody.notas = `✕ ${motivoRechazo}${nota ? ' | ' + nota : ''}`
+        const res = await fetch('/api/requerimientos', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchBody),
+        })
+        const data = await res.json()
+        if (data.success) {
+          setPedidos(prev => prev.map(p =>
+            p.id === modalPedido.id ? { ...p, estado: nuevoEstado, notas: patchBody.notas ?? p.notas } : p
+          ))
+          showToast(accion === 'rechazar' ? 'Transferencia rechazada' : 'Transferencia entregada')
+          cerrarModal()
+        } else {
+          setErrorModal(data.error ?? 'Error al guardar')
+        }
+      } catch (e: any) {
+        setErrorModal(e.message ?? 'Error al guardar')
+      }
+      setConfirmando(false)
+      return
+    }
+
     if (fotos.length === 0) { setErrorModal('Necesitás agregar al menos una foto antes de continuar.'); return }
     if (accion === 'rechazar' && !motivoRechazo.trim()) { setErrorModal('Ingresá el motivo del rechazo para continuar.'); return }
     setErrorModal('')
@@ -862,11 +949,12 @@ export default function RuteoPage() {
           <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>Registrar entrega</h3>
+                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>{modalPedido._esTransfer ? 'Confirmar transferencia interna' : 'Registrar entrega'}</h3>
                 <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{modalPedido.cliente}</p>
               </div>
               <button onClick={cerrarModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
             </div>
+            {modalPedido._esTransfer && <p className="text-xs px-2 py-1 rounded-lg" style={{background:'#e0f2fe',color:'#0369a1'}}>🏪 Transferencia interna — sin foto requerida</p>}
             <div className="rounded-xl p-3 text-sm" style={{ background: '#f4f4f3' }}>
               <p className="font-medium" style={{ color: '#1a1a1a' }}>{modalPedido.direccion}</p>
             </div>
@@ -880,7 +968,8 @@ export default function RuteoPage() {
                 placeholder="Ej: Dejé en portería, firmó el encargado..." />
             </div>
 
-            {/* Fotos — obligatorias */}
+            {/* Fotos — obligatorias (solo para pedidos normales) */}
+            {!modalPedido._esTransfer && (
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
                 Foto <span style={{ color: '#E52322' }}>*</span>
@@ -917,6 +1006,7 @@ export default function RuteoPage() {
               <input ref={fileRef} type="file" accept="image/*" capture="environment"
                 multiple onChange={handleFoto} className="hidden" />
             </div>
+            )}
 
             {/* Motivo de rechazo — solo visible si se elige rechazar */}
             {accionModal === 'rechazar' && (
@@ -1348,20 +1438,22 @@ export default function RuteoPage() {
                       const parcial = pedido.estado === 'entregado_parcial'
                       const finalizado = entregado || rechazado || parcial
                       const esRetiro = pedido.tipo === 'retiro'
+                      const esTransfer = pedido._esTransfer === true
                       return (
                         <div key={pedido.id}
                           className="rounded-xl shadow-sm overflow-hidden"
-                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : parcial ? '#fef3c7' : esRetiro ? '#99f6e4' : '#f0f0f0'}`, background: esRetiro ? '#f0fdfa' : 'white' }}>
+                          style={{ opacity: finalizado ? 0.75 : 1, border: `2px solid ${entregado ? '#d1fae5' : rechazado ? '#fde8e8' : parcial ? '#fef3c7' : esTransfer ? '#bfdbfe' : esRetiro ? '#99f6e4' : '#f0f0f0'}`, background: esTransfer ? '#eff6ff' : esRetiro ? '#f0fdfa' : 'white' }}>
                           <div className="px-4 py-3 flex items-center justify-between"
-                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : parcial ? '#fffbeb' : esRetiro ? '#ccfbf1' : 'white', borderBottom: '1px solid #f4f4f3' }}>
+                            style={{ background: entregado ? '#f0fdf4' : rechazado ? '#fff5f5' : parcial ? '#fffbeb' : esTransfer ? '#dbeafe' : esRetiro ? '#ccfbf1' : 'white', borderBottom: '1px solid #f4f4f3' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
-                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : parcial ? '#f59e0b' : esRetiro ? '#0d9488' : '#254A96' }}>
-                                {entregado ? '✓' : rechazado ? '✕' : parcial ? '½' : esRetiro ? '🔄' : (pedido.orden_entrega ?? idx + 1)}
+                                style={{ background: entregado ? '#10b981' : rechazado ? '#E52322' : parcial ? '#f59e0b' : esTransfer ? '#0369a1' : esRetiro ? '#0d9488' : '#254A96' }}>
+                                {entregado ? '✓' : rechazado ? '✕' : parcial ? '½' : esTransfer ? '↔' : esRetiro ? '🔄' : (pedido.orden_entrega ?? idx + 1)}
                               </div>
                               <div>
                                 <div className="flex items-center gap-1.5">
-                                  <p className="font-semibold text-sm" style={{ color: esRetiro ? '#0f766e' : '#254A96' }}>{pedido.cliente}</p>
+                                  <p className="font-semibold text-sm" style={{ color: esTransfer ? '#1d4ed8' : esRetiro ? '#0f766e' : '#254A96' }}>{pedido.cliente}</p>
+                                  {esTransfer && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#dbeafe', color: '#1d4ed8' }}>TRANSFER</span>}
                                   {esRetiro && <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#99f6e4', color: '#0f766e' }}>RETIRO</span>}
                                 </div>
                                 {pedido.nv && <p className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</p>}
@@ -1380,7 +1472,7 @@ export default function RuteoPage() {
                               </div>
                             )}
                             <div>
-                              <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{esRetiro ? 'Lugar de retiro' : 'Dirección'}</p>
+                              <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{esTransfer ? 'Destino' : esRetiro ? 'Lugar de retiro' : 'Dirección'}</p>
                               <p className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{pedido.direccion}</p>
                             </div>
                             {pedido.telefono && !finalizado && (
@@ -1420,22 +1512,26 @@ export default function RuteoPage() {
                             {!finalizado && (
                               <div className="space-y-2 pt-1">
                                 <div className="flex gap-2">
-                                  <button onClick={() => abrirMaps(pedido)}
-                                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border"
-                                    style={{ borderColor: '#e8edf8', color: '#254A96', background: '#f9f9f9' }}>
-                                    🗺️ Maps
-                                  </button>
+                                  {!esTransfer && (
+                                    <button onClick={() => abrirMaps(pedido)}
+                                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium border"
+                                      style={{ borderColor: '#e8edf8', color: '#254A96', background: '#f9f9f9' }}>
+                                      🗺️ Maps
+                                    </button>
+                                  )}
                                   <button onClick={() => setModalPedido(pedido)}
                                     className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white"
                                     style={{ background: '#254A96' }}>
                                     ✓ Confirmar
                                   </button>
                                 </div>
-                                <button onClick={() => abrirModalParcial(pedido)}
-                                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
-                                  style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }}>
-                                  📦 Entrega parcial
-                                </button>
+                                {!esTransfer && (
+                                  <button onClick={() => abrirModalParcial(pedido)}
+                                    className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
+                                    style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fbbf24' }}>
+                                    📦 Entrega parcial
+                                  </button>
+                                )}
                               </div>
                             )}
                             {finalizado && pedido.notas && (

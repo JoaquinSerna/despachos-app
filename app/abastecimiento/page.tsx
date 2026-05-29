@@ -1494,6 +1494,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   const [filtroSD, setFiltroSD] = useState('')
   const [filtroIdProd, setFiltroIdProd] = useState('')
   const [filtroDescProd, setFiltroDescProd] = useState('')
+  const [filtroEstadoReq, setFiltroEstadoReq] = useState<string[]>([])
   // Hoja de ruteo
   const [showHojaRuteo, setShowHojaRuteo] = useState(false)
 
@@ -1527,6 +1528,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
         it.nombre_producto?.toLowerCase().includes(filtroDescProd.toLowerCase()))
       if (!hasDesc) return false
     }
+    if (filtroEstadoReq.length > 0 && !filtroEstadoReq.includes(req.estado)) return false
     return true
   })
 
@@ -1648,13 +1650,45 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
             className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-32" style={{ borderColor: '#e8edf8' }} />
           <input value={filtroDescProd} onChange={e => setFiltroDescProd(e.target.value)} placeholder="Descripción producto…"
             className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none flex-1 min-w-40" style={{ borderColor: '#e8edf8' }} />
-          {(filtroNV || filtroSD || filtroIdProd || filtroDescProd) && (
-            <button onClick={() => { setFiltroNV(''); setFiltroSD(''); setFiltroIdProd(''); setFiltroDescProd('') }}
+          {(filtroNV || filtroSD || filtroIdProd || filtroDescProd || filtroEstadoReq.length > 0) && (
+            <button onClick={() => { setFiltroNV(''); setFiltroSD(''); setFiltroIdProd(''); setFiltroDescProd(''); setFiltroEstadoReq([]) }}
               className="text-xs px-2.5 py-1.5 rounded-lg" style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>
               ✕ limpiar
             </button>
           )}
         </div>
+        {/* Fila 3: chips de estado */}
+        {(() => {
+          const estadoCounts = reqs.reduce<Record<string, number>>((acc, r) => {
+            acc[r.estado] = (acc[r.estado] ?? 0) + 1
+            return acc
+          }, {})
+          const estados = Object.keys(ESTADO_LABEL).filter(e => estadoCounts[e])
+          if (estados.length === 0) return null
+          return (
+            <div className="flex gap-1.5 flex-wrap">
+              {estados.map(e => {
+                const active = filtroEstadoReq.includes(e)
+                const c = ESTADO_COLOR[e] ?? { bg: '#f4f4f3', text: '#666' }
+                return (
+                  <button key={e}
+                    onClick={() => setFiltroEstadoReq(prev =>
+                      prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e]
+                    )}
+                    className="text-xs px-2.5 py-1 rounded-full font-medium transition-opacity"
+                    style={{
+                      background: active ? c.bg : '#f4f4f3',
+                      color: active ? c.text : '#999',
+                      border: `1.5px solid ${active ? c.text + '55' : '#e8e8e8'}`,
+                      opacity: filtroEstadoReq.length > 0 && !active ? 0.55 : 1,
+                    }}>
+                    {ESTADO_LABEL[e]} <span className="opacity-70">{estadoCounts[e]}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })()}
       </div>
 
       {cargando ? (

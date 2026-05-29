@@ -47,6 +47,7 @@ const normalizar = (s: string) =>
 
 interface Pedido {
   id: string; nv: string; id_despacho: string | null; cliente: string; direccion: string
+  telefono: string | null
   sucursal: string; fecha_entrega: string; vuelta: number
   estado: string; estado_pago: string | null; peso_total_kg: number | null; volumen_total_m3: number | null
   notas: string | null; camion_id: string | null; tipo?: string; created_at?: string
@@ -77,6 +78,7 @@ interface Foto {
 interface EditState {
   id: string; sucursal: string; peso: string; posiciones: string; estado_pago: string
   fecha_entrega: string; vuelta: number
+  direccion: string; telefono: string
 }
 
 export default function PedidosPage() {
@@ -210,7 +212,7 @@ export default function PedidosPage() {
     const textoFinal = textoOverride !== undefined ? textoOverride : filtroTexto
     let q = supabase
       .from('pedidos')
-      .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo, created_at, vendedor_id', { count: 'exact' })
+      .select('id, nv, id_despacho, cliente, direccion, telefono, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo, created_at, vendedor_id', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
       .range(currentOffset, currentOffset + PAGE_SIZE - 1)
@@ -348,6 +350,8 @@ export default function PedidosPage() {
       estado_pago: p.estado_pago ?? '',
       fecha_entrega: p.fecha_entrega ?? '',
       vuelta: p.vuelta ?? 1,
+      direccion: p.direccion ?? '',
+      telefono: p.telefono ?? '',
     })
   }
 
@@ -362,6 +366,8 @@ export default function PedidosPage() {
     if (editando.estado_pago !== '') updates.estado_pago = editando.estado_pago
     if (editando.fecha_entrega !== '') updates.fecha_entrega = editando.fecha_entrega
     updates.vuelta = editando.vuelta
+    updates.direccion = editando.direccion.trim() || null
+    updates.telefono = editando.telefono.trim() || null
     // Si cambió la sucursal, desasignar el camión — no puede quedar asignado a un camión de otra sucursal
     if (sucursalCambio) { updates.camion_id = null; updates.orden_entrega = null }
 
@@ -383,6 +389,8 @@ export default function PedidosPage() {
         estado_pago: updates.estado_pago ?? p.estado_pago,
         fecha_entrega: updates.fecha_entrega ?? p.fecha_entrega,
         vuelta: updates.vuelta ?? p.vuelta,
+        direccion: updates.direccion ?? p.direccion,
+        telefono: updates.telefono ?? p.telefono,
         ...(sucursalCambio ? { camion_id: null, orden_entrega: null } : {}),
       } : p))
       showToast('Pedido actualizado')
@@ -395,6 +403,8 @@ export default function PedidosPage() {
         if (updates.estado_pago != null && updates.estado_pago !== pedidoOriginal.estado_pago) cambios.estado_pago = { de: pedidoOriginal.estado_pago, a: updates.estado_pago }
         if (updates.fecha_entrega != null && updates.fecha_entrega !== pedidoOriginal.fecha_entrega) cambios.fecha_entrega = { de: pedidoOriginal.fecha_entrega, a: updates.fecha_entrega }
         if (updates.vuelta !== pedidoOriginal.vuelta) cambios.vuelta = { de: pedidoOriginal.vuelta, a: updates.vuelta }
+        if (updates.direccion !== (pedidoOriginal.direccion ?? null)) cambios.direccion = { de: pedidoOriginal.direccion, a: updates.direccion }
+        if (updates.telefono !== (pedidoOriginal.telefono ?? null)) cambios.telefono = { de: pedidoOriginal.telefono, a: updates.telefono }
         logAuditoria(userId, userNombre, 'Editó pedido', 'Pedidos', { nv: pedidoOriginal.nv, id_despacho: pedidoOriginal.id_despacho, cliente: pedidoOriginal.cliente, cambios })
       }
       setEditando(null)
@@ -673,6 +683,20 @@ export default function PedidosPage() {
                     <option key={ep} value={ep}>{PAGO_LABEL[ep]}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Dirección</label>
+                <input type="text" value={editando.direccion}
+                  onChange={e => setEditando(prev => prev ? { ...prev, direccion: e.target.value } : prev)}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }} placeholder="Calle y número…" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Teléfono</label>
+                <input type="text" value={editando.telefono}
+                  onChange={e => setEditando(prev => prev ? { ...prev, telefono: e.target.value } : prev)}
+                  className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e8edf8' }} placeholder="Ej: 11 1234-5678" />
               </div>
             </div>
             <div className="flex gap-2 mt-5">

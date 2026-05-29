@@ -63,8 +63,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Borrar stock anterior e insertar el nuevo (full replace)
-    await admin.from('stock_sucursal').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+    // Vaciar stock anterior con TRUNCATE (1 entrada WAL vs 27K con DELETE)
+    await admin.rpc('truncate_stock_sucursal')
 
     // Insertar en lotes de 500
     let inserted = 0

@@ -413,13 +413,14 @@ function sugerirAsignacion(sin: Pedido[], camiones: Camion[], ya: Pedido[], sucu
 
 const BIG_MODES = ['stock', 'separar', 'reprog']
 
-function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand, soloVer = false, esTransferencia = false }: {
+function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprogramar, onEditarPeso, onRecalcularPosiciones, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, onNeedsExpand, soloVer = false, esTransferencia = false }: {
   pedido: Pedido
   onDragStart: (e: React.DragEvent, p: Pedido) => void
   onCancelar: (id: string) => void
   onCambiarVuelta: (id: string, vuelta: number) => void
   onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
+  onRecalcularPosiciones: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   onMoverSucursal: (id: string, sucursal: string) => void
@@ -439,6 +440,25 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   }, [])
   const [editPeso, setEditPeso] = useState(0)
   const [editPos, setEditPos] = useState(0)
+  const [recalculando, setRecalculando] = useState(false)
+
+  async function recalcularDesdeCard(e: React.MouseEvent) {
+    e.stopPropagation()
+    setRecalculando(true)
+    try {
+      const res = await fetch('/api/recalcular-posiciones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedido_id: pedido.id }),
+      })
+      const data = await res.json()
+      if (data.success && data.resultados?.[0]) {
+        const r = data.resultados[0]
+        onRecalcularPosiciones(pedido.id, r.peso_kg, r.posiciones)
+      }
+    } catch {}
+    setRecalculando(false)
+  }
   const [cantNuevo, setCantNuevo] = useState<Record<number, number>>({})
   const [stockDisp, setStockDisp] = useState<Record<number, number>>({})
   const [reprogFecha, setReprogFecha] = useState('')
@@ -514,6 +534,16 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
                   className="text-xs hover:underline" style={{ color: '#f59e0b' }} title="Ingresar peso y posiciones">
                   ⚠ sin peso ✎
                 </button>
+          )}
+          {!soloVer && (
+            <button onMouseDown={e => e.stopPropagation()}
+              onClick={recalcularDesdeCard}
+              disabled={recalculando}
+              title="Recalcular posiciones y peso automáticamente"
+              className="text-xs px-1 py-0.5 rounded hover:bg-blue-50 disabled:opacity-40 transition-colors"
+              style={{ color: '#254A96', fontSize: 11 }}>
+              {recalculando ? '…' : '↺'}
+            </button>
           )}
         </div>
       </div>
@@ -834,7 +864,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   )
 }
 
-function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock, esTransferencia = false }: {
+function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDragLeave, onDragStart, isDragOver, onCancelar, onCambiarVuelta, onReprogramar, onReprogramarCamion, onEditarPeso, onRecalcularPosiciones, onToggleVolcador, onSepararPedido, onMoverSucursal, onIncidenciaStock, deposito, soloVer = false, bloqueado = false, onToggleLock, esTransferencia = false }: {
   columna: ColumnaKanban; sinAsignar?: boolean
   onDrop: (e: React.DragEvent, cod: string | null) => void
   onDragOver: (e: React.DragEvent, cod: string | null) => void
@@ -844,6 +874,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   onReprogramar: (id: string, fecha: string, vuelta: number, motivo: string) => void
   onReprogramarCamion?: (codigo: string) => void
   onEditarPeso: (id: string, peso: number, posiciones: number) => void
+  onRecalcularPosiciones: (id: string, peso: number, posiciones: number) => void
   onToggleVolcador: (id: string, valor: boolean) => void
   onSepararPedido: (id: string, itemsNuevo: any[], itemsMantener: any[]) => void
   onMoverSucursal: (id: string, sucursal: string) => void
@@ -957,7 +988,7 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} esTransferencia={esTransferencia} />)}
+          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onRecalcularPosiciones={onRecalcularPosiciones} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} esTransferencia={esTransferencia} />)}
       </div>
     </div>
   )
@@ -1507,6 +1538,14 @@ function ProgramacionInner() {
     } catch { showToast('Error al actualizar', 'err') }
   }
 
+  async function handleRecalcularPosiciones(id: string, peso: number, posiciones: number) {
+    const pedido = pedidos.find(p => p.id === id)
+    const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false } : p)
+    setPedidos(act); construirColumnas(act, camiones)
+    showToast(`↺ Recalculado: ${peso} kg · ${posiciones} pos.`)
+    if (userId && pedido) logAuditoria(userId, userNombre, 'Recalculó posiciones', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, peso_nuevo: peso, pos_nuevo: posiciones })
+  }
+
   async function patchPedido(id: string, updates: Record<string, any>) {
     const res = await fetch('/api/pedidos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...updates }) })
     const data = await res.json()
@@ -1932,6 +1971,7 @@ function ProgramacionInner() {
                     onCambiarVuelta={cambiarVueltaTransfer}
                     onReprogramar={reprogramarTransfer}
                     onEditarPeso={() => {}}
+                    onRecalcularPosiciones={() => {}}
                     onToggleVolcador={() => {}}
                     onSepararPedido={() => {}}
                     onMoverSucursal={() => {}}
@@ -1955,6 +1995,7 @@ function ProgramacionInner() {
                         onCambiarVuelta={cambiarVueltaTransfer}
                         onReprogramar={reprogramarTransfer}
                         onEditarPeso={() => {}}
+                        onRecalcularPosiciones={() => {}}
                         onToggleVolcador={() => {}}
                         onSepararPedido={() => {}}
                         onMoverSucursal={() => {}}
@@ -2049,6 +2090,7 @@ function ProgramacionInner() {
                 onCambiarVuelta={handleCambiarVuelta}
                 onReprogramar={handleReprogramar}
                 onEditarPeso={handleEditarPeso}
+                onRecalcularPosiciones={handleRecalcularPosiciones}
                 onToggleVolcador={handleToggleVolcador}
                 onSepararPedido={handleSepararPedido}
                 onMoverSucursal={handleMoverSucursal}
@@ -2070,6 +2112,7 @@ function ProgramacionInner() {
                     onCambiarVuelta={handleCambiarVuelta}
                     onReprogramar={handleReprogramar}
                     onEditarPeso={handleEditarPeso}
+                    onRecalcularPosiciones={handleRecalcularPosiciones}
                     onToggleVolcador={handleToggleVolcador}
                     onSepararPedido={handleSepararPedido}
                     onMoverSucursal={handleMoverSucursal}

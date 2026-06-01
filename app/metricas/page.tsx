@@ -1190,6 +1190,19 @@ const ESTADO_COLOR: Record<string, { bg: string; color: string }> = {
   rechazado:    { bg: '#fde8e8', color: '#E52322' },
 }
 
+type SortDir = 'asc' | 'desc'
+function SortTh({ label, sortKey, active, dir, onClick, numeric = true }: {
+  label: string; sortKey: string; active: boolean; dir: SortDir; onClick: () => void; numeric?: boolean
+}) {
+  const arrow = active ? (dir === 'desc' ? (numeric ? ' ↓' : ' Z→A') : (numeric ? ' ↑' : ' A→Z')) : ''
+  return (
+    <th onClick={onClick} className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:opacity-70 transition-opacity"
+      style={{ color: active ? '#254A96' : '#B9BBB7' }}>
+      {label}{arrow}
+    </th>
+  )
+}
+
 function VistaDiaria({ datos, fecha, camionesNoActivados }: {
   datos: DatosCamionDia[]
   fecha: string
@@ -1200,6 +1213,13 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
   const [filtroCamion, setFiltroCamion] = useState('')
   const [filtroChofer, setFiltroChofer] = useState('')
   const [modalVuelta, setModalVuelta] = useState<{ camion: string; vuelta: DatosVuelta } | null>(null)
+  type SortKeyDia = 'kg' | 'pos' | 'dist' | 'ocup' | 'camion' | 'chofer'
+  const [sortKey, setSortKey] = useState<SortKeyDia>('ocup')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  function toggleSortDia(k: SortKeyDia) {
+    if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(k); setSortDir('desc') }
+  }
 
   if (datos.length === 0) return (
     <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
@@ -1216,6 +1236,17 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
     .filter(d => filtroFlota === 'con_pedidos' ? d.pedidos > 0 : filtroFlota === 'sin_pedidos' ? d.pedidos === 0 : true)
     .filter(d => !filtroCamion || d.camion_codigo === filtroCamion)
     .filter(d => !filtroChofer || d.chofer_nombre === filtroChofer)
+
+  const datosSorted = [...datosFiltrados].sort((a, b) => {
+    let v = 0
+    if (sortKey === 'kg') v = a.kgUsados - b.kgUsados
+    else if (sortKey === 'pos') v = a.posicionesUsadas - b.posicionesUsadas
+    else if (sortKey === 'dist') v = a.distanciaTotalKm - b.distanciaTotalKm
+    else if (sortKey === 'ocup') v = Math.max(a.ocupDiariaPctKg, a.ocupDiariaPctPos) - Math.max(b.ocupDiariaPctKg, b.ocupDiariaPctPos)
+    else if (sortKey === 'camion') v = a.camion_codigo.localeCompare(b.camion_codigo)
+    else if (sortKey === 'chofer') v = a.chofer_nombre.localeCompare(b.chofer_nombre)
+    return sortDir === 'desc' ? -v : v
+  })
 
   const totalPedidos = datosFiltrados.reduce((a, d) => a + d.pedidos, 0)
   const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctKg, 0) / datosFiltrados.length) : 0
@@ -1264,6 +1295,33 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
         )}
       </div>
 
+      {/* Ordenamiento */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-semibold" style={{ color: '#B9BBB7' }}>Ordenar:</span>
+        {([
+          { key: 'ocup', label: 'Ocupación', numeric: true },
+          { key: 'kg', label: 'Kg', numeric: true },
+          { key: 'pos', label: 'Posiciones', numeric: true },
+          { key: 'dist', label: 'Distancia', numeric: true },
+          { key: 'camion', label: 'Camión', numeric: false },
+          { key: 'chofer', label: 'Chofer', numeric: false },
+        ] as const).map(s => {
+          const active = sortKey === s.key
+          const arrow = active ? (sortDir === 'desc' ? (s.numeric ? ' ↓' : ' Z→A') : (s.numeric ? ' ↑' : ' A→Z')) : ''
+          return (
+            <button key={s.key} onClick={() => toggleSortDia(s.key)}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium transition-colors"
+              style={{
+                background: active ? '#254A96' : '#f4f4f3',
+                color: active ? 'white' : '#666',
+                border: active ? 'none' : '1px solid #e8edf8',
+              }}>
+              {s.label}{arrow}
+            </button>
+          )
+        })}
+      </div>
+
       {/* Resumen */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-2">
         {[
@@ -1305,7 +1363,7 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
       })()}
 
       {/* Cards por camión */}
-      {datosFiltrados.map(d => {
+      {datosSorted.map(d => {
         const semaforo = colorSemaforo(Math.max(d.pctKg, d.pctPos))
         return (
           <div key={d.camion_codigo} className="bg-white rounded-xl shadow-sm overflow-hidden" style={{ border: '1px solid #f0f0f0' }}>
@@ -1674,6 +1732,21 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
 
 function VistaMensual({ datos, mes }: { datos: DatosCamionMes[]; mes: string }) {
   const nombreMes = new Date(mes + '-15').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
+  type SortKeyMes = 'camion' | 'ocup_kg' | 'ocup_pos' | 'dist'
+  const [sortKey, setSortKey] = useState<SortKeyMes>('ocup_kg')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  function toggleSort(k: SortKeyMes) {
+    if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(k); setSortDir('desc') }
+  }
+  const datosSorted = [...datos].sort((a, b) => {
+    let v = 0
+    if (sortKey === 'camion') v = a.camion_codigo.localeCompare(b.camion_codigo)
+    else if (sortKey === 'ocup_kg') v = a.avgPctKg - b.avgPctKg
+    else if (sortKey === 'ocup_pos') v = a.avgPctPos - b.avgPctPos
+    else if (sortKey === 'dist') v = a.totalKm - b.totalKm
+    return sortDir === 'desc' ? -v : v
+  })
 
   if (datos.length === 0) return (
     <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
@@ -1714,13 +1787,18 @@ function VistaMensual({ datos, mes }: { datos: DatosCamionMes[]; mes: string }) 
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
-                {['Camión', 'Sucursal', 'Días activo', 'Ocup. kg', 'Ocup. pos', 'Total km', 'Min/km prom', 'Estado'].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
-                ))}
+                <SortTh label="Camión" sortKey="camion" active={sortKey === 'camion'} dir={sortDir} onClick={() => toggleSort('camion')} numeric={false} />
+                <th className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Sucursal</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Días activo</th>
+                <SortTh label="Ocup. kg" sortKey="ocup_kg" active={sortKey === 'ocup_kg'} dir={sortDir} onClick={() => toggleSort('ocup_kg')} />
+                <SortTh label="Ocup. pos" sortKey="ocup_pos" active={sortKey === 'ocup_pos'} dir={sortDir} onClick={() => toggleSort('ocup_pos')} />
+                <SortTh label="Total km" sortKey="dist" active={sortKey === 'dist'} dir={sortDir} onClick={() => toggleSort('dist')} />
+                <th className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Min/km prom</th>
+                <th className="text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Estado</th>
               </tr>
             </thead>
             <tbody>
-              {datos.map((d, i) => {
+              {datosSorted.map((d, i) => {
                 const sem = colorSemaforo(d.avgPctKg)
                 return (
                   <tr key={d.camion_codigo} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>
@@ -1773,6 +1851,26 @@ function VistaMensual({ datos, mes }: { datos: DatosCamionMes[]; mes: string }) 
 // ─── Vista Rango ─────────────────────────────────────────────────────────────────
 
 function VistaRango({ datos, loading, onExport }: { datos: DatosRangoDia[]; loading: boolean; onExport: () => void }) {
+  type SortKeyRango = 'fecha' | 'camion' | 'chofer' | 'kg' | 'pos' | 'dist' | 'ocup_kg' | 'ocup_pos'
+  const [sortKey, setSortKey] = useState<SortKeyRango>('fecha')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  function toggleSort(k: SortKeyRango) {
+    if (sortKey === k) setSortDir(d => d === 'desc' ? 'asc' : 'desc')
+    else { setSortKey(k); setSortDir(k === 'fecha' || k === 'camion' || k === 'chofer' ? 'asc' : 'desc') }
+  }
+  const datosSorted = [...datos].sort((a, b) => {
+    let v = 0
+    if (sortKey === 'fecha') v = a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo)
+    else if (sortKey === 'camion') v = a.camion_codigo.localeCompare(b.camion_codigo)
+    else if (sortKey === 'chofer') v = a.chofer_nombre.localeCompare(b.chofer_nombre)
+    else if (sortKey === 'kg') v = a.kgUsados - b.kgUsados
+    else if (sortKey === 'pos') v = a.posUsadas - b.posUsadas
+    else if (sortKey === 'dist') v = (a.kmReal ?? -1) - (b.kmReal ?? -1)
+    else if (sortKey === 'ocup_kg') v = a.pctKg - b.pctKg
+    else if (sortKey === 'ocup_pos') v = a.pctPos - b.pctPos
+    return sortDir === 'desc' ? -v : v
+  })
+
   if (loading) return (
     <div className="flex justify-center py-24">
       <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
@@ -1831,13 +1929,24 @@ function VistaRango({ datos, loading, onExport }: { datos: DatosRangoDia[]; load
           <table className="w-full text-sm" style={{ minWidth: 900 }}>
             <thead>
               <tr style={{ background: '#f9f9f9', borderBottom: '1px solid #f0f0f0' }}>
-                {['Fecha', 'Día', 'Camión', 'Sucursal', 'Chofer', 'Pedidos', 'Kg', 'Pos', 'Ocup.Kg%', 'Ocup.Pos%', 'Km', 'Inicio', 'Fin', 'Duración'].map(h => (
-                  <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>{h}</th>
-                ))}
+                <SortTh label="Fecha" sortKey="fecha" active={sortKey === 'fecha'} dir={sortDir} onClick={() => toggleSort('fecha')} numeric={false} />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Día</th>
+                <SortTh label="Camión" sortKey="camion" active={sortKey === 'camion'} dir={sortDir} onClick={() => toggleSort('camion')} numeric={false} />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Sucursal</th>
+                <SortTh label="Chofer" sortKey="chofer" active={sortKey === 'chofer'} dir={sortDir} onClick={() => toggleSort('chofer')} numeric={false} />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Pedidos</th>
+                <SortTh label="Kg" sortKey="kg" active={sortKey === 'kg'} dir={sortDir} onClick={() => toggleSort('kg')} />
+                <SortTh label="Pos" sortKey="pos" active={sortKey === 'pos'} dir={sortDir} onClick={() => toggleSort('pos')} />
+                <SortTh label="Ocup.Kg%" sortKey="ocup_kg" active={sortKey === 'ocup_kg'} dir={sortDir} onClick={() => toggleSort('ocup_kg')} />
+                <SortTh label="Ocup.Pos%" sortKey="ocup_pos" active={sortKey === 'ocup_pos'} dir={sortDir} onClick={() => toggleSort('ocup_pos')} />
+                <SortTh label="Km" sortKey="dist" active={sortKey === 'dist'} dir={sortDir} onClick={() => toggleSort('dist')} />
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Inicio</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Fin</th>
+                <th className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: '#B9BBB7' }}>Duración</th>
               </tr>
             </thead>
             <tbody>
-              {datos.map((r, i) => {
+              {datosSorted.map((r, i) => {
                 const esFinde = DIAS_FIN_SEMANA.has(r.diaSemana.toLowerCase())
                 return (
                   <tr key={`${r.fecha}|${r.camion_codigo}`} style={{ borderBottom: '1px solid #f9f9f9', background: i % 2 === 0 ? 'white' : '#fdfdfd' }}>

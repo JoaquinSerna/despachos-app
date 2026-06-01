@@ -22,13 +22,22 @@ export async function POST(req: NextRequest) {
     const { pedido_id, id_despacho, nv, items } = body
 
     if (!pedido_id) return NextResponse.json({ error: 'Falta pedido_id' }, { status: 400 })
+
+    const { foto_urls, foto_labels, motivo } = body
+
+    // Si no hay items, insertar una fila resumen (ej: rechazo sin detalle de productos)
+    const itemsNorm = Array.isArray(items) && items.length > 0
+      ? items
+      : [{ nombre: '(sin detalle de ítems)', cantidad_solicitada: 0, cantidad_entregada: 0, unidad: '' }]
+
+    // Si no hay items Y no hay motivo ni fotos, no hay nada útil que guardar
     if (!Array.isArray(items) || items.length === 0) {
-      // Sin items — se acepta silenciosamente (pedido sin detalle de productos)
-      return NextResponse.json({ success: true, registros: 0 })
+      if (!motivo && (!Array.isArray(foto_urls) || foto_urls.length === 0)) {
+        return NextResponse.json({ success: true, registros: 0 })
+      }
     }
 
-    const { foto_urls } = body
-    const records = items.map((item: any) => ({
+    const records = itemsNorm.map((item: any) => ({
       pedido_id,
       id_despacho: id_despacho ?? null,
       nv: nv ?? null,
@@ -37,6 +46,8 @@ export async function POST(req: NextRequest) {
       cantidad_entregada: Number(item.cantidad_entregada) || 0,
       unidad: item.unidad ?? null,
       foto_urls: Array.isArray(foto_urls) && foto_urls.length > 0 ? foto_urls : [],
+      foto_labels: Array.isArray(foto_labels) && foto_labels.length > 0 ? foto_labels : [],
+      motivo: motivo ?? null,
     }))
 
     const { error } = await getAdmin().from('entrega_detalle').insert(records)

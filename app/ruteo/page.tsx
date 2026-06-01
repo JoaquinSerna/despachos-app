@@ -648,25 +648,25 @@ export default function RuteoPage() {
               ...(accion === 'rechazar' ? { motivo: motivoRechazo } : {}),
             })
         }
-        // Guardar detalle de entrega (entrega completa = todas las cantidades tal como fueron pedidas)
-        if (accion === 'entregar') {
-          fetch('/api/entrega-detalle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pedido_id: modalPedido.id,
-              id_despacho: modalPedido.id_despacho ?? null,
-              nv: modalPedido.nv,
-              foto_urls: data.foto_urls ?? [],
-              items: (modalPedido.items ?? []).map(item => ({
-                nombre: item.nombre,
-                cantidad_solicitada: item.cantidad,
-                cantidad_entregada: item.cantidad,
-                unidad: item.unidad,
-              })),
-            }),
-          }).catch(() => {})
-        }
+        // Guardar detalle de entrega (completa o rechazada)
+        fetch('/api/entrega-detalle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pedido_id: modalPedido.id,
+            id_despacho: modalPedido.id_despacho ?? null,
+            nv: modalPedido.nv,
+            foto_urls: data.foto_urls ?? [],
+            foto_labels: data.foto_labels ?? [],
+            motivo: accion === 'rechazar' ? (motivoRechazo || null) : null,
+            items: (modalPedido.items ?? []).map(item => ({
+              nombre: item.nombre,
+              cantidad_solicitada: item.cantidad,
+              cantidad_entregada: accion === 'rechazar' ? 0 : item.cantidad,
+              unidad: item.unidad,
+            })),
+          }),
+        }).catch(() => {})
         setPedidos(prev => prev.map(p =>
           p.id === modalPedido.id ? { ...p, estado: nuevoEstado, notas: notasNuevas ?? p.notas } : p
         ))

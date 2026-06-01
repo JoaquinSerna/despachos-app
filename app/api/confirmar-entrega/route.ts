@@ -73,6 +73,9 @@ export async function POST(request: NextRequest) {
       success: true,
       fotos: fotosSubidas.length,
       foto_urls: fotosSubidas.map(f => f.publicUrl),
+      foto_labels: fotosSubidas.map(f => f.label ?? ''),
+      motivo: motivoRechazo ?? null,
+      nota: nota ?? null,
     })
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })

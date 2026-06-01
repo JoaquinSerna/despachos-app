@@ -111,6 +111,7 @@ export default function PedidosPage() {
   const [editando, setEditando] = useState<EditState | null>(null)
   const [guardando, setGuardando] = useState(false)
   const [recalculando, setRecalculando] = useState(false)
+  const [recalculandoTodos, setRecalculandoTodos] = useState(false)
 
   // Comentario rápido
   const [modalComentario, setModalComentario] = useState<Pedido | null>(null)
@@ -440,6 +441,31 @@ export default function PedidosPage() {
       setEditando(null)
     }
     setRecalculando(false)
+  }
+
+  async function recalcularTodos() {
+    if (pedidos.length === 0) return
+    setRecalculandoTodos(true)
+    const ids = pedidos.map(p => p.id)
+    const res = await fetch('/api/recalcular-posiciones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pedido_ids: ids }),
+    })
+    const data = await res.json()
+    if (data.error) {
+      showToast(`Error: ${data.error}`, 'err')
+    } else {
+      const resultados: { id: string; posiciones: number; peso_kg: number; items_sin_match: string[] }[] = data.resultados ?? []
+      setPedidos(prev => prev.map(p => {
+        const r = resultados.find(r => r.id === p.id)
+        return r ? { ...p, peso_total_kg: r.peso_kg, volumen_total_m3: r.posiciones } : p
+      }))
+      const sinMatch = resultados.filter(r => r.items_sin_match?.length > 0).length
+      showToast(`↺ ${resultados.length} pedidos recalculados${sinMatch > 0 ? ` · ${sinMatch} con items sin match` : ''}`)
+      if (userId) logAuditoria(userId, userNombre, 'Recalculó posiciones (masivo)', 'Pedidos', { cantidad: resultados.length, sin_match: sinMatch })
+    }
+    setRecalculandoTodos(false)
   }
 
   function abrirTransferencia(p: Pedido) {
@@ -868,11 +894,21 @@ export default function PedidosPage() {
                 style={{ borderColor: '#e8edf8' }} />
             </div>
           </div>
-          <button onClick={() => buscar()} disabled={cargando}
-            className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
-            style={{ background: '#254A96' }}>
-            {cargando ? 'Buscando...' : 'Buscar'}
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => buscar()} disabled={cargando}
+              className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+              style={{ background: '#254A96' }}>
+              {cargando ? 'Buscando...' : 'Buscar'}
+            </button>
+            {puedeEditarPedidos && pedidos.length > 0 && (
+              <button onClick={recalcularTodos} disabled={recalculandoTodos || cargando}
+                className="px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50"
+                style={{ background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0' }}
+                title="Recalcula posiciones y peso de todos los pedidos del resultado actual">
+                {recalculandoTodos ? `⏳ Recalculando ${pedidos.length}...` : `♻️ Recalcular ${pedidos.length} pedidos`}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tabla */}

@@ -1070,6 +1070,7 @@ function ProgramacionInner() {
   const [contadorTransferencias, setContadorTransferencias] = useState(0)
   const [transferencias, setTransferencias] = useState<any[]>([])
   const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
+  const [recalculandoTodos, setRecalculandoTodos] = useState(false)
   const dragTransferRef = useRef<Pedido | null>(null)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
@@ -1538,6 +1539,34 @@ function ProgramacionInner() {
     } catch { showToast('Error al actualizar', 'err') }
   }
 
+  async function handleRecalcularTodos() {
+    if (pedidos.length === 0) return
+    setRecalculandoTodos(true)
+    try {
+      const ids = pedidos.map(p => p.id)
+      const res = await fetch('/api/recalcular-posiciones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedido_ids: ids }),
+      })
+      const data = await res.json()
+      if (data.error) {
+        showToast(`Error: ${data.error}`, 'err')
+      } else {
+        const resultados: { id: string; posiciones: number; peso_kg: number; items_sin_match: string[] }[] = data.resultados ?? []
+        const act = pedidos.map(p => {
+          const r = resultados.find(r => r.id === p.id)
+          return r ? { ...p, peso_total_kg: r.peso_kg, volumen_total_m3: r.posiciones, pedido_grande: false } : p
+        })
+        setPedidos(act); construirColumnas(act, camiones)
+        const sinMatch = resultados.filter(r => r.items_sin_match?.length > 0).length
+        showToast(`↺ ${resultados.length} recalculados${sinMatch > 0 ? ` · ${sinMatch} con items sin match` : ''}`)
+        if (userId) logAuditoria(userId, userNombre, 'Recalculó posiciones (masivo)', 'Programación', { fecha, sucursal, vuelta: vueltaActiva, cantidad: resultados.length, sin_match: sinMatch })
+      }
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+    setRecalculandoTodos(false)
+  }
+
   async function handleRecalcularPosiciones(id: string, peso: number, posiciones: number) {
     const pedido = pedidos.find(p => p.id === id)
     const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false } : p)
@@ -1857,6 +1886,12 @@ function ProgramacionInner() {
                 disabled={cargando || guardando || pedidos.length === 0}
                 className="px-3 py-2 text-sm rounded-lg border transition-colors disabled:opacity-40"
                 style={{ borderColor: '#fbbf24', color: '#b45309', background: '#fef3c7' }}>📅 Reprog. vuelta</button>
+              <button onClick={handleRecalcularTodos} disabled={cargando || guardando || recalculandoTodos || pedidos.length === 0}
+                className="px-3 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-40"
+                style={{ background: '#f0fdf4', color: '#065f46', border: '1px solid #bbf7d0' }}
+                title="Recalcula posiciones y peso de todos los pedidos visibles">
+                {recalculandoTodos ? '⏳…' : '♻️ Recalcular'}
+              </button>
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>

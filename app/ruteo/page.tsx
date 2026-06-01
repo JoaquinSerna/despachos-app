@@ -553,7 +553,7 @@ export default function RuteoPage() {
       const res = await fetch('/api/entrega-parcial', { method: 'POST', body: formData })
       const data = await res.json()
       if (data.success) {
-        // Guardar detalle de entrega parcial con cantidades reales por ítem
+        // Guardar detalle de entrega parcial con cantidades reales, nota y labels de fotos
         fetch('/api/entrega-detalle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -562,6 +562,8 @@ export default function RuteoPage() {
             id_despacho: modalParcial.id_despacho ?? null,
             nv: modalParcial.nv,
             foto_urls: data.foto_urls ?? [],
+            foto_labels: data.foto_labels ?? [],
+            motivo: data.nota || null,
             items: (modalParcial.items ?? []).map((item, i) => ({
               nombre: item.nombre,
               cantidad_solicitada: item.cantidad,
@@ -658,7 +660,7 @@ export default function RuteoPage() {
             nv: modalPedido.nv,
             foto_urls: data.foto_urls ?? [],
             foto_labels: data.foto_labels ?? [],
-            motivo: accion === 'rechazar' ? (motivoRechazo || null) : null,
+            motivo: accion === 'rechazar' ? (motivoRechazo || null) : (data.nota || null),
             items: (modalPedido.items ?? []).map(item => ({
               nombre: item.nombre,
               cantidad_solicitada: item.cantidad,

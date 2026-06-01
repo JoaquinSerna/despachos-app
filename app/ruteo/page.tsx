@@ -11,6 +11,7 @@ import type { jsPDF as JsPDFType } from 'jspdf'
 interface Pedido {
   id: string
   nv: string
+  id_despacho?: string | null
   cliente: string
   direccion: string
   sucursal: string
@@ -116,7 +117,10 @@ export default function RuteoPage() {
       }
 
       setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer', rol: userData?.rol ?? '' })
-      if (userData?.sucursal) setFiltroSucursal(userData.sucursal)
+      // Solo aplicar filtro si la sucursal es una de las sucursales reales (no "TODAS" ni null)
+      if (userData?.sucursal && SUCURSALES.includes(userData.sucursal)) {
+        setFiltroSucursal(userData.sucursal)
+      }
 
       // Si es chofer, buscar el camión asignado para HOY en flota_dia
       if (userData?.rol === 'chofer') {
@@ -549,6 +553,23 @@ export default function RuteoPage() {
       const res = await fetch('/api/entrega-parcial', { method: 'POST', body: formData })
       const data = await res.json()
       if (data.success) {
+        // Guardar detalle de entrega parcial con cantidades reales por ítem
+        fetch('/api/entrega-detalle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pedido_id: modalParcial.id,
+            id_despacho: modalParcial.id_despacho ?? null,
+            nv: modalParcial.nv,
+            foto_urls: data.foto_urls ?? [],
+            items: (modalParcial.items ?? []).map((item, i) => ({
+              nombre: item.nombre,
+              cantidad_solicitada: item.cantidad,
+              cantidad_entregada: cantEntregadas[i] ?? item.cantidad,
+              unidad: item.unidad,
+            })),
+          }),
+        }).catch(() => {})
         setPedidos(prev => prev.map(p => p.id === modalParcial.id ? { ...p, estado: 'entregado_parcial' } : p))
         showToast('Entrega parcial registrada')
         setModalParcial(null); setCantEntregadas({}); setNotaParcial(''); setFotosParcial([])
@@ -626,6 +647,25 @@ export default function RuteoPage() {
               camion: camionSeleccionado, con_nota: !!nota, cant_fotos: fotos.length,
               ...(accion === 'rechazar' ? { motivo: motivoRechazo } : {}),
             })
+        }
+        // Guardar detalle de entrega (entrega completa = todas las cantidades tal como fueron pedidas)
+        if (accion === 'entregar') {
+          fetch('/api/entrega-detalle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pedido_id: modalPedido.id,
+              id_despacho: modalPedido.id_despacho ?? null,
+              nv: modalPedido.nv,
+              foto_urls: data.foto_urls ?? [],
+              items: (modalPedido.items ?? []).map(item => ({
+                nombre: item.nombre,
+                cantidad_solicitada: item.cantidad,
+                cantidad_entregada: item.cantidad,
+                unidad: item.unidad,
+              })),
+            }),
+          }).catch(() => {})
         }
         setPedidos(prev => prev.map(p =>
           p.id === modalPedido.id ? { ...p, estado: nuevoEstado, notas: notasNuevas ?? p.notas } : p

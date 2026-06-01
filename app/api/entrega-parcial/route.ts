@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload photos and link to original pedido
-    const fotosSubidas: { url: string; label: string | null }[] = []
+    const fotosSubidas: { url: string; publicUrl: string; label: string | null }[] = []
     let i = 0
     while (true) {
       const file = formData.get(`foto_${i}`) as File | null
@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
         .from('solicitudes-despacho')
         .upload(fileName, file)
       if (!uploadErr && uploadData?.path) {
-        fotosSubidas.push({ url: uploadData.path, label })
+        const publicUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/solicitudes-despacho/${uploadData.path}`
+        fotosSubidas.push({ url: uploadData.path, publicUrl, label })
       }
       i++
     }
@@ -111,7 +112,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, saldo_id: saldoId, fotos: fotosSubidas.length })
+    return NextResponse.json({
+      success: true,
+      saldo_id: saldoId,
+      fotos: fotosSubidas.length,
+      foto_urls: fotosSubidas.map(f => f.publicUrl),
+    })
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }

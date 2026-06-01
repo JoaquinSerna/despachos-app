@@ -117,7 +117,10 @@ export default function RuteoPage() {
       }
 
       setDatosUsuario({ nombre: userData?.nombre ?? user.email ?? 'Chofer', rol: userData?.rol ?? '' })
-      if (userData?.sucursal) setFiltroSucursal(userData.sucursal)
+      // Solo aplicar filtro si la sucursal es una de las sucursales reales (no "TODAS" ni null)
+      if (userData?.sucursal && SUCURSALES.includes(userData.sucursal)) {
+        setFiltroSucursal(userData.sucursal)
+      }
 
       // Si es chofer, buscar el camión asignado para HOY en flota_dia
       if (userData?.rol === 'chofer') {

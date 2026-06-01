@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
       motivo: motivo ?? null,
     }))
 
-    const { error } = await getAdmin().from('entrega_detalle').insert(records)
+    const admin = getAdmin()
+
+    // Borrar filas anteriores del mismo pedido antes de insertar (manejo de re-confirmaciones)
+    await admin.from('entrega_detalle').delete().eq('pedido_id', pedido_id)
+
+    const { error } = await admin.from('entrega_detalle').insert(records)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     return NextResponse.json({ success: true, registros: records.length })

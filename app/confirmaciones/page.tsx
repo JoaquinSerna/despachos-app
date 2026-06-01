@@ -387,9 +387,8 @@ export default function ConfirmacionesPage() {
             ...p,
             confirmacion_estado: estadoConf,
             fecha_confirmacion: hoy(),
-            // guardamos info de reprog para mostrar en el badge
-            _fecha_original: pedido.fecha_entrega,
-            _vuelta_original: pedido.vuelta,
+            fecha_entrega: savedFecha,   // nueva fecha de entrega
+            vuelta: savedVuelta,          // nueva vuelta
           }
         : p
     ))

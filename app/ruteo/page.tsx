@@ -551,24 +551,22 @@ export default function RuteoPage() {
       const data = await res.json()
       if (data.success) {
         // Guardar detalle de entrega parcial con cantidades reales por ítem
-        const itemsParcial = modalParcial.items ?? []
-        if (itemsParcial.length > 0) {
-          fetch('/api/entrega-detalle', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              pedido_id: modalParcial.id,
-              id_despacho: modalParcial.id_despacho ?? null,
-              nv: modalParcial.nv,
-              items: itemsParcial.map((item, i) => ({
-                nombre: item.nombre,
-                cantidad_solicitada: item.cantidad,
-                cantidad_entregada: cantEntregadas[i] ?? item.cantidad,
-                unidad: item.unidad,
-              })),
-            }),
-          }).catch(() => {})
-        }
+        fetch('/api/entrega-detalle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pedido_id: modalParcial.id,
+            id_despacho: modalParcial.id_despacho ?? null,
+            nv: modalParcial.nv,
+            foto_urls: data.foto_urls ?? [],
+            items: (modalParcial.items ?? []).map((item, i) => ({
+              nombre: item.nombre,
+              cantidad_solicitada: item.cantidad,
+              cantidad_entregada: cantEntregadas[i] ?? item.cantidad,
+              unidad: item.unidad,
+            })),
+          }),
+        }).catch(() => {})
         setPedidos(prev => prev.map(p => p.id === modalParcial.id ? { ...p, estado: 'entregado_parcial' } : p))
         showToast('Entrega parcial registrada')
         setModalParcial(null); setCantEntregadas({}); setNotaParcial(''); setFotosParcial([])
@@ -648,7 +646,7 @@ export default function RuteoPage() {
             })
         }
         // Guardar detalle de entrega (entrega completa = todas las cantidades tal como fueron pedidas)
-        if (accion === 'entregar' && (modalPedido.items ?? []).length > 0) {
+        if (accion === 'entregar') {
           fetch('/api/entrega-detalle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -656,6 +654,7 @@ export default function RuteoPage() {
               pedido_id: modalPedido.id,
               id_despacho: modalPedido.id_despacho ?? null,
               nv: modalPedido.nv,
+              foto_urls: data.foto_urls ?? [],
               items: (modalPedido.items ?? []).map(item => ({
                 nombre: item.nombre,
                 cantidad_solicitada: item.cantidad,
@@ -663,7 +662,7 @@ export default function RuteoPage() {
                 unidad: item.unidad,
               })),
             }),
-          }).catch(() => {}) // fire-and-forget, no bloquea la UI
+          }).catch(() => {})
         }
         setPedidos(prev => prev.map(p =>
           p.id === modalPedido.id ? { ...p, estado: nuevoEstado, notas: notasNuevas ?? p.notas } : p

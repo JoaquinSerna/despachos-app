@@ -37,6 +37,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // disponible_desde = ahora + 30 min (ventana de gracia para reversiones)
+    const disponibleDesde = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+
     const records = itemsNorm.map((item: any) => ({
       pedido_id,
       id_despacho: id_despacho ?? null,
@@ -48,6 +51,7 @@ export async function POST(req: NextRequest) {
       foto_urls: Array.isArray(foto_urls) && foto_urls.length > 0 ? foto_urls : [],
       foto_labels: Array.isArray(foto_labels) && foto_labels.length > 0 ? foto_labels : [],
       motivo: motivo ?? null,
+      disponible_desde: disponibleDesde,
     }))
 
     const admin = getAdmin()

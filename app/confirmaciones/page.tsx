@@ -390,8 +390,8 @@ export default function ConfirmacionesPage() {
     if (error) { showToast('Error al confirmar', 'err') }
     else {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, confirmado_cliente: true, confirmacion_estado: null } : p))
-      showToast('Cliente confirmado ✓')
       if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Confirmó pedido con cliente', 'Confirmaciones', { nv: pedido.nv, cliente: pedido.cliente })
+      if (pedido) await abrirModalWA([pedido], 'confirmado')
     }
     setConfirmando(null)
   }
@@ -410,8 +410,8 @@ export default function ConfirmacionesPage() {
     const { error } = await supabase.from('pedidos').update({ confirmacion_estado: 'no_contesto', fecha_confirmacion: hoy() }).eq('id', pedidoId)
     if (!error) {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, confirmacion_estado: 'no_contesto', fecha_confirmacion: hoy() } : p))
-      showToast('Marcado como no contestó')
       if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Marcó no contestó', 'Confirmaciones', { nv: pedido.nv })
+      if (pedido) await abrirModalWA([pedido], 'no_contesto')
     } else showToast('Error', 'err')
     setConfirmando(null)
   }

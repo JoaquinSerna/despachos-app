@@ -935,7 +935,7 @@ export default function ConfirmacionesPage() {
                 </div>
               </div>
             </div>
-            <div className="divide-y" style={{ divideColor: '#fef3c7' }}>
+            <div className="divide-y" style={{ borderColor: '#fef3c7' }}>
               {pedidosSinProgramar.map(p => (
                 <div key={p.id} className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
                   style={{ background: 'white' }}>

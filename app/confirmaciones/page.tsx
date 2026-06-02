@@ -10,7 +10,7 @@ import { logAuditoria } from '../lib/auditoria'
 interface PedidoItem { nombre: string; cantidad: number; unidad: string }
 
 interface Pedido {
-  id: string; nv: string; cliente: string; telefono: string | null
+  id: string; nv: string; id_despacho: string | null; cliente: string; telefono: string | null
   direccion: string; sucursal: string; fecha_entrega: string; vuelta: number
   estado: string; estado_pago: string | null; camion_id: string | null
   confirmado_cliente: boolean; notas: string | null
@@ -307,6 +307,9 @@ export default function ConfirmacionesPage() {
   const [agrupando, setAgrupando] = useState<string | null>(null)
   const [loadingGruposItems, setLoadingGruposItems] = useState(false)
 
+  // Búsqueda
+  const [filtroBusqueda, setFiltroBusqueda] = useState('')
+
   // Selección manual
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
   const [modoSeleccion, setModoSeleccion] = useState(false)
@@ -353,7 +356,7 @@ export default function ConfirmacionesPage() {
     const fecha = params?.fecha ?? filtroFecha
     const sucursal = params?.sucursal ?? filtroSucursal
     const confirmado = params?.confirmado ?? filtroConfirmado
-    const campos = 'id,nv,cliente,telefono,direccion,sucursal,fecha_entrega,vuelta,estado,estado_pago,camion_id,confirmado_cliente,notas,confirmacion_estado,fecha_confirmacion,grupo_confirmacion'
+    const campos = 'id,nv,id_despacho,cliente,telefono,direccion,sucursal,fecha_entrega,vuelta,estado,estado_pago,camion_id,confirmado_cliente,notas,confirmacion_estado,fecha_confirmacion,grupo_confirmacion'
 
     let q1 = supabase.from('pedidos').select(campos).in('estado', ['programado', 'en_camino']).order('vuelta').order('cliente')
     if (fecha) q1 = q1.eq('fecha_entrega', fecha)
@@ -595,20 +598,32 @@ export default function ConfirmacionesPage() {
     limpiarSeleccion()
   }
 
+  // ─── Filtro de búsqueda ────────────────────────────────────────────────────
+
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  const pedidosFiltrados = filtroBusqueda.trim()
+    ? pedidos.filter(p => {
+        const q = norm(filtroBusqueda.trim())
+        return norm(p.cliente).includes(q)
+          || norm(p.nv).includes(q)
+          || (p.id_despacho && norm(p.id_despacho).includes(q))
+      })
+    : pedidos
+
   // ─── Agrupación por fecha ──────────────────────────────────────────────────
 
   const porFecha: Record<string, Pedido[]> = {}
-  pedidos.forEach(p => {
+  pedidosFiltrados.forEach(p => {
     const fg = (p.confirmacion_estado === 'rechazado_cliente' || p.confirmacion_estado === 'rechazado_cac')
       ? (p.fecha_confirmacion ?? p.fecha_entrega) : p.fecha_entrega
     if (!porFecha[fg]) porFecha[fg] = []
     porFecha[fg].push(p)
   })
 
-  const totalConfirmados = pedidos.filter(p => p.confirmado_cliente).length
-  const totalPendientes = pedidos.filter(p => esPendiente(p)).length
-  const totalEnCamino = pedidos.filter(p => p.estado === 'en_camino').length
-  const totalGestionados = pedidos.filter(p => p.confirmacion_estado).length
+  const totalConfirmados = pedidosFiltrados.filter(p => p.confirmado_cliente).length
+  const totalPendientes = pedidosFiltrados.filter(p => esPendiente(p)).length
+  const totalEnCamino = pedidosFiltrados.filter(p => p.estado === 'en_camino').length
+  const totalGestionados = pedidosFiltrados.filter(p => p.confirmacion_estado).length
 
   const waPreview = modalWA ? buildWAMessages(waTipo, modalWA.pedidos, modalWA.itemsMap, waFranja, modalWA.fechaReprog ? formatFechaCorta(modalWA.fechaReprog) : '') : ''
   const telefonoGrupo = (peds: Pedido[]) => peds.find(p => p.telefono)?.telefono ?? null
@@ -866,8 +881,18 @@ export default function ConfirmacionesPage() {
                 <option value="confirmado">Confirmados</option>
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Buscar</label>
+              <input
+                type="text" value={filtroBusqueda}
+                onChange={e => setFiltroBusqueda(e.target.value)}
+                placeholder="Cliente, NV o SD..."
+                className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={{ borderColor: '#e8edf8', minWidth: 180 }}
+              />
+            </div>
             <button onClick={buscar} className="px-5 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: '#254A96' }}>Buscar</button>
-            <button onClick={() => { setFiltroFecha(''); setFiltroSucursal(''); setFiltroConfirmado('todos'); cargarPedidos({ fecha: '', sucursal: '', confirmado: 'todos' }) }}
+            <button onClick={() => { setFiltroFecha(''); setFiltroSucursal(''); setFiltroConfirmado('todos'); setFiltroBusqueda(''); cargarPedidos({ fecha: '', sucursal: '', confirmado: 'todos' }) }}
               className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>Ver todos</button>
           </div>
         </div>

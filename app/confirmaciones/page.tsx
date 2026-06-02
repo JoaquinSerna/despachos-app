@@ -281,7 +281,9 @@ export default function ConfirmacionesPage() {
   // Filtros
   const [filtroFecha, setFiltroFecha] = useState(hoy())
   const [filtroSucursal, setFiltroSucursal] = useState('')
-  const [filtroConfirmado, setFiltroConfirmado] = useState<'todos' | 'confirmado' | 'sin_confirmar'>('todos')
+  type FiltroEstado = 'todos' | 'sin_programar' | 'sin_confirmar' | 'confirmado' | 'en_camino' | 'no_contesto' | 'rechazado'
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
+  const [pedidosSinProgramar, setPedidosSinProgramar] = useState<Pedido[]>([])
 
   // Modal reprogramar — soporta uno o varios pedidos (grupo)
   const [modalReprog, setModalReprog] = useState<{ pedidos: Pedido[] } | null>(null)
@@ -351,27 +353,45 @@ export default function ConfirmacionesPage() {
     })()
   }, [modalGrupos])
 
-  const cargarPedidos = async (params?: { fecha?: string; sucursal?: string; confirmado?: 'todos' | 'confirmado' | 'sin_confirmar' }) => {
+  const cargarPedidos = async (params?: { fecha?: string; sucursal?: string; estado?: FiltroEstado }) => {
     setCargando(true)
     const fecha = params?.fecha ?? filtroFecha
     const sucursal = params?.sucursal ?? filtroSucursal
-    const confirmado = params?.confirmado ?? filtroConfirmado
+    const estado = params?.estado ?? filtroEstado
     const campos = 'id,nv,id_despacho,cliente,telefono,direccion,sucursal,fecha_entrega,vuelta,estado,estado_pago,camion_id,confirmado_cliente,notas,confirmacion_estado,fecha_confirmacion,grupo_confirmacion'
 
+    // Q1: programado + en_camino
     let q1 = supabase.from('pedidos').select(campos).in('estado', ['programado', 'en_camino']).order('vuelta').order('cliente')
     if (fecha) q1 = q1.eq('fecha_entrega', fecha)
     else q1 = q1.gte('fecha_entrega', hoy())
     if (sucursal) q1 = q1.eq('sucursal', sucursal)
-    if (confirmado === 'confirmado') q1 = q1.eq('confirmado_cliente', true)
-    else if (confirmado === 'sin_confirmar') q1 = q1.eq('confirmado_cliente', false)
+    if (estado === 'confirmado') q1 = q1.eq('confirmado_cliente', true)
+    else if (estado === 'sin_confirmar') q1 = q1.eq('confirmado_cliente', false).is('confirmacion_estado', null)
+    else if (estado === 'en_camino') q1 = q1.eq('estado', 'en_camino')
+    else if (estado === 'no_contesto') q1 = q1.eq('confirmacion_estado', 'no_contesto')
 
+    // Q2: rechazados del día
     let rechazados: Pedido[] = []
-    if (fecha && confirmado !== 'confirmado') {
+    const mostrarRechazados = fecha && (estado === 'todos' || estado === 'rechazado')
+    if (mostrarRechazados) {
       let q2 = supabase.from('pedidos').select(campos).eq('fecha_confirmacion', fecha).in('confirmacion_estado', ['rechazado_cliente', 'rechazado_cac']).order('vuelta').order('cliente')
       if (sucursal) q2 = q2.eq('sucursal', sucursal)
       const { data: r } = await q2
       rechazados = (r ?? []) as Pedido[]
     }
+
+    // Q3: pendientes (sin programar) para la fecha
+    let sinProgramar: Pedido[] = []
+    if (fecha && (estado === 'todos' || estado === 'sin_programar')) {
+      let q3 = supabase.from('pedidos').select(campos).eq('fecha_entrega', fecha).eq('estado', 'pendiente').order('cliente')
+      if (sucursal) q3 = q3.eq('sucursal', sucursal)
+      const { data: sp } = await q3
+      sinProgramar = (sp ?? []) as Pedido[]
+    }
+    setPedidosSinProgramar(sinProgramar)
+
+    // Si el filtro es "sin_programar" no cargamos pedidos programados
+    if (estado === 'sin_programar') { setPedidos([]); setCargando(false); return }
 
     const { data, error } = await q1
     if (error) { showToast('Error al cargar pedidos', 'err'); setCargando(false); return }
@@ -382,7 +402,7 @@ export default function ConfirmacionesPage() {
     setPedidos(merged); setCargando(false)
   }
 
-  const buscar = () => cargarPedidos({ fecha: filtroFecha, sucursal: filtroSucursal, confirmado: filtroConfirmado })
+  const buscar = () => cargarPedidos({ fecha: filtroFecha, sucursal: filtroSucursal, estado: filtroEstado })
 
   // ─── Acciones individuales ────────────────────────────────────────────────
 
@@ -875,10 +895,14 @@ export default function ConfirmacionesPage() {
             </div>
             <div>
               <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Estado</label>
-              <select value={filtroConfirmado} onChange={e => setFiltroConfirmado(e.target.value as any)} className="border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
+              <select value={filtroEstado} onChange={e => setFiltroEstado(e.target.value as FiltroEstado)} className="border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
                 <option value="todos">Todos</option>
+                <option value="sin_programar">⚠ Sin programar</option>
                 <option value="sin_confirmar">Sin confirmar</option>
                 <option value="confirmado">Confirmados</option>
+                <option value="en_camino">🚛 En camino</option>
+                <option value="no_contesto">📵 No contestó</option>
+                <option value="rechazado">🚫 Rechazados</option>
               </select>
             </div>
             <div>
@@ -892,10 +916,54 @@ export default function ConfirmacionesPage() {
               />
             </div>
             <button onClick={buscar} className="px-5 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: '#254A96' }}>Buscar</button>
-            <button onClick={() => { setFiltroFecha(''); setFiltroSucursal(''); setFiltroConfirmado('todos'); setFiltroBusqueda(''); cargarPedidos({ fecha: '', sucursal: '', confirmado: 'todos' }) }}
+            <button onClick={() => { setFiltroFecha(''); setFiltroSucursal(''); setFiltroEstado('todos'); setFiltroBusqueda(''); cargarPedidos({ fecha: '', sucursal: '', estado: 'todos' }) }}
               className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>Ver todos</button>
           </div>
         </div>
+
+        {/* Panel pedidos sin programar */}
+        {pedidosSinProgramar.length > 0 && (
+          <div className="mb-5 rounded-xl overflow-hidden" style={{ border: '1px solid #fcd34d' }}>
+            <div className="px-4 py-3 flex items-center justify-between" style={{ background: '#fef3c7' }}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">⚠️</span>
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: '#92400e' }}>
+                    {pedidosSinProgramar.length} pedido{pedidosSinProgramar.length > 1 ? 's' : ''} sin programar para esta fecha
+                  </p>
+                  <p className="text-xs" style={{ color: '#b45309' }}>Revisá con el área de programación antes de confirmar con el cliente</p>
+                </div>
+              </div>
+            </div>
+            <div className="divide-y" style={{ divideColor: '#fef3c7' }}>
+              {pedidosSinProgramar.map(p => (
+                <div key={p.id} className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
+                  style={{ background: 'white' }}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>{p.cliente}</span>
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#92400e' }}>NV {p.nv}</span>
+                        {p.id_despacho && <span className="text-xs" style={{ color: '#B9BBB7' }}>SD {p.id_despacho}</span>}
+                        <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: '#fde8e8', color: '#E52322', fontWeight: 600 }}>Sin camión asignado</span>
+                        {p.estado_pago === 'pago_en_obra' && <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{ background: '#ffedd5', color: '#9a3412' }}>💰 P.Obra</span>}
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>📍 {p.direccion}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {p.telefono && (
+                      <a href={`tel:${p.telefono}`} className="text-xs font-medium" style={{ color: '#254A96' }}>{p.telefono}</a>
+                    )}
+                    <button onClick={() => abrirModalWA([p], 'aviso')}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold"
+                      style={{ background: '#dcfce7', color: '#166534' }}>💬 WA</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Lista */}
         {Object.keys(porFecha).length === 0 ? (

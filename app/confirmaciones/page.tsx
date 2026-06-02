@@ -429,12 +429,28 @@ export default function ConfirmacionesPage() {
 
   const deshacerEstado = async (pedidoId: string) => {
     const pedido = pedidos.find(p => p.id === pedidoId)
+    const esRechazado = pedido?.confirmacion_estado === 'rechazado_cliente' || pedido?.confirmacion_estado === 'rechazado_cac'
     const updates: any = { confirmacion_estado: null, fecha_confirmacion: null, confirmado_cliente: false }
     if (pedido?.estado === 'en_camino') updates.estado = 'programado'
     const { error } = await supabase.from('pedidos').update(updates).eq('id', pedidoId)
     if (!error) {
       setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, ...updates } : p))
+      if (esRechazado) {
+        showToast('Badge limpiado. La fecha ya fue cambiada — corregila desde el módulo Pedidos si es necesario.', 'ok')
+      }
       if (usuario && pedido) logAuditoria(usuario.id, nombreUsuario, 'Deshizo estado confirmación', 'Confirmaciones', { nv: pedido.nv })
+    }
+  }
+
+  const deshacerGrupo = async (grupoId: string) => {
+    const gruPedidos = pedidos.filter(p => p.grupo_confirmacion === grupoId)
+    const ids = gruPedidos.map(p => p.id)
+    const updates: any = { confirmacion_estado: null, fecha_confirmacion: null, confirmado_cliente: false }
+    const { error } = await supabase.from('pedidos').update(updates).in('id', ids)
+    if (!error) {
+      setPedidos(prev => prev.map(p => ids.includes(p.id) ? { ...p, ...updates, estado: p.estado === 'en_camino' ? 'programado' : p.estado } : p))
+      showToast('Estado del grupo revertido')
+      if (usuario) logAuditoria(usuario.id, nombreUsuario, 'Deshizo estado del grupo', 'Confirmaciones', { nvs: gruPedidos.map(p => p.nv) })
     }
   }
 
@@ -889,6 +905,7 @@ export default function ConfirmacionesPage() {
                         onNoContesoGrupo={() => noContesoGrupo(gPedidos)}
                         onEnCaminoGrupo={() => marcarEnCaminoGrupo(gPedidos)}
                         onRechazarGrupo={() => { setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('cliente'); setModalReprog({ pedidos: gPedidos.filter(esPendiente) }) }}
+                        onDeshacerGrupo={() => deshacerGrupo(grupoId)}
                         onConfirmar={confirmarCliente} onDesconfirmar={desconfirmarCliente}
                         onNoContesto={marcarNoContesto} onEnCamino={marcarEnCamino}
                         onRechazar={(p) => { setReprogFecha(''); setReprogVuelta(1); setReprogMotivo('cliente'); setModalReprog({ pedidos: [p] }) }}
@@ -1027,12 +1044,12 @@ function PedidoCard({ pedido, confirmando, marcandoEnCamino, editDireccion, modo
 
 // ─── GrupoCard ────────────────────────────────────────────────────────────────
 
-function GrupoCard({ grupoId, pedidos, confirmando, marcandoEnCamino, editDirecciones, modoSeleccion, seleccionados, onConfirmarGrupo, onNoContesoGrupo, onEnCaminoGrupo, onRechazarGrupo, onConfirmar, onDesconfirmar, onNoContesto, onEnCamino, onRechazar, onWA, onDesagrupar, onDeshacerEstado, onToggleSeleccion, onEditDireccion, onGuardarDireccion }: {
+function GrupoCard({ grupoId, pedidos, confirmando, marcandoEnCamino, editDirecciones, modoSeleccion, seleccionados, onConfirmarGrupo, onNoContesoGrupo, onEnCaminoGrupo, onRechazarGrupo, onDeshacerGrupo, onConfirmar, onDesconfirmar, onNoContesto, onEnCamino, onRechazar, onWA, onDesagrupar, onDeshacerEstado, onToggleSeleccion, onEditDireccion, onGuardarDireccion }: {
   grupoId: string; pedidos: Pedido[]
   confirmando: string | null; marcandoEnCamino: string | null
   editDirecciones: Record<string, string>; modoSeleccion: boolean; seleccionados: Set<string>
   onConfirmarGrupo: () => void; onNoContesoGrupo: () => void
-  onEnCaminoGrupo: () => void; onRechazarGrupo: () => void
+  onEnCaminoGrupo: () => void; onRechazarGrupo: () => void; onDeshacerGrupo: () => void
   onConfirmar: (id: string) => void; onDesconfirmar: (id: string) => void
   onNoContesto: (id: string) => void; onEnCamino: (p: Pedido) => void
   onRechazar: (p: Pedido) => void; onWA: (peds: Pedido[]) => void
@@ -1064,6 +1081,10 @@ function GrupoCard({ grupoId, pedidos, confirmando, marcandoEnCamino, editDirecc
             <button onClick={onDesagrupar}
               className="text-xs px-2 py-1 rounded-lg"
               style={{ background: 'white', color: '#6366f1', border: '1px solid #c7d2fe' }}>Separar</button>
+            <button onClick={onDeshacerGrupo}
+              className="text-xs px-2 py-1 rounded-lg"
+              style={{ background: 'white', color: '#B9BBB7', border: '1px solid #e8edf8' }}
+              title="Revertir todos los estados del grupo">↺ Deshacer todo</button>
           </div>
         </div>
 

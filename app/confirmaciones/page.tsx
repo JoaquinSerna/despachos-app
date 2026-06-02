@@ -312,6 +312,7 @@ export default function ConfirmacionesPage() {
 
   // Búsqueda
   const [filtroBusqueda, setFiltroBusqueda] = useState('')
+  const [sinProgramarExpanded, setSinProgramarExpanded] = useState(false)
 
   // Selección manual
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
@@ -924,17 +925,27 @@ export default function ConfirmacionesPage() {
         {/* Panel pedidos sin programar */}
         {pedidosSinProgramar.length > 0 && (
           <div className="mb-5 rounded-xl overflow-hidden" style={{ border: '1px solid #fcd34d' }}>
-            <div className="px-4 py-3 flex items-center justify-between" style={{ background: '#fef3c7' }}>
+            <button
+              onClick={() => setSinProgramarExpanded(v => !v)}
+              className="w-full px-4 py-3 flex items-center justify-between text-left"
+              style={{ background: '#fef3c7' }}>
               <div className="flex items-center gap-2">
                 <span className="text-lg">⚠️</span>
                 <div>
                   <p className="text-sm font-semibold" style={{ color: '#92400e' }}>
                     {pedidosSinProgramar.length} pedido{pedidosSinProgramar.length > 1 ? 's' : ''} sin programar para esta fecha
                   </p>
-                  <p className="text-xs" style={{ color: '#b45309' }}>Revisá con el área de programación antes de confirmar con el cliente</p>
+                  {!sinProgramarExpanded && (
+                    <p className="text-xs" style={{ color: '#b45309' }}>Revisá con el área de programación antes de confirmar con el cliente</p>
+                  )}
                 </div>
               </div>
-            </div>
+              <span className="text-xs px-2 py-1 rounded-lg shrink-0 ml-2"
+                style={{ background: '#fde68a', color: '#92400e' }}>
+                {sinProgramarExpanded ? '▲ Ocultar' : '▼ Ver'}
+              </span>
+            </button>
+            {sinProgramarExpanded && (
             <div className="divide-y" style={{ borderColor: '#fef3c7' }}>
               {pedidosSinProgramar.map(p => (
                 <div key={p.id} className="px-4 py-3 flex items-center justify-between flex-wrap gap-2"
@@ -962,6 +973,7 @@ export default function ConfirmacionesPage() {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 

@@ -30,6 +30,8 @@ interface WAModalData {
 
 interface PropuestaGrupo { key: string; pedidoIds: string[] }
 
+type FiltroEstado = 'todos' | 'sin_programar' | 'sin_confirmar' | 'confirmado' | 'en_camino' | 'no_contesto' | 'rechazado'
+
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const VUELTA_LABEL: Record<number, string> = {
@@ -281,7 +283,6 @@ export default function ConfirmacionesPage() {
   // Filtros
   const [filtroFecha, setFiltroFecha] = useState(hoy())
   const [filtroSucursal, setFiltroSucursal] = useState('')
-  type FiltroEstado = 'todos' | 'sin_programar' | 'sin_confirmar' | 'confirmado' | 'en_camino' | 'no_contesto' | 'rechazado'
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
   const [pedidosSinProgramar, setPedidosSinProgramar] = useState<Pedido[]>([])
 
@@ -498,8 +499,8 @@ export default function ConfirmacionesPage() {
     const { error } = await supabase.from('pedidos').update({ confirmado_cliente: true, confirmacion_estado: null, fecha_confirmacion: null }).in('id', ids)
     if (error) { showToast('Error al confirmar', 'err'); return }
     setPedidos(prev => prev.map(p => ids.includes(p.id) ? { ...p, confirmado_cliente: true, confirmacion_estado: null } : p))
-    showToast(`${pendientes.length} pedido${pendientes.length > 1 ? 's' : ''} confirmado${pendientes.length > 1 ? 's' : ''} ✓`)
     if (usuario) logAuditoria(usuario.id, nombreUsuario, 'Confirmó grupo', 'Confirmaciones', { nvs: pendientes.map(p => p.nv) })
+    await abrirModalWA(pendientes, 'confirmado')
   }
 
   const noContesoGrupo = async (gruPedidos: Pedido[]) => {
@@ -509,7 +510,8 @@ export default function ConfirmacionesPage() {
     const { error } = await supabase.from('pedidos').update({ confirmacion_estado: 'no_contesto', fecha_confirmacion: hoy() }).in('id', ids)
     if (!error) {
       setPedidos(prev => prev.map(p => ids.includes(p.id) ? { ...p, confirmacion_estado: 'no_contesto', fecha_confirmacion: hoy() } : p))
-      showToast(`${pendientes.length} marcados como no contestó`)
+      if (usuario) logAuditoria(usuario.id, nombreUsuario, 'Marcó no contestó (grupo)', 'Confirmaciones', { nvs: pendientes.map(p => p.nv) })
+      await abrirModalWA(pendientes, 'no_contesto')
     }
   }
 
@@ -832,15 +834,8 @@ export default function ConfirmacionesPage() {
               <span className="text-xs ml-2 hidden sm:inline" style={{ color: '#B9BBB7' }}>{nombreUsuario}</span>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => { setModoSeleccion(v => !v); if (modoSeleccion) limpiarSeleccion() }}
-              className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
-              style={{ background: modoSeleccion ? '#e8edf8' : '#f4f4f3', color: modoSeleccion ? '#254A96' : '#666' }}>
-              {modoSeleccion ? '✕ Cancelar selección' : '☑ Seleccionar'}
-            </button>
-            <button onClick={() => { supabase.auth.signOut(); router.push('/') }}
-              className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>Salir</button>
-          </div>
+          <button onClick={() => { supabase.auth.signOut(); router.push('/') }}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>Salir</button>
         </div>
       </nav>
 
@@ -916,6 +911,11 @@ export default function ConfirmacionesPage() {
               />
             </div>
             <button onClick={buscar} className="px-5 py-2 rounded-lg text-sm font-semibold text-white" style={{ background: '#254A96' }}>Buscar</button>
+            <button onClick={() => { setModoSeleccion(v => !v); if (modoSeleccion) limpiarSeleccion() }}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              style={{ background: modoSeleccion ? '#e8edf8' : '#f4f4f3', color: modoSeleccion ? '#254A96' : '#666', border: modoSeleccion ? '1px solid #254A96' : '1px solid #e8edf8' }}>
+              {modoSeleccion ? '✕ Cancelar' : '☑ Agrupar manual'}
+            </button>
             <button onClick={() => { setFiltroFecha(''); setFiltroSucursal(''); setFiltroEstado('todos'); setFiltroBusqueda(''); cargarPedidos({ fecha: '', sucursal: '', estado: 'todos' }) }}
               className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: '#f4f4f3', color: '#666' }}>Ver todos</button>
           </div>

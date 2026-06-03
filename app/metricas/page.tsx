@@ -334,11 +334,16 @@ export default function MetricasPage() {
       const camionMap: Record<string, any> = {}
       for (const c of camionesData ?? []) camionMap[c.codigo] = c
 
-      // Cargar pedido_items para detectar hierros
+      // Cargar pedido_items en lotes de 500 (evita truncado de PostgREST a 1000 filas)
       const pedidoIdsExport = (pedidosData ?? []).map((p: any) => p.id)
-      const { data: itemsExport } = pedidoIdsExport.length > 0
-        ? await supabase.from('pedido_items').select('pedido_id, nombre').in('pedido_id', pedidoIdsExport)
-        : { data: [] as any[] }
+      const allItemsExport: any[] = []
+      for (let i = 0; i < pedidoIdsExport.length; i += 500) {
+        const batch = pedidoIdsExport.slice(i, i + 500)
+        const { data: batchItems } = await supabase.from('pedido_items')
+          .select('pedido_id, nombre').in('pedido_id', batch)
+        if (batchItems) allItemsExport.push(...batchItems)
+      }
+      const itemsExport = allItemsExport
 
       const matTipoMapEx: Record<string, string> = {}
       for (const m of matsExport ?? []) matTipoMapEx[m.nombre] = m.tipo_carga
@@ -402,65 +407,112 @@ export default function MetricasPage() {
       ), 'Pedidos')
 
       // Hoja 2: Resumen por día
-      const byDia: Record<string, { pedidos: number; kg: number; pos: number; entregados: number; rechazados: number }> = {}
+      const byDia: Record<string, { pedidos: number; kg: number; pos: number; completos: number; parciales: number; rechazados: number }> = {}
       for (const p of pedidosData ?? []) {
-        if (!byDia[p.fecha_entrega]) byDia[p.fecha_entrega] = { pedidos: 0, kg: 0, pos: 0, entregados: 0, rechazados: 0 }
+        if (!byDia[p.fecha_entrega]) byDia[p.fecha_entrega] = { pedidos: 0, kg: 0, pos: 0, completos: 0, parciales: 0, rechazados: 0 }
         byDia[p.fecha_entrega].pedidos++
         byDia[p.fecha_entrega].kg += p.peso_total_kg ?? 0
         byDia[p.fecha_entrega].pos += p.volumen_total_m3 ?? 0
-        if (p.estado === 'entregado' || p.estado === 'entregado_parcial') byDia[p.fecha_entrega].entregados++
-        if (p.estado === 'rechazado') byDia[p.fecha_entrega].rechazados++
+        if (p.estado === 'entregado') byDia[p.fecha_entrega].completos++
+        else if (p.estado === 'entregado_parcial') byDia[p.fecha_entrega].parciales++
+        else if (p.estado === 'rechazado') byDia[p.fecha_entrega].rechazados++
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
-        Object.entries(byDia).sort((a, b) => a[0].localeCompare(b[0])).map(([f, d]) => ({
-          'Fecha': f,
-          'Día': new Date(f + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
-          'Pedidos': d.pedidos, 'Entregados': d.entregados, 'Rechazados': d.rechazados,
-          '% Entrega': d.pedidos > 0 ? Math.round(d.entregados / d.pedidos * 100) : 0,
-          'Kg totales': Math.round(d.kg), 'Posiciones': Math.round(d.pos),
-        }))
+        Object.entries(byDia).sort((a, b) => a[0].localeCompare(b[0])).map(([f, d]) => {
+          const finalizados = d.completos + d.parciales + d.rechazados
+          return {
+            'Fecha': f,
+            'Día': new Date(f + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
+            'Pedidos total': d.pedidos,
+            'Entregados completos': d.completos,
+            'Entregados parciales': d.parciales,
+            'Rechazados': d.rechazados,
+            'Sin finalizar': d.pedidos - finalizados,
+            '% Entrega completa': finalizados > 0 ? Math.round(d.completos / finalizados * 100) : 0,
+            '% Entrega (incl. parcial)': finalizados > 0 ? Math.round((d.completos + d.parciales) / finalizados * 100) : 0,
+            'Kg totales': Math.round(d.kg),
+            'Posiciones': Math.round(d.pos),
+          }
+        })
       ), 'Por día')
 
       // Hoja 3: Resumen por camión
-      const byTruck: Record<string, { diasActivo: number; pedidos: number; kg: number; pos: number; km: number; capKg: number; capPos: number }> = {}
+      // Precalcular vueltas reales por camión/día para capacidad correcta
+      const vueltasPorCamionDia: Record<string, Set<number>> = {}
+      for (const p of pedidosData ?? []) {
+        if (!p.camion_id || !p.vuelta) continue
+        const key = `${p.camion_id}|${p.fecha_entrega}`
+        if (!vueltasPorCamionDia[key]) vueltasPorCamionDia[key] = new Set()
+        vueltasPorCamionDia[key].add(p.vuelta)
+      }
+
+      const byTruck: Record<string, { diasActivo: number; pedidos: number; kg: number; pos: number; km: number; capKg: number; capPos: number; totalVueltas: number }> = {}
       for (const f of flotaData ?? []) {
-        if (!byTruck[f.camion_codigo]) byTruck[f.camion_codigo] = { diasActivo: 0, pedidos: 0, kg: 0, pos: 0, km: 0, capKg: 0, capPos: 0 }
-        byTruck[f.camion_codigo].diasActivo++; byTruck[f.camion_codigo].km += f.km_ruta ?? 0
+        if (!byTruck[f.camion_codigo]) byTruck[f.camion_codigo] = { diasActivo: 0, pedidos: 0, kg: 0, pos: 0, km: 0, capKg: 0, capPos: 0, totalVueltas: 0 }
+        byTruck[f.camion_codigo].diasActivo++
+        byTruck[f.camion_codigo].km += f.km_ruta ?? 0
+        // Vueltas reales del día (mínimo 1 para no dividir por 0)
+        const vueltasEseDia = vueltasPorCamionDia[`${f.camion_codigo}|${f.fecha}`]?.size ?? 1
+        byTruck[f.camion_codigo].totalVueltas += vueltasEseDia
         const c = camionMap[f.camion_codigo]
-        if (c) { byTruck[f.camion_codigo].capKg += c.tonelaje_max_kg; byTruck[f.camion_codigo].capPos += c.posiciones_total }
+        if (c) {
+          byTruck[f.camion_codigo].capKg += c.tonelaje_max_kg * vueltasEseDia
+          byTruck[f.camion_codigo].capPos += c.posiciones_total * vueltasEseDia
+        }
       }
       for (const p of pedidosData ?? []) {
         if (!p.camion_id) continue
-        if (!byTruck[p.camion_id]) byTruck[p.camion_id] = { diasActivo: 0, pedidos: 0, kg: 0, pos: 0, km: 0, capKg: 0, capPos: 0 }
-        byTruck[p.camion_id].pedidos++; byTruck[p.camion_id].kg += p.peso_total_kg ?? 0; byTruck[p.camion_id].pos += p.volumen_total_m3 ?? 0
+        if (!byTruck[p.camion_id]) byTruck[p.camion_id] = { diasActivo: 0, pedidos: 0, kg: 0, pos: 0, km: 0, capKg: 0, capPos: 0, totalVueltas: 0 }
+        byTruck[p.camion_id].pedidos++
+        byTruck[p.camion_id].kg += p.peso_total_kg ?? 0
+        byTruck[p.camion_id].pos += p.volumen_total_m3 ?? 0
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
         Object.entries(byTruck).sort((a, b) => b[1].kg - a[1].kg).map(([cod, d]) => {
           const c = camionMap[cod]
+          const avgVueltas = d.diasActivo > 0 ? Math.round(d.totalVueltas / d.diasActivo * 10) / 10 : 0
           return {
             'Camión': cod, 'Tipo': c?.tipo_unidad ?? '', 'Sucursal': c?.sucursal ?? '',
-            'Días activo': d.diasActivo, 'Pedidos': d.pedidos,
-            'Kg totales': Math.round(d.kg), 'Avg Ocup. Kg %': d.capKg > 0 ? Math.round(d.kg / d.capKg * 100) : 0,
-            'Pos totales': Math.round(d.pos), 'Avg Ocup. Pos %': d.capPos > 0 ? Math.round(d.pos / d.capPos * 100) : 0,
+            'Días activo': d.diasActivo,
+            'Vueltas totales': d.totalVueltas,
+            'Avg vueltas/día': avgVueltas,
+            'Pedidos': d.pedidos,
+            'Kg totales': Math.round(d.kg),
+            'Avg Ocup. Kg %': d.capKg > 0 ? Math.round(d.kg / d.capKg * 100) : 0,
+            'Pos totales': Math.round(d.pos),
+            'Avg Ocup. Pos %': d.capPos > 0 ? Math.round(d.pos / d.capPos * 100) : 0,
             'Km totales': Math.round(d.km),
           }
         })
       ), 'Por camión')
 
       // Hoja 4: Por sucursal
-      const bySuc: Record<string, { pedidos: number; kg: number; pos: number; entregados: number; rechazados: number }> = {}
+      const bySuc: Record<string, { pedidos: number; kg: number; pos: number; completos: number; parciales: number; rechazados: number }> = {}
       for (const p of pedidosData ?? []) {
-        if (!bySuc[p.sucursal]) bySuc[p.sucursal] = { pedidos: 0, kg: 0, pos: 0, entregados: 0, rechazados: 0 }
-        bySuc[p.sucursal].pedidos++; bySuc[p.sucursal].kg += p.peso_total_kg ?? 0; bySuc[p.sucursal].pos += p.volumen_total_m3 ?? 0
-        if (p.estado === 'entregado' || p.estado === 'entregado_parcial') bySuc[p.sucursal].entregados++
-        if (p.estado === 'rechazado') bySuc[p.sucursal].rechazados++
+        if (!bySuc[p.sucursal]) bySuc[p.sucursal] = { pedidos: 0, kg: 0, pos: 0, completos: 0, parciales: 0, rechazados: 0 }
+        bySuc[p.sucursal].pedidos++
+        bySuc[p.sucursal].kg += p.peso_total_kg ?? 0
+        bySuc[p.sucursal].pos += p.volumen_total_m3 ?? 0
+        if (p.estado === 'entregado') bySuc[p.sucursal].completos++
+        else if (p.estado === 'entregado_parcial') bySuc[p.sucursal].parciales++
+        else if (p.estado === 'rechazado') bySuc[p.sucursal].rechazados++
       }
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
-        Object.entries(bySuc).sort((a, b) => b[1].pedidos - a[1].pedidos).map(([s, d]) => ({
-          'Sucursal': s, 'Pedidos': d.pedidos, 'Entregados': d.entregados, 'Rechazados': d.rechazados,
-          '% Entrega': d.pedidos > 0 ? Math.round(d.entregados / d.pedidos * 100) : 0,
-          'Kg totales': Math.round(d.kg), 'Posiciones': Math.round(d.pos),
-        }))
+        Object.entries(bySuc).sort((a, b) => b[1].pedidos - a[1].pedidos).map(([s, d]) => {
+          const finalizados = d.completos + d.parciales + d.rechazados
+          return {
+            'Sucursal': s,
+            'Pedidos total': d.pedidos,
+            'Entregados completos': d.completos,
+            'Entregados parciales': d.parciales,
+            'Rechazados': d.rechazados,
+            'Sin finalizar': d.pedidos - finalizados,
+            '% Entrega completa': finalizados > 0 ? Math.round(d.completos / finalizados * 100) : 0,
+            '% Entrega (incl. parcial)': finalizados > 0 ? Math.round((d.completos + d.parciales) / finalizados * 100) : 0,
+            'Kg totales': Math.round(d.kg),
+            'Posiciones': Math.round(d.pos),
+          }
+        })
       ), 'Por sucursal')
 
       // Hoja 5: Por vuelta — estimación de tiempos
@@ -536,10 +588,10 @@ export default function MetricasPage() {
             'Fin vuelta (real)': hFinV,
             'Duración vuelta (min)': durRealV ?? '',
             'Duración vuelta': durRealV ? formatMinutos(durRealV) : '',
-            'Inicio día': hInicioDia,
-            'Fin día': hFinDia,
-            'Duración día (min)': durRealDia ?? '',
-            'Km reales día': flota?.km_ruta ?? '',
+            'Inicio día (todas las vueltas)': hInicioDia,
+            'Fin día (todas las vueltas)': hFinDia,
+            'Duración día total (min)': durRealDia ?? '',
+            'Km reales día total': flota?.km_ruta ?? '',
           }
         })
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porVueltaRows), 'Por vuelta')

@@ -1139,15 +1139,28 @@ export default function RuteoPage() {
                       <div key={i} className="rounded-xl p-3 border"
                         style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
                         <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
                           <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? item.cantidad) - 1) }))}
-                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
                             style={{ background: '#f4f4f3', color: '#666' }}>−</button>
-                          <span className="text-sm font-semibold flex-1 text-center" style={{ color: '#254A96' }}>
-                            {entregado} / {item.cantidad} {item.unidad}
-                          </span>
+                          <div className="flex items-center gap-1 flex-1 justify-center">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={entregado}
+                              onChange={e => {
+                                const raw = e.target.value.replace(/[^\d]/g, '')
+                                const n = raw === '' ? 0 : Math.min(item.cantidad, Math.max(0, parseInt(raw)))
+                                setCantEntregadas(prev => ({ ...prev, [i]: n }))
+                              }}
+                              onFocus={e => e.target.select()}
+                              className="w-12 text-sm font-bold text-center rounded-lg border focus:outline-none focus:ring-2"
+                              style={{ color: '#254A96', borderColor: '#e8edf8', focusRingColor: '#254A96', padding: '4px' } as any}
+                            />
+                            <span className="text-xs" style={{ color: '#B9BBB7' }}>/ {item.cantidad} {item.unidad}</span>
+                          </div>
                           <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.min(item.cantidad, (prev[i] ?? item.cantidad) + 1) }))}
-                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center"
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
                             style={{ background: '#f4f4f3', color: '#666' }}>+</button>
                           {pendiente > 0 && <span className="text-xs shrink-0" style={{ color: '#b45309' }}>Saldo: {pendiente}</span>}
                         </div>

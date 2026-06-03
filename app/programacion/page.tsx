@@ -63,7 +63,7 @@ function vueltasDisponibles(fecha: string): number[] {
 }
 function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
 function posColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
-function pct(peso: number, max: number) { return max === 0 ? 0 : Math.min(100, Math.round(peso / max * 100)) }
+function pct(peso: number, max: number) { return max === 0 ? 0 : Math.round(peso / max * 100) }
 function colorBarra(p: number) { return p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
 
 function localidadDeDireccion(dir: string): string {
@@ -961,11 +961,11 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
               )}
             </div>
             <div className="w-full rounded-full h-1.5 mb-0.5" style={{ background: '#f0f0f0' }}>
-              <div className="h-1.5 rounded-full transition-all" style={{ width: `${p}%`, background: colorBarra(p) }} />
+              <div className="h-1.5 rounded-full transition-all" style={{ width: `${Math.min(p, 100)}%`, background: colorBarra(p) }} />
             </div>
             {camion.posiciones_total > 0 && (
               <div className="w-full rounded-full h-1 mb-1" style={{ background: '#f0f0f0' }}>
-                <div className="h-1 rounded-full transition-all" style={{ width: `${pPos}%`, background: colorBarra(pPos) }} />
+                <div className="h-1 rounded-full transition-all" style={{ width: `${Math.min(pPos, 100)}%`, background: colorBarra(pPos) }} />
               </div>
             )}
             <div className="flex justify-between items-center text-xs" style={{ color: '#B9BBB7' }}>

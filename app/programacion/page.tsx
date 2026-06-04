@@ -61,8 +61,9 @@ function vueltasDisponibles(fecha: string): number[] {
   const horaActual = new Date().getHours()
   return TODAS_VUELTAS.map(v => v.num).filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
 }
-function pesoColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
-function posColumna(ps: Pedido[]) { return ps.reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
+const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado'])
+function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
+function posColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.round(peso / max * 100) }
 function colorBarra(p: number) { return p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
 
@@ -467,19 +468,51 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
   const mananaStr = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0] })()
   const esReprogramado = pedido.notas?.startsWith('⚡')
   const esRetiro = pedido.tipo === 'retiro'
-  const borderColor = esRetiro ? '#0d9488' : pedido.pedido_grande ? '#f59e0b' : esReprogramado ? '#fbbf24' : '#f0f0f0'
-  const bgColor = esRetiro ? '#f0fdfa' : pedido.pedido_grande ? '#fffbeb' : 'white'
+
+  // Estados finalizados — se muestran "apagados" para no confundirse con los activos
+  const esEnCamino = pedido.estado === 'en_camino'
+  const esEntregado = pedido.estado === 'entregado'
+  const esParcial = pedido.estado === 'entregado_parcial'
+  const esRechazado = pedido.estado === 'rechazado'
+  const esFinalizado = esEnCamino || esEntregado || esParcial || esRechazado
+
+  const ESTADO_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+    en_camino:        { label: '🚛 En camino',  bg: '#dbeafe', color: '#1d4ed8' },
+    entregado:        { label: '✓ Entregado',   bg: '#d1fae5', color: '#065f46' },
+    entregado_parcial:{ label: '½ Parcial',     bg: '#fef3c7', color: '#b45309' },
+    rechazado:        { label: '✕ Rechazado',   bg: '#fde8e8', color: '#E52322' },
+  }
+  const estadoBadge = esFinalizado ? ESTADO_BADGE[pedido.estado] : null
+
+  const borderColor = esFinalizado
+    ? (esEntregado ? '#bbf7d0' : esParcial ? '#fde68a' : esRechazado ? '#fca5a5' : '#93c5fd')
+    : esRetiro ? '#0d9488' : pedido.pedido_grande ? '#f59e0b' : esReprogramado ? '#fbbf24' : '#f0f0f0'
+  const bgColor = esFinalizado ? '#fafafa' : esRetiro ? '#f0fdfa' : pedido.pedido_grande ? '#fffbeb' : 'white'
+
   return (
-    <div draggable={!soloVer} onDragStart={e => { if (!soloVer) onDragStart(e, pedido) }}
-      className="rounded-lg p-3 mb-2 select-none hover:shadow-md transition-shadow"
-      style={{ border: `1px solid ${borderColor}`, background: bgColor, cursor: soloVer ? 'default' : 'grab' }}>
-      {esRetiro && (
+    <div
+      draggable={!soloVer && !esFinalizado}
+      onDragStart={e => { if (!soloVer && !esFinalizado) onDragStart(e, pedido) }}
+      className="rounded-lg p-3 mb-2 select-none transition-shadow"
+      style={{
+        border: `1px solid ${borderColor}`,
+        background: bgColor,
+        cursor: (soloVer || esFinalizado) ? 'default' : 'grab',
+        opacity: esFinalizado ? 0.7 : 1,
+      }}>
+      {estadoBadge && (
+        <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg"
+          style={{ background: estadoBadge.bg, color: estadoBadge.color }}>
+          {estadoBadge.label}
+        </div>
+      )}
+      {esRetiro && !esFinalizado && (
         <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg flex items-center gap-1.5"
           style={{ background: '#ccfbf1', color: '#0f766e' }}>
           🔄 Retiro — no cuenta para cupos
         </div>
       )}
-      {pedido.pedido_grande && !esRetiro && (
+      {pedido.pedido_grande && !esRetiro && !esFinalizado && (
         <div className="text-xs font-semibold mb-1.5 px-2 py-1 rounded-lg"
           style={{ background: '#fde68a', color: '#92400e' }}>
           ⚠️ Pedido grande — requiere separación
@@ -988,7 +1021,10 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       <div className="p-2 flex-1 overflow-y-auto">
         {pedidos.length === 0
           ? <div className="text-center py-8 text-xs" style={{ color: '#B9BBB7' }}>{sinAsignar ? 'Todos asignados ✓' : 'Arrastrá pedidos acá'}</div>
-          : pedidos.map(p => <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onRecalcularPosiciones={onRecalcularPosiciones} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer} esTransferencia={esTransferencia} />)}
+          : pedidos.map(p => {
+              const pFinalizado = ['en_camino','entregado','entregado_parcial','rechazado'].includes(p.estado)
+              return <PedidoCard key={p.id} pedido={p} onDragStart={onDragStart} onCancelar={onCancelar} onCambiarVuelta={onCambiarVuelta} onReprogramar={onReprogramar} onEditarPeso={onEditarPeso} onRecalcularPosiciones={onRecalcularPosiciones} onToggleVolcador={onToggleVolcador} onSepararPedido={onSepararPedido} onMoverSucursal={onMoverSucursal} onIncidenciaStock={onIncidenciaStock} onNeedsExpand={handleNeedsExpand} soloVer={soloVer || pFinalizado} esTransferencia={esTransferencia} />
+            })}
       </div>
     </div>
   )
@@ -1204,7 +1240,7 @@ function ProgramacionInner() {
     let q = supabase.from('pedidos')
       .select('*, prioridad, barrio_cerrado')
       .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
-      .in('estado', ['pendiente', 'programado']).order('cliente')
+      .in('estado', ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado']).order('cliente')
     q = vueltaActiva === VUELTA_FUERA ? q.eq('vuelta', 0) : q.eq('vuelta', vueltaActiva)
     const { data: pd } = await q
     const pedidosBase = pd ?? []

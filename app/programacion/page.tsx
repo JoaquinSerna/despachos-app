@@ -1698,23 +1698,35 @@ function ProgramacionInner() {
   }
 
   async function handleReprogramarVuelta() {
-    if (!reprogVueltaFecha || pedidos.length === 0) return
-    setGuardando(true)
+    if (!reprogVueltaFecha) return
+
+    // Solo reprogramar pedidos activos (excluir finalizados: en_camino, entregado, etc.)
+    const activos = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
     const aReprogramar = camionParaReprog
-      ? pedidos.filter(p => p.camion_id === camionParaReprog)
-      : pedidos
+      ? activos.filter(p => p.camion_id === camionParaReprog)
+      : activos
+
+    if (aReprogramar.length === 0) {
+      showToast('No hay pedidos activos para reprogramar', 'err')
+      return
+    }
+
+    setGuardando(true)
     try {
       const contexto = camionParaReprog ? `camión ${camionParaReprog}` : `vuelta completa`
       const nota = `⚡ Reprog. ${contexto} desde ${fecha} V${vueltaActiva}`
-      await Promise.all(aReprogramar.map(p =>
-        fetch('/api/pedidos', {
+      const resultados = await Promise.all(aReprogramar.map(async p => {
+        const res = await fetch('/api/pedidos', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: p.notas ? `${p.notas} | ${nota}` : nota })
         })
-      ))
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? `Error en pedido ${p.nv}`)
+        return true
+      }))
       setModalReprogVuelta(false)
-      showToast(`${aReprogramar.length} pedidos reprogramados`)
-      if (userId) logAuditoria(userId, userNombre, 'Reprogramó vuelta completa', 'Programación', { fecha, vuelta: vueltaActiva, pedidos_count: aReprogramar.length, fecha_destino: reprogVueltaFecha })
+      showToast(`${resultados.length} pedidos reprogramados`)
+      if (userId) logAuditoria(userId, userNombre, 'Reprogramó vuelta completa', 'Programación', { fecha, vuelta: vueltaActiva, pedidos_count: resultados.length, fecha_destino: reprogVueltaFecha })
       cargarDatos()
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
     setGuardando(false)

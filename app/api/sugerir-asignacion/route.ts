@@ -1,7 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { GoogleAuth } from 'google-auth-library'
 
 const client = new Anthropic()
+
+// Obtiene un Bearer token usando el Service Account JSON
+async function getGoogleBearerToken(): Promise<string> {
+  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+  if (!serviceAccountJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no está configurada')
+  const credentials = JSON.parse(serviceAccountJson)
+  const auth = new GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  })
+  const token = await auth.getAccessToken()
+  if (!token) throw new Error('No se pudo obtener el Bearer token de Google')
+  return token
+}
 
 function distKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371
@@ -80,8 +95,8 @@ async function sugerirConRouteOptimization(
   sucursal: string,
 ): Promise<{ asignacion: Record<string, string | null>; cambios: any[]; engine: string }> {
 
-  const apiKey = process.env.GOOGLE_ROUTE_OPT_KEY!
   const projectId = process.env.GOOGLE_CLOUD_PROJECT!
+  const bearerToken = await getGoogleBearerToken()
   const depot = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
 
   // Separar pedidos con y sin coordenadas
@@ -182,7 +197,7 @@ async function sugerirConRouteOptimization(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Goog-Api-Key': apiKey,
+      'Authorization': `Bearer ${bearerToken}`,
     },
     body: JSON.stringify(requestBody),
   })
@@ -422,7 +437,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Elegir motor según env vars
-    const useGoogleApi = !!(process.env.GOOGLE_ROUTE_OPT_KEY && process.env.GOOGLE_CLOUD_PROJECT)
+    const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
 
     let result: { asignacion: Record<string, string | null>; cambios: any[]; tokens?: any; engine: string }
 

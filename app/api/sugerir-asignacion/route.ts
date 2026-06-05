@@ -8,7 +8,17 @@ const client = new Anthropic()
 async function getGoogleBearerToken(): Promise<string> {
   const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
   if (!serviceAccountJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no está configurada')
-  const credentials = JSON.parse(serviceAccountJson)
+  // Limpiar posibles caracteres extra (comillas envolventes, espacios, BOM)
+  const cleaned = serviceAccountJson
+    .trim()
+    .replace(/^["']/, '')   // quitar comilla inicial si hay
+    .replace(/["']$/, '')   // quitar comilla final si hay
+  let credentials: any
+  try {
+    credentials = JSON.parse(cleaned)
+  } catch (e: any) {
+    throw new Error(`JSON inválido en GOOGLE_SERVICE_ACCOUNT_JSON: ${e.message}. Primeros 30 chars: ${cleaned.slice(0, 30)}`)
+  }
   const auth = new GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],

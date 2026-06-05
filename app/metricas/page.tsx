@@ -39,9 +39,11 @@ function getVelFallback(sucursal: string): number {
   return VEL_FALLBACK_KMH[sucursal] ?? VEL_FALLBACK_DEFAULT
 }
 
-/** Calcula vueltas_max efectivas considerando km por vuelta y límite diario */
-function calcVueltasMaxEfectivas(sucursal: string, vueltasRealizadas: number, distanciaKmTotal: number, kmMaxDia: number): number {
-  const defaultMax = VUELTAS_MAX_DEFAULT[sucursal] ?? 3
+/** Calcula vueltas_max efectivas considerando km por vuelta, límite diario y día de semana */
+function calcVueltasMaxEfectivas(sucursal: string, vueltasRealizadas: number, distanciaKmTotal: number, kmMaxDia: number, fecha?: string): number {
+  // Sábados: máximo 2 vueltas (trabajo hasta mediodía)
+  const esSabadoFecha = fecha ? new Date(fecha + 'T12:00:00').getDay() === 6 : false
+  const defaultMax = esSabadoFecha ? 2 : (VUELTAS_MAX_DEFAULT[sucursal] ?? 3)
   if (vueltasRealizadas === 0 || distanciaKmTotal === 0) return defaultMax
   const kmPorVuelta = distanciaKmTotal / vueltasRealizadas
   const maxPorKm = Math.floor(kmMaxDia / kmPorVuelta)
@@ -724,7 +726,7 @@ export default function MetricasPage() {
       const capacidadPosDia = camion.posiciones_total * numVueltas
 
       const kmMaxDia = camion.km_max_dia ?? 200
-      const vueltasMaxEfectivas = calcVueltasMaxEfectivas(camion.sucursal, vueltas.length, distanciaTotalKm, kmMaxDia)
+      const vueltasMaxEfectivas = calcVueltasMaxEfectivas(camion.sucursal, vueltas.length, distanciaTotalKm, kmMaxDia, fecha)
       const { pctPos: ocupDiariaPctPos, pctKg: ocupDiariaPctKg } = calcOcupDiaria(
         posicionesUsadas, kgUsados,
         camion.posiciones_total, camion.tonelaje_max_kg,

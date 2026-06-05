@@ -45,6 +45,7 @@ const PAGO_LABEL: Record<string, string> = {
 }
 
 function hoy() { return new Date().toISOString().split('T')[0] }
+function esSabado(fecha: string) { return new Date(fecha + 'T12:00:00').getDay() === 6 }
 
 // Hora de corte para cada vuelta: si ya pasó ese horario, la vuelta no está disponible para hoy
 // V4 y "después de hora" no tienen corte — siempre disponibles para emergencias
@@ -56,10 +57,14 @@ const TODAS_VUELTAS = [
   { num: 4, label: 'Vuelta 4 (15–17h)' },
   { num: 5, label: 'Después de hora' },
 ]
+// Sábados: solo V1, V2 y V5 (sin V3 ni V4)
+const VUELTAS_SABADO = new Set([3, 4])
 function vueltasDisponibles(fecha: string): number[] {
-  if (fecha !== hoy()) return TODAS_VUELTAS.map(v => v.num)
+  const todas = TODAS_VUELTAS.map(v => v.num)
+  const sinSabado = esSabado(fecha) ? todas.filter(v => !VUELTAS_SABADO.has(v)) : todas
+  if (fecha !== hoy()) return sinSabado
   const horaActual = new Date().getHours()
-  return TODAS_VUELTAS.map(v => v.num).filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
+  return sinSabado.filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
 }
 const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado'])
 function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
@@ -1321,7 +1326,10 @@ function ProgramacionInner() {
       .eq('fecha', fecha)
       .eq('sucursal', sucursal)
     // vuelta=0 en DB = VUELTA_FUERA (-1) en UI
-    setVultasCerradasManual(new Set((vcmData ?? []).map((r: any) => r.vuelta === 0 ? VUELTA_FUERA : r.vuelta as number)))
+    const cerradasDB = new Set<number>((vcmData ?? []).map((r: any) => r.vuelta === 0 ? VUELTA_FUERA : r.vuelta as number))
+    // Sábados: V3 y V4 cerradas por defecto (el ruteador puede abrirlas manualmente si necesita)
+    if (esSabado(fecha)) { cerradasDB.add(3); cerradasDB.add(4) }
+    setVultasCerradasManual(cerradasDB)
 
     // Marcar camiones posiblemente en ruta según distancia máxima en vueltas pasadas
     let camsConAviso = cams

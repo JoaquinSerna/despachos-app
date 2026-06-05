@@ -202,7 +202,7 @@ async function sugerirConRouteOptimization(
     considerRoadTraffic: false,
   }
 
-  const url = `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/europe-west1:optimizeTours`
+  const url = `https://routeoptimization.googleapis.com/v1/projects/${projectId}/:optimizeTours`
   const response = await fetch(url, {
     method: 'POST',
     headers: {

@@ -202,20 +202,26 @@ async function sugerirConRouteOptimization(
     considerRoadTraffic: false,
   }
 
-  const url = `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/global:optimizeTours`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${bearerToken}`,
-    },
-    body: JSON.stringify(requestBody),
-  })
-
-  if (!response.ok) {
-    const err = await response.text()
-    throw new Error(`Route Optimization API error ${response.status}: ${err}`)
+  // Intentar con múltiples regiones hasta que una funcione
+  const LOCATIONS = ['global', 'us-central1', 'europe-west1']
+  let response: Response | null = null
+  let lastErr = ''
+  for (const loc of LOCATIONS) {
+    const url = `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/${loc}:optimizeTours`
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearerToken}` },
+      body: JSON.stringify(requestBody),
+    })
+    if (r.ok) { response = r; break }
+    const errText = await r.text()
+    lastErr = `${r.status}/${loc}: ${errText.slice(0, 120)}`
+    // Si el error NO es de ubicación no soportada, no tiene sentido reintentar
+    if (!errText.includes('Unsupported location')) {
+      throw new Error(`Route Optimization API error ${lastErr}`)
+    }
   }
+  if (!response) throw new Error(`Route Optimization API falló en todas las regiones. Último error: ${lastErr}`)
 
   const result = await response.json()
 
@@ -455,10 +461,12 @@ export async function POST(request: NextRequest) {
       try {
         result = await sugerirConRouteOptimization(pedidos, camiones, ya_asignados, sugerencia, sucursal)
       } catch (googleError: any) {
-        // Si Google falla, caer a Claude automáticamente
+        // Si Google falla, caer a Claude con la sugerencia que tengamos
+        // Si la sugerencia llegó vacía (Layer 1 fue salteado), Claude igual puede intentar
+        // con lo que tiene — los pedidos y camiones siguen disponibles
         console.error('[sugerir-asignacion] Google API error, fallback to Claude:', googleError.message)
         result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
-        result.engine = `claude-haiku-fallback (google-error: ${googleError.message})`
+        result.engine = `claude-haiku-fallback (google-error: ${googleError.message.slice(0, 150)})`
       }
     } else {
       result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)

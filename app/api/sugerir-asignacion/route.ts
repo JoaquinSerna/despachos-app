@@ -202,12 +202,16 @@ async function sugerirConRouteOptimization(
     considerRoadTraffic: false,
   }
 
-  // Intentar con múltiples regiones hasta que una funcione
-  const LOCATIONS = ['global', 'us-central1', 'europe-west1']
+  // Probar múltiples URLs — Maps Platform puede requerir formato diferente
+  const URLS_TO_TRY = [
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/global:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/us-central1:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/europe-west1:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}:optimizeTours`,
+  ]
   let response: Response | null = null
   let lastErr = ''
-  for (const loc of LOCATIONS) {
-    const url = `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/${loc}:optimizeTours`
+  for (const url of URLS_TO_TRY) {
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearerToken}` },
@@ -215,9 +219,8 @@ async function sugerirConRouteOptimization(
     })
     if (r.ok) { response = r; break }
     const errText = await r.text()
-    lastErr = `${r.status}/${loc}: ${errText.slice(0, 120)}`
-    // Si el error NO es de ubicación no soportada, no tiene sentido reintentar
-    if (!errText.includes('Unsupported location')) {
+    lastErr = `${r.status}/${url.split('/locations/')[1] ?? 'no-loc'}: ${errText.slice(0, 120)}`
+    if (!errText.includes('Unsupported location') && !errText.includes('NOT_FOUND') && r.status !== 404) {
       throw new Error(`Route Optimization API error ${lastErr}`)
     }
   }

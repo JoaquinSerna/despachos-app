@@ -464,7 +464,7 @@ export async function POST(request: NextRequest) {
         // Si Google falla, caer a Claude automáticamente
         console.error('[sugerir-asignacion] Google API error, fallback to Claude:', googleError.message)
         result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
-        result.engine = `claude-haiku-fallback (google-error: ${googleError.message.slice(0, 100)})`
+        result.engine = `claude-haiku-fallback (google-error: ${googleError.message})`
       }
     } else {
       result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)

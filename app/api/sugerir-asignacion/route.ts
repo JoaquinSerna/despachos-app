@@ -125,13 +125,14 @@ async function sugerirConRouteOptimization(
         positions_x10: { amount: String(Math.round((p.volumen_total_m3 ?? 0) * 10)) },
       },
       shipmentType: getShipmentType(p),
-      // Restricción de vehículo si requiere volcador o grúa
-      ...(p.requiere_volcador ? {
-        allowedVehicleIndices: camiones
+      // Restricción de vehículo si requiere volcador (solo si hay al menos 1 camión con volcador)
+      ...(p.requiere_volcador ? (() => {
+        const indices = camiones
           .map((c, i) => ({ c, i }))
           .filter(({ c }) => c.volcador)
-          .map(({ i }) => i),
-      } : {}),
+          .map(({ i }) => i)
+        return indices.length > 0 ? { allowedVehicleIndices: indices } : {}
+      })() : {}),
     }
   })
 
@@ -156,11 +157,11 @@ async function sugerirConRouteOptimization(
   const shipmentTypeIncompatibilities = [
     {
       types: ['hierro_largo', 'general'],
-      incompatibilityMode: 'NOT_IN_SAME_VEHICLE',
+      incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE',
     },
     {
       types: ['hierro_largo', 'granel'],
-      incompatibilityMode: 'NOT_IN_SAME_VEHICLE',
+      incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE',
     },
   ]
 
@@ -426,7 +427,14 @@ export async function POST(request: NextRequest) {
     let result: { asignacion: Record<string, string | null>; cambios: any[]; tokens?: any; engine: string }
 
     if (useGoogleApi) {
-      result = await sugerirConRouteOptimization(pedidos, camiones, ya_asignados, sugerencia, sucursal)
+      try {
+        result = await sugerirConRouteOptimization(pedidos, camiones, ya_asignados, sugerencia, sucursal)
+      } catch (googleError: any) {
+        // Si Google falla, caer a Claude automáticamente
+        console.error('[sugerir-asignacion] Google API error, fallback to Claude:', googleError.message)
+        result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
+        result.engine = `claude-haiku-fallback (google-error: ${googleError.message.slice(0, 100)})`
+      }
     } else {
       result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
     }
@@ -434,7 +442,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       asignacion: result.asignacion,
       cambios: result.cambios,
-      engine: result.engine,          // para debugging: ver qué motor se usó
+      engine: result.engine,
       ...(result.tokens ? { tokens: result.tokens } : {}),
     })
   } catch (error: any) {

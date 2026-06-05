@@ -1431,16 +1431,21 @@ function ProgramacionInner() {
     const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
     const ya = pedidos.filter(p => p.camion_id)
 
-    // Mostrar clusters detectados para feedback visual
-    const clusters = buildClusters(sin).filter(c => c.length > 1)
-    if (clusters.length > 0) {
-      const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
-      showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
+    const useGoogleRoute = process.env.NEXT_PUBLIC_USE_GOOGLE_ROUTE_OPT === 'true'
+
+    // Capa 1 solo cuando NO está Google activo
+    let asigs: Record<string, string | null> = {}
+    if (!useGoogleRoute) {
+      // Mostrar clusters detectados para feedback visual
+      const clusters = buildClusters(sin).filter(c => c.length > 1)
+      if (clusters.length > 0) {
+        const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
+        showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
+      }
+      asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
     }
 
-    const asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
-
-    // Revisión con IA: Haiku corrige agrupaciones que el algoritmo no detecta
+    // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)
     try {
       const res = await fetch('/api/sugerir-asignacion', {
@@ -1462,7 +1467,7 @@ function ProgramacionInner() {
           }
         }
       }
-    } catch { /* si la IA falla, usamos la sugerencia del algoritmo igual */ }
+    } catch { /* si falla, usamos la sugerencia que tengamos (vacía si Google, Layer 1 si Claude) */ }
     setCargando(false)
 
     const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))

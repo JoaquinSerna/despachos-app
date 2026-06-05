@@ -438,6 +438,12 @@ export async function POST(request: NextRequest) {
 
     // Elegir motor según env vars
     const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
+    // DEBUG TEMPORAL
+    const envDebug = {
+      has_service_account: !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON,
+      has_project: !!process.env.GOOGLE_CLOUD_PROJECT,
+      project_value: process.env.GOOGLE_CLOUD_PROJECT ?? 'not set',
+    }
 
     let result: { asignacion: Record<string, string | null>; cambios: any[]; tokens?: any; engine: string }
 
@@ -458,6 +464,7 @@ export async function POST(request: NextRequest) {
       asignacion: result.asignacion,
       cambios: result.cambios,
       engine: result.engine,
+      envDebug,
       ...(result.tokens ? { tokens: result.tokens } : {}),
     })
   } catch (error: any) {

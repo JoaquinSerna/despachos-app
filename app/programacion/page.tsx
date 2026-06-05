@@ -1117,6 +1117,8 @@ function ProgramacionInner() {
     } catch { return new Set<string>() }
   })
   const enrichGenRef = useRef(0)
+  // Guarda la última sugerencia IA para comparar con la confirmación final
+  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string } | null>(null)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
 
@@ -1454,6 +1456,30 @@ function ProgramacionInner() {
     setPedidos(act); construirColumnas(act, camiones)
     const overflow = act.filter(p => asigs[p.id] === null)
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
+
+    // Guardar sugerencia para comparar con confirmación final
+    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString() }
+
+    // Log de auditoría con detalle de la sugerencia
+    if (userId) {
+      const asignados = Object.entries(asigs).filter(([, c]) => c !== null)
+      const sinCamionIA = Object.entries(asigs).filter(([, c]) => c === null)
+      logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
+        fecha, sucursal, vuelta: vueltaActiva,
+        total_sin_asignar_antes: sin.length,
+        asignados_por_ia: asignados.length,
+        sin_camion_ia: sinCamionIA.length,
+        sugerencia: sin.map(p => ({
+          id: p.id,
+          nv: p.nv,
+          cliente: p.cliente,
+          localidad: p.localidad ?? null,
+          peso_kg: p.peso_total_kg ?? 0,
+          posiciones: p.volumen_total_m3 ?? 0,
+          camion_sugerido: asigs[p.id] ?? null,
+        })),
+      })
+    }
   }
 
   async function handleLimpiar() {
@@ -1545,7 +1571,44 @@ function ProgramacionInner() {
       } else {
         setConfirmado(true)
         showToast('Programación confirmada')
-        if (userId) logAuditoria(userId, userNombre, 'Confirmó programación', 'Programación', { fecha, sucursal, vuelta: vueltaActiva, total_pedidos: pedidos.length, total_camiones: Object.keys(columnas.reduce((acc, col) => { if (col.pedidos.length > 0) acc[col.camion.codigo] = true; return acc }, {} as Record<string, boolean>)).length })
+        if (userId) {
+          const ultimaSug = ultimaSugerenciaRef.current
+          // Calcular cuántos pedidos el ruteador movió respecto a la sugerencia IA
+          const movimientos = ultimaSug
+            ? asignados.filter(p => {
+                const sugerido = ultimaSug.asigs[p.id]
+                return sugerido !== undefined && sugerido !== p.camion_id
+              }).map(p => ({
+                nv: p.nv,
+                cliente: p.cliente,
+                localidad: p.localidad ?? null,
+                camion_sugerido: ultimaSug.asigs[p.id] ?? null,
+                camion_final: p.camion_id,
+              }))
+            : []
+
+          logAuditoria(userId, userNombre, 'Confirmó programación', 'Programación', {
+            fecha, sucursal, vuelta: vueltaActiva,
+            total_pedidos: pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').length,
+            total_camiones: Object.keys(columnas.reduce((acc, col) => { if (col.pedidos.length > 0) acc[col.camion.codigo] = true; return acc }, {} as Record<string, boolean>)).length,
+            uso_sugerencia_ia: !!ultimaSug,
+            sugerencia_timestamp: ultimaSug?.timestamp ?? null,
+            movimientos_respecto_ia: movimientos.length,
+            asignaciones_finales: asignados.map(p => ({
+              id: p.id,
+              nv: p.nv,
+              cliente: p.cliente,
+              localidad: p.localidad ?? null,
+              peso_kg: p.peso_total_kg ?? 0,
+              posiciones: p.volumen_total_m3 ?? 0,
+              camion: p.camion_id,
+            })),
+            // Solo los movimientos donde el ruteador discrepó con la IA
+            correcciones_al_ia: movimientos,
+          })
+          // Reset para el próximo ciclo
+          ultimaSugerenciaRef.current = null
+        }
       }
     } catch (e: any) {
       showToast(`Error inesperado: ${e.message}`, 'err')

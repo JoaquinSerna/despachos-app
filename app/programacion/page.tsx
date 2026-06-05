@@ -1452,8 +1452,13 @@ function ProgramacionInner() {
         const data = await res.json()
         if (data.asignacion) {
           Object.assign(asigs, data.asignacion)
+          const isGoogle = (data.engine ?? '').includes('google')
+          const engineLabel = isGoogle ? '🗺️ Google Route Opt.' : '🤖 IA (Claude)'
           if (data.cambios?.length) {
-            showToast(`🤖 IA corrigió ${data.cambios.length} asignación${data.cambios.length > 1 ? 'es' : ''}`)
+            showToast(`${engineLabel} — ${data.cambios.length} cambio${data.cambios.length > 1 ? 's' : ''}`)
+          } else if (isGoogle) {
+            const asignados = Object.values(data.asignacion as Record<string, string | null>).filter(Boolean).length
+            showToast(`${engineLabel} — ${asignados} pedidos asignados`)
           }
         }
       }

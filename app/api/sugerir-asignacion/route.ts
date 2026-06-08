@@ -178,8 +178,9 @@ async function sugerirConRouteOptimization(
     // Si no hay camión con capacidad suficiente para el grupo completo → no forzamos (Google decide)
   }
 
-  // Construir shipments (pedidos con coordenadas)
-  const shipments = conCoords.map(p => {
+  // ── Construir shipments ordenados: grandes primero (FFD) ────────────────────
+  // Pedidos que caben sólo en UN camión (por capacidad de posiciones) → forzar ese camión
+  const buildShipment = (p: PedidoInput) => {
     const tw = getTimeWindow(vuelta, dateStr)
     const delivery: any = {
       arrivalLocation: { latitude: p.latitud!, longitude: p.longitud! },
@@ -187,22 +188,45 @@ async function sugerirConRouteOptimization(
     }
     if (tw) delivery.timeWindows = [tw]
 
-    // Calcular allowedVehicleIndices combinando restricciones de volcador y mismo cliente
+    // Camiones elegibles por capacidad individual
+    const elegiblesPorCapacidad = camiones
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => {
+        const libreKg = c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)
+        const librePos = c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)
+        return libreKg >= (p.peso_total_kg ?? 0) &&
+          (c.posiciones_total === 0 || librePos >= (p.volumen_total_m3 ?? 0))
+      })
+      .map(({ i }) => i)
+
+    // Calcular allowedVehicleIndices combinando: volcador + mismo cliente + único elegible
     let finalAllowed: number[] | null = null
+
+    // 1. Volcador
     if (p.requiere_volcador) {
       const vi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.volcador).map(({ i }) => i)
       if (vi.length > 0) finalAllowed = vi
     }
+    // 2. Mismo cliente
     if (allowedByPedido[p.id]) {
       finalAllowed = finalAllowed
         ? finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
         : allowedByPedido[p.id]
-      if (finalAllowed.length === 0) finalAllowed = null // intersección vacía → sin restricción
+      if (finalAllowed.length === 0) finalAllowed = null
+    }
+    // 3. Único camión elegible por capacidad → forzarlo (pedido grande que sólo cabe en uno)
+    if (!finalAllowed && elegiblesPorCapacidad.length === 1) {
+      finalAllowed = elegiblesPorCapacidad
+    }
+    // 4. Intersectar con elegibles por capacidad si hay restricción y múltiples opciones
+    if (finalAllowed && elegiblesPorCapacidad.length > 0) {
+      const inter = finalAllowed.filter(i => elegiblesPorCapacidad.includes(i))
+      if (inter.length > 0) finalAllowed = inter
     }
 
     return {
       label: p.id,
-      penaltyCost: 1000000, // muy alto → Google siempre prefiere asignar antes que saltear
+      penaltyCost: 1000000,
       deliveries: [delivery],
       loadDemands: {
         weight_kg: { amount: String(Math.round(p.peso_total_kg ?? 0)) },
@@ -211,7 +235,12 @@ async function sugerirConRouteOptimization(
       shipmentType: getShipmentType(p),
       ...(finalAllowed && finalAllowed.length > 0 ? { allowedVehicleIndices: finalAllowed } : {}),
     }
-  })
+  }
+
+  // Ordenar por posiciones descendentes (FFD: First Fit Decreasing)
+  const shipments = [...conCoords]
+    .sort((a, b) => (b.volumen_total_m3 ?? 0) - (a.volumen_total_m3 ?? 0))
+    .map(buildShipment)
 
   // Construir vehicles (camiones con capacidad residual)
   const vehicles = camiones.map(c => ({
@@ -230,10 +259,11 @@ async function sugerirConRouteOptimization(
     costPerHour: 30.0,
   }))
 
-  // Nota: las incompatibilidades de carga (hierro_largo vs general) se sacan intencionalmente.
-  // NOT_PERFORMED_BY_SAME_VEHICLE bloquea el camión para CUALQUIER carga general aunque tenga
-  // capacidad libre, lo que causa pedidos sin asignar innecesariamente.
-  // El ruteador decide visualmente si una mezcla es aceptable al confirmar.
+  // Incompatibilidades: hierro_largo no va con general ni granel en el mismo camión
+  const shipmentTypeIncompatibilities = [
+    { types: ['hierro_largo', 'general'], incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE' },
+    { types: ['hierro_largo', 'granel'], incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE' },
+  ]
 
   const requestBody = {
     model: {
@@ -241,6 +271,7 @@ async function sugerirConRouteOptimization(
       globalEndTime: `${dateStr}T23:59:00Z`,
       shipments,
       vehicles,
+      shipmentTypeIncompatibilities,
     },
     searchMode: 'CONSUME_ALL_AVAILABLE_TIME',
     considerRoadTraffic: false,

@@ -132,32 +132,83 @@ async function sugerirConRouteOptimization(
   const dateStr = new Date().toISOString().split('T')[0]
   const vuelta = conCoords[0]?.vuelta ?? 1
 
+  // ── Detectar grupos de mismo cliente (fuzzy) dentro de 2km ───────────────
+  const normCliente = (s: string) => s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|sas|sa|srl)\b/g, '')
+    .replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+
+  const parentG: Record<string, string> = {}
+  conCoords.forEach(p => { parentG[p.id] = p.id })
+  const findG = (id: string): string => parentG[id] === id ? id : (parentG[id] = findG(parentG[id]))
+  const unionG = (a: string, b: string) => { parentG[findG(a)] = findG(b) }
+
+  for (let i = 0; i < conCoords.length; i++) {
+    for (let j = i + 1; j < conCoords.length; j++) {
+      const a = conCoords[i], b = conCoords[j]
+      if (normCliente(a.cliente) === normCliente(b.cliente)) {
+        if (distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) <= 2) unionG(a.id, b.id)
+      }
+    }
+  }
+  // Grupos con >1 pedido del mismo cliente
+  const gruposCliente = new Map<string, PedidoInput[]>()
+  conCoords.forEach(p => {
+    const root = findG(p.id)
+    if (!gruposCliente.has(root)) gruposCliente.set(root, [])
+    gruposCliente.get(root)!.push(p)
+  })
+  // Para cada grupo, calcular qué camiones tienen capacidad combinada suficiente
+  const allowedByPedido: Record<string, number[]> = {}
+  for (const [, grupoPedidos] of gruposCliente) {
+    if (grupoPedidos.length <= 1) continue
+    const totalKg = grupoPedidos.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+    const totalPos = grupoPedidos.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    const eligibles = camiones
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => {
+        const libreKg = c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)
+        const librePos = c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)
+        return libreKg >= totalKg && (c.posiciones_total === 0 || librePos >= totalPos)
+      })
+      .map(({ i }) => i)
+    if (eligibles.length > 0) {
+      grupoPedidos.forEach(p => { allowedByPedido[p.id] = eligibles })
+    }
+    // Si no hay camión con capacidad suficiente para el grupo completo → no forzamos (Google decide)
+  }
+
   // Construir shipments (pedidos con coordenadas)
   const shipments = conCoords.map(p => {
     const tw = getTimeWindow(vuelta, dateStr)
     const delivery: any = {
       arrivalLocation: { latitude: p.latitud!, longitude: p.longitud! },
-      duration: '600s', // 10 min de descarga por defecto
+      duration: '600s',
     }
     if (tw) delivery.timeWindows = [tw]
+
+    // Calcular allowedVehicleIndices combinando restricciones de volcador y mismo cliente
+    let finalAllowed: number[] | null = null
+    if (p.requiere_volcador) {
+      const vi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.volcador).map(({ i }) => i)
+      if (vi.length > 0) finalAllowed = vi
+    }
+    if (allowedByPedido[p.id]) {
+      finalAllowed = finalAllowed
+        ? finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
+        : allowedByPedido[p.id]
+      if (finalAllowed.length === 0) finalAllowed = null // intersección vacía → sin restricción
+    }
 
     return {
       label: p.id,
       deliveries: [delivery],
       loadDemands: {
         weight_kg: { amount: String(Math.round(p.peso_total_kg ?? 0)) },
-        // positions × 10 para evitar decimales (el API requiere int)
         positions_x10: { amount: String(Math.round((p.volumen_total_m3 ?? 0) * 10)) },
       },
       shipmentType: getShipmentType(p),
-      // Restricción de vehículo si requiere volcador (solo si hay al menos 1 camión con volcador)
-      ...(p.requiere_volcador ? (() => {
-        const indices = camiones
-          .map((c, i) => ({ c, i }))
-          .filter(({ c }) => c.volcador)
-          .map(({ i }) => i)
-        return indices.length > 0 ? { allowedVehicleIndices: indices } : {}
-      })() : {}),
+      ...(finalAllowed && finalAllowed.length > 0 ? { allowedVehicleIndices: finalAllowed } : {}),
     }
   })
 

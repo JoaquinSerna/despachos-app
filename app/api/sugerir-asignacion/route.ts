@@ -230,17 +230,10 @@ async function sugerirConRouteOptimization(
     costPerHour: 30.0,
   }))
 
-  // Incompatibilidades de tipos de carga
-  const shipmentTypeIncompatibilities = [
-    {
-      types: ['hierro_largo', 'general'],
-      incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE',
-    },
-    {
-      types: ['hierro_largo', 'granel'],
-      incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE',
-    },
-  ]
+  // Nota: las incompatibilidades de carga (hierro_largo vs general) se sacan intencionalmente.
+  // NOT_PERFORMED_BY_SAME_VEHICLE bloquea el camión para CUALQUIER carga general aunque tenga
+  // capacidad libre, lo que causa pedidos sin asignar innecesariamente.
+  // El ruteador decide visualmente si una mezcla es aceptable al confirmar.
 
   const requestBody = {
     model: {
@@ -248,7 +241,6 @@ async function sugerirConRouteOptimization(
       globalEndTime: `${dateStr}T23:59:00Z`,
       shipments,
       vehicles,
-      shipmentTypeIncompatibilities,
     },
     searchMode: 'CONSUME_ALL_AVAILABLE_TIME',
     considerRoadTraffic: false,

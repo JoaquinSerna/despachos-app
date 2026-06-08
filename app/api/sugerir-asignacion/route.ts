@@ -202,6 +202,7 @@ async function sugerirConRouteOptimization(
 
     return {
       label: p.id,
+      penaltyCost: 1000000, // muy alto → Google siempre prefiere asignar antes que saltear
       deliveries: [delivery],
       loadDemands: {
         weight_kg: { amount: String(Math.round(p.peso_total_kg ?? 0)) },
@@ -249,7 +250,7 @@ async function sugerirConRouteOptimization(
       vehicles,
       shipmentTypeIncompatibilities,
     },
-    searchMode: 'RETURN_FAST',
+    searchMode: 'CONSUME_ALL_AVAILABLE_TIME',
     considerRoadTraffic: false,
   }
 

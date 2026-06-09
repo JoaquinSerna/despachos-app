@@ -890,8 +890,10 @@ export default function MetricasPage() {
         const pedidosDia = pedidosDias.filter(p => p.fecha_entrega === f.fecha)
         const kg = pedidosDia.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pedidosDia.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
-        sumPctKg += pct(kg, camion.tonelaje_max_kg)
-        sumPctPos += pct(pos, camion.posiciones_total)
+        const esSab = new Date(f.fecha + 'T12:00:00').getDay() === 6
+        const vueltasMaxMes = esSab ? 2 : (VUELTAS_MAX_DEFAULT[camion.sucursal] ?? 3)
+        sumPctKg += pct(kg, camion.tonelaje_max_kg * vueltasMaxMes)
+        sumPctPos += pct(pos, camion.posiciones_total * vueltasMaxMes)
         if (f.hora_inicio && f.hora_fin && f.km_ruta) {
           const min = (new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000
           sumMinKm += min / f.km_ruta; diasConTiempo++
@@ -983,8 +985,16 @@ export default function MetricasPage() {
           pedidos: pg.pedidos,
           kgUsados: Math.round(pg.kg),
           posUsadas: Math.round(pg.pos),
-          pctKg: cam?.tonelaje_max_kg ? pct(pg.kg, cam.tonelaje_max_kg) : 0,
-          pctPos: cam?.posiciones_total ? pct(pg.pos, cam.posiciones_total) : 0,
+          pctKg: cam?.tonelaje_max_kg ? (() => {
+            const esSabR = new Date(f.fecha + 'T12:00:00').getDay() === 6
+            const vMax = esSabR ? 2 : (VUELTAS_MAX_DEFAULT[cam.sucursal] ?? 3)
+            return pct(pg.kg, cam.tonelaje_max_kg * vMax)
+          })() : 0,
+          pctPos: cam?.posiciones_total ? (() => {
+            const esSabR = new Date(f.fecha + 'T12:00:00').getDay() === 6
+            const vMax = esSabR ? 2 : (VUELTAS_MAX_DEFAULT[cam.sucursal] ?? 3)
+            return pct(pg.pos, cam.posiciones_total * vMax)
+          })() : 0,
           kmReal: f.km_ruta ?? null,
           hora_inicio: f.hora_inicio ?? null,
           hora_fin: f.hora_fin ?? null,

@@ -1135,7 +1135,7 @@ export default function PedidosPage() {
                                 )}
 
                                 {/* Acción transferencia */}
-                                {puedeEditarPedidos && p.tipo !== 'retiro' && (
+                                {(puedeEditarPedidos || userRol === 'deposito') && p.tipo !== 'retiro' && (
                                   <div className="px-4 py-3 border-t flex items-center gap-3" style={{ borderColor: '#e8edf8', background: '#f8faff' }}>
                                     <button onClick={() => abrirTransferencia(p)}
                                       className="px-4 py-2 text-xs font-semibold rounded-lg flex items-center gap-1.5"

@@ -270,8 +270,9 @@ export default function MetricasPage() {
   const [camionesNoActivados, setCamionesNoActivados] = useState<{ camion_codigo: string; sucursal: string }[]>([])
   const [rangoDesde, setRangoDesde] = useState(primerDiaMes)
   const [rangoHasta, setRangoHasta] = useState(hoy)
-  const [filtroRangoCamion, setFiltroRangoCamion] = useState('')
-  const [filtroRangoChofer, setFiltroRangoChofer] = useState('')
+  const [filtroRangoCamiones, setFiltroRangoCamiones] = useState<string[]>([])
+  const [filtroRangoChoferes, setFiltroRangoChoferes] = useState<string[]>([])
+  const [datosRangoAll, setDatosRangoAll] = useState<DatosRangoDia[]>([]) // datos sin filtrar
   const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
   const [loadingRango, setLoadingRango] = useState(false)
 
@@ -294,6 +295,14 @@ export default function MetricasPage() {
 
   useEffect(() => { if (vista === 'diaria') cargarDiaria() }, [fecha, vista])
   useEffect(() => { if (vista === 'mensual') cargarMensual() }, [mes, vista])
+
+  // Aplicar filtros multi-select sobre datos ya cargados (sin re-buscar)
+  useEffect(() => {
+    let filtered = datosRangoAll
+    if (filtroRangoCamiones.length > 0) filtered = filtered.filter(r => filtroRangoCamiones.includes(r.camion_codigo))
+    if (filtroRangoChoferes.length > 0) filtered = filtered.filter(r => filtroRangoChoferes.includes(r.chofer_nombre))
+    setDatosRango(filtered)
+  }, [datosRangoAll, filtroRangoCamiones, filtroRangoChoferes])
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
@@ -971,10 +980,11 @@ export default function MetricasPage() {
         }
       })
 
-      if (filtroRangoCamion) rows = rows.filter(r => r.camion_codigo === filtroRangoCamion)
-      if (filtroRangoChofer) rows = rows.filter(r => r.chofer_nombre === filtroRangoChofer)
       rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
 
+      setDatosRangoAll(rows)
+      setFiltroRangoCamiones([])
+      setFiltroRangoChoferes([])
       setDatosRango(rows)
     } catch (e: any) {
       console.error('cargarRango exception:', e)
@@ -1090,28 +1100,66 @@ export default function MetricasPage() {
                     className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Camión</label>
-                  <select value={filtroRangoCamion} onChange={e => setFiltroRangoCamion(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                    style={{ borderColor: '#e8edf8', color: filtroRangoCamion ? '#254A96' : '#999' }}>
-                    <option value="">Todos</option>
-                    {[...new Set(datosRango.map(r => r.camion_codigo))].sort().map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Chofer</label>
-                  <select value={filtroRangoChofer} onChange={e => setFiltroRangoChofer(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                    style={{ borderColor: '#e8edf8', color: filtroRangoChofer ? '#254A96' : '#999' }}>
-                    <option value="">Todos</option>
-                    {[...new Set(datosRango.map(r => r.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort().map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Chips multi-select camiones — aparecen después de buscar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const camiones = [...new Set(datosRangoAll.map(r => r.camion_codigo))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Camiones {filtroRangoCamiones.length > 0 && <span style={{ color: '#E52322' }}>({filtroRangoCamiones.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {camiones.map(c => {
+                          const sel = filtroRangoCamiones.includes(c)
+                          return (
+                            <button key={c} type="button"
+                              onClick={() => setFiltroRangoCamiones(prev => sel ? prev.filter(x => x !== c) : [...prev, c])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {c}
+                            </button>
+                          )
+                        })}
+                        {filtroRangoCamiones.length > 0 && (
+                          <button type="button" onClick={() => setFiltroRangoCamiones([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips multi-select choferes */}
+                {datosRangoAll.length > 0 && (() => {
+                  const choferes = [...new Set(datosRangoAll.map(r => r.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Choferes {filtroRangoChoferes.length > 0 && <span style={{ color: '#E52322' }}>({filtroRangoChoferes.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {choferes.map(c => {
+                          const sel = filtroRangoChoferes.includes(c)
+                          return (
+                            <button key={c} type="button"
+                              onClick={() => setFiltroRangoChoferes(prev => sel ? prev.filter(x => x !== c) : [...prev, c])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {c}
+                            </button>
+                          )
+                        })}
+                        {filtroRangoChoferes.length > 0 && (
+                          <button type="button" onClick={() => setFiltroRangoChoferes([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
               </>
             )}
             <div>

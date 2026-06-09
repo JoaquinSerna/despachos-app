@@ -1414,8 +1414,10 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
   })
 
   const totalPedidos = datosFiltrados.reduce((a, d) => a + d.pedidos, 0)
-  const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctKg, 0) / datosFiltrados.length) : 0
-  const avgPctPos = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctPos, 0) / datosFiltrados.length) : 0
+  // Usar ocupDiariaPct (tonelaje × vueltasMaxEfectivas) en lugar de pct (tonelaje × vueltas reales)
+  // para que el resumen refleje la eficiencia real contra el potencial del día completo
+  const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.ocupDiariaPctKg, 0) / datosFiltrados.length) : 0
+  const avgPctPos = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.ocupDiariaPctPos, 0) / datosFiltrados.length) : 0
   const totalDistancia = datosFiltrados.reduce((a, d) => a + d.distanciaTotalKm, 0)
 
   const conPedidos = datos.filter(d => d.pedidos > 0).length

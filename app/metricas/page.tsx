@@ -973,7 +973,7 @@ export default function MetricasPage() {
 
       let rows: DatosRangoDia[] = flotaData.map((f: any) => {
         const cam = camionMap[f.camion_codigo]
-        const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0 }
+        const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0, vueltas: new Set<number>() }
         const durMin = f.hora_inicio && f.hora_fin
           ? Math.round((new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000)
           : null

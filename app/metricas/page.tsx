@@ -272,6 +272,8 @@ export default function MetricasPage() {
   const [rangoHasta, setRangoHasta] = useState(hoy)
   const [filtroRangoCamiones, setFiltroRangoCamiones] = useState<string[]>([])
   const [filtroRangoChoferes, setFiltroRangoChoferes] = useState<string[]>([])
+  const [filtroFechasExcluidas, setFiltroFechasExcluidas] = useState<string[]>([])
+  const [ocultarSinActividad, setOcultarSinActividad] = useState(false)
   const [datosRangoAll, setDatosRangoAll] = useState<DatosRangoDia[]>([]) // datos sin filtrar
   const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
   const [loadingRango, setLoadingRango] = useState(false)
@@ -301,8 +303,13 @@ export default function MetricasPage() {
     let filtered = datosRangoAll
     if (filtroRangoCamiones.length > 0) filtered = filtered.filter(r => filtroRangoCamiones.includes(r.camion_codigo))
     if (filtroRangoChoferes.length > 0) filtered = filtered.filter(r => filtroRangoChoferes.includes(r.chofer_nombre))
+    if (filtroFechasExcluidas.length > 0) filtered = filtered.filter(r => !filtroFechasExcluidas.includes(r.fecha))
+    if (ocultarSinActividad) {
+      const fechasConActividad = new Set(datosRangoAll.filter(r => r.pedidos > 0).map(r => r.fecha))
+      filtered = filtered.filter(r => fechasConActividad.has(r.fecha))
+    }
     setDatosRango(filtered)
-  }, [datosRangoAll, filtroRangoCamiones, filtroRangoChoferes])
+  }, [datosRangoAll, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
@@ -985,6 +992,8 @@ export default function MetricasPage() {
       setDatosRangoAll(rows)
       setFiltroRangoCamiones([])
       setFiltroRangoChoferes([])
+      setFiltroFechasExcluidas([])
+      setOcultarSinActividad(false)
       setDatosRango(rows)
     } catch (e: any) {
       console.error('cargarRango exception:', e)
@@ -1155,6 +1164,55 @@ export default function MetricasPage() {
                             className="px-2 py-1.5 rounded-lg text-xs border"
                             style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
                         )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips de fechas — deseleccioná feriados o días sin operar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const fechas = [...new Set(datosRangoAll.map(r => r.fecha))].sort()
+                  const excl = filtroFechasExcluidas
+                  return (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <label className="text-xs font-medium" style={{ color: '#254A96' }}>
+                          Días {excl.length > 0 && <span style={{ color: '#E52322' }}>({excl.length} excluidos)</span>}
+                        </label>
+                        <button type="button"
+                          onClick={() => setOcultarSinActividad(v => !v)}
+                          className="px-2 py-0.5 rounded text-xs font-medium border transition-colors"
+                          style={{ borderColor: ocultarSinActividad ? '#254A96' : '#e8edf8', background: ocultarSinActividad ? '#e8edf8' : 'white', color: ocultarSinActividad ? '#254A96' : '#B9BBB7' }}>
+                          {ocultarSinActividad ? '✓' : ''} Ocultar sin actividad
+                        </button>
+                        {excl.length > 0 && (
+                          <button type="button" onClick={() => setFiltroFechasExcluidas([])}
+                            className="px-2 py-0.5 rounded text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>Restaurar todos</button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {fechas.map(f => {
+                          const excluida = excl.includes(f)
+                          const d = new Date(f + 'T12:00:00')
+                          const label = d.toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+                          const esFinde = [0, 6].includes(d.getDay())
+                          return (
+                            <button key={f} type="button"
+                              onClick={() => setFiltroFechasExcluidas(prev => excluida ? prev.filter(x => x !== f) : [...prev, f])}
+                              className="px-2 py-1 rounded text-xs border transition-colors"
+                              title={excluida ? 'Click para incluir' : 'Click para excluir'}
+                              style={{
+                                borderColor: excluida ? '#fca5a5' : '#e8edf8',
+                                background: excluida ? '#fde8e8' : 'white',
+                                color: excluida ? '#E52322' : esFinde ? '#b45309' : '#666',
+                                textDecoration: excluida ? 'line-through' : 'none',
+                                opacity: excluida ? 0.7 : 1,
+                              }}>
+                              {label}
+                            </button>
+                          )
+                        })}
                       </div>
                     </div>
                   )

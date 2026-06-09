@@ -52,6 +52,22 @@ interface Pedido {
   estado: string; estado_pago: string | null; peso_total_kg: number | null; volumen_total_m3: number | null
   notas: string | null; camion_id: string | null; tipo?: string; created_at?: string
   vendedor_id?: string | null
+  latitud?: number | null; longitud?: number | null
+}
+
+// Extrae lat/lng de un link de Google Maps
+function extractCoordsFromMapsUrl(url: string): { lat: number; lng: number } | null {
+  const clean = url.trim()
+  // @lat,lng,zoom — formato más común al compartir
+  const atMatch = clean.match(/\/@(-?\d+\.?\d+),(-?\d+\.?\d+)/)
+  if (atMatch) return { lat: parseFloat(atMatch[1]), lng: parseFloat(atMatch[2]) }
+  // ?q=lat,lng  o  &q=lat,lng
+  const qMatch = clean.match(/[?&]q=(-?\d+\.?\d+),(-?\d+\.?\d+)/)
+  if (qMatch) return { lat: parseFloat(qMatch[1]), lng: parseFloat(qMatch[2]) }
+  // /place/name/@lat,lng  alternativa
+  const placeMatch = clean.match(/place\/[^/@]+\/@(-?\d+\.?\d+),(-?\d+\.?\d+)/)
+  if (placeMatch) return { lat: parseFloat(placeMatch[1]), lng: parseFloat(placeMatch[2]) }
+  return null
 }
 
 const PAGO_COLOR: Record<string, { bg: string; text: string }> = {
@@ -79,6 +95,7 @@ interface EditState {
   id: string; sucursal: string; peso: string; posiciones: string; estado_pago: string
   fecha_entrega: string; vuelta: number
   direccion: string; telefono: string
+  mapsLink: string
 }
 
 export default function PedidosPage() {
@@ -213,7 +230,7 @@ export default function PedidosPage() {
     const textoFinal = textoOverride !== undefined ? textoOverride : filtroTexto
     let q = supabase
       .from('pedidos')
-      .select('id, nv, id_despacho, cliente, direccion, telefono, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo, created_at, vendedor_id', { count: 'exact' })
+      .select('id, nv, id_despacho, cliente, direccion, telefono, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, camion_id, tipo, created_at, vendedor_id, latitud, longitud', { count: 'exact' })
       .order('fecha_entrega', { ascending: false })
       .order('cliente')
       .range(currentOffset, currentOffset + PAGE_SIZE - 1)
@@ -348,6 +365,7 @@ export default function PedidosPage() {
       sucursal: p.sucursal,
       peso: p.peso_total_kg != null ? String(p.peso_total_kg) : '',
       posiciones: p.volumen_total_m3 != null ? String(p.volumen_total_m3) : '',
+      mapsLink: '',
       estado_pago: p.estado_pago ?? '',
       fecha_entrega: p.fecha_entrega ?? '',
       vuelta: p.vuelta ?? 1,
@@ -369,6 +387,11 @@ export default function PedidosPage() {
     updates.vuelta = editando.vuelta
     updates.direccion = editando.direccion.trim() || null
     updates.telefono = editando.telefono.trim() || null
+    // Coordenadas desde link de Google Maps
+    if (editando.mapsLink.trim()) {
+      const coords = extractCoordsFromMapsUrl(editando.mapsLink)
+      if (coords) { updates.latitud = coords.lat; updates.longitud = coords.lng }
+    }
     // Si cambió la sucursal, desasignar el camión — no puede quedar asignado a un camión de otra sucursal
     if (sucursalCambio) { updates.camion_id = null; updates.orden_entrega = null }
 
@@ -392,6 +415,8 @@ export default function PedidosPage() {
         vuelta: updates.vuelta ?? p.vuelta,
         direccion: updates.direccion ?? p.direccion,
         telefono: updates.telefono ?? p.telefono,
+        latitud: updates.latitud !== undefined ? updates.latitud : p.latitud,
+        longitud: updates.longitud !== undefined ? updates.longitud : p.longitud,
         ...(sucursalCambio ? { camion_id: null, orden_entrega: null } : {}),
       } : p))
       showToast('Pedido actualizado')
@@ -725,6 +750,39 @@ export default function PedidosPage() {
                   style={{ borderColor: '#e8edf8' }} placeholder="Ej: 11 1234-5678" />
               </div>
             </div>
+
+            {/* Geolocalización desde link de Google Maps */}
+            {puedeEditarPedidos && (() => {
+              const coords = editando.mapsLink.trim() ? extractCoordsFromMapsUrl(editando.mapsLink) : null
+              const tieneCoords = coords !== null
+              const linkInvalido = editando.mapsLink.trim() && !tieneCoords
+              return (
+                <div className="mt-3">
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                    📍 Corregir geolocalización (pegar link de Google Maps)
+                  </label>
+                  <input
+                    type="text"
+                    value={editando.mapsLink}
+                    onChange={e => setEditando(prev => prev ? { ...prev, mapsLink: e.target.value } : prev)}
+                    className="w-full border rounded-xl px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: linkInvalido ? '#fca5a5' : tieneCoords ? '#86efac' : '#e8edf8' }}
+                    placeholder="https://www.google.com/maps/place/.../@-34.965,-58.064,15z"
+                  />
+                  {tieneCoords && (
+                    <p className="text-xs mt-1 font-medium" style={{ color: '#065f46' }}>
+                      ✓ Lat: {coords.lat.toFixed(6)} · Lng: {coords.lng.toFixed(6)}
+                    </p>
+                  )}
+                  {linkInvalido && (
+                    <p className="text-xs mt-1" style={{ color: '#E52322' }}>
+                      No se pudieron extraer coordenadas. Usá el link completo (no el acortado goo.gl).
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
+
             <div className="flex gap-2 mt-5">
               <button onClick={guardar} disabled={guardando || recalculando}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"

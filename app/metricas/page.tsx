@@ -314,7 +314,7 @@ export default function MetricasPage() {
       filtered = filtered.filter(r => fechasConActividad.has(r.fecha))
     }
     setDatosRango(filtered)
-  }, [datosRangoAll, filtroFlotaRango, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
+  }, [datosRangoAll, filtroFlotaRango, filtroTiposUnidad, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()

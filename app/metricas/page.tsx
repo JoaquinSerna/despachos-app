@@ -275,6 +275,7 @@ export default function MetricasPage() {
   const [filtroFechasExcluidas, setFiltroFechasExcluidas] = useState<string[]>([])
   const [ocultarSinActividad, setOcultarSinActividad] = useState(false)
   const [filtroFlotaRango, setFiltroFlotaRango] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
+  const [filtroTiposUnidad, setFiltroTiposUnidad] = useState<string[]>([])
   const [datosRangoAll, setDatosRangoAll] = useState<DatosRangoDia[]>([]) // datos sin filtrar
   const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
   const [loadingRango, setLoadingRango] = useState(false)
@@ -304,6 +305,7 @@ export default function MetricasPage() {
     let filtered = datosRangoAll
     if (filtroFlotaRango === 'con_pedidos') filtered = filtered.filter(r => r.pedidos > 0)
     else if (filtroFlotaRango === 'sin_pedidos') filtered = filtered.filter(r => r.pedidos === 0)
+    if (filtroTiposUnidad.length > 0) filtered = filtered.filter(r => filtroTiposUnidad.includes(r.tipo_unidad))
     if (filtroRangoCamiones.length > 0) filtered = filtered.filter(r => filtroRangoCamiones.includes(r.camion_codigo))
     if (filtroRangoChoferes.length > 0) filtered = filtered.filter(r => filtroRangoChoferes.includes(r.chofer_nombre))
     if (filtroFechasExcluidas.length > 0) filtered = filtered.filter(r => !filtroFechasExcluidas.includes(r.fecha))
@@ -1012,6 +1014,7 @@ export default function MetricasPage() {
 
       setDatosRangoAll(rows)
       setFiltroFlotaRango('todos')
+      setFiltroTiposUnidad([])
       setFiltroRangoCamiones([])
       setFiltroRangoChoferes([])
       setFiltroFechasExcluidas([])
@@ -1153,6 +1156,36 @@ export default function MetricasPage() {
                             {f.label}
                           </button>
                         ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips multi-select tipo de unidad */}
+                {datosRangoAll.length > 0 && (() => {
+                  const tipos = [...new Set(datosRangoAll.map(r => r.tipo_unidad).filter(Boolean))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Tipo de unidad {filtroTiposUnidad.length > 0 && <span style={{ color: '#E52322' }}>({filtroTiposUnidad.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {tipos.map(t => {
+                          const sel = filtroTiposUnidad.includes(t)
+                          return (
+                            <button key={t} type="button"
+                              onClick={() => setFiltroTiposUnidad(prev => sel ? prev.filter(x => x !== t) : [...prev, t])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {t}
+                            </button>
+                          )
+                        })}
+                        {filtroTiposUnidad.length > 0 && (
+                          <button type="button" onClick={() => setFiltroTiposUnidad([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
                       </div>
                     </div>
                   )

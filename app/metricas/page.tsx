@@ -862,8 +862,8 @@ export default function MetricasPage() {
 
     const [{ data: flotaMes }, { data: pedidosMes }, { data: camionesData }] = await Promise.all([
       supabase.from('flota_dia').select('fecha, camion_codigo, hora_inicio, hora_fin, km_ruta').gte('fecha', fechaInicio).lte('fecha', fechaFin).eq('activo', true),
-      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3').gte('fecha_entrega', fechaInicio).lte('fecha_entrega', fechaFin).neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta').gte('fecha_entrega', fechaInicio).lte('fecha_entrega', fechaFin).neq('estado', 'cancelado').not('camion_id', 'is', null),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
     ])
 
     const camionMap: Record<string, any> = {}
@@ -890,8 +890,10 @@ export default function MetricasPage() {
         const pedidosDia = pedidosDias.filter(p => p.fecha_entrega === f.fecha)
         const kg = pedidosDia.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pedidosDia.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
-        const esSab = new Date(f.fecha + 'T12:00:00').getDay() === 6
-        const vueltasMaxMes = esSab ? 2 : (VUELTAS_MAX_DEFAULT[camion.sucursal] ?? 3)
+        const numVueltasDia = new Set(pedidosDia.map((p: any) => p.vuelta).filter(Boolean)).size || 1
+        const vueltasMaxMes = calcVueltasMaxEfectivas(
+          camion.sucursal, numVueltasDia, f.km_ruta ?? 0, camion.km_max_dia ?? 200, f.fecha
+        )
         sumPctKg += pct(kg, camion.tonelaje_max_kg * vueltasMaxMes)
         sumPctPos += pct(pos, camion.posiciones_total * vueltasMaxMes)
         if (f.hora_inicio && f.hora_fin && f.km_ruta) {
@@ -929,14 +931,14 @@ export default function MetricasPage() {
         flotaQ,
         // Filtrar por sucursal si está seleccionada para evitar corte por límite en rangos largos
         (() => {
-          let q = supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
+          let q = supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta')
             .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
             .neq('estado', 'cancelado').not('camion_id', 'is', null)
             .limit(50000)
           if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
           return q
         })(),
-        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
         supabase.from('usuarios').select('id, nombre'),
       ])
 
@@ -959,13 +961,14 @@ export default function MetricasPage() {
       const choferMap: Record<string, string> = {}
       for (const u of chofData) choferMap[u.id] = u.nombre
 
-      const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number }> = {}
+      const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number; vueltas: Set<number> }> = {}
       for (const p of pedidosData) {
         const k = `${p.camion_id}|${p.fecha_entrega}`
-        if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0 }
+        if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0, vueltas: new Set() }
         pedGroupMap[k].pedidos++
         pedGroupMap[k].kg += p.peso_total_kg ?? 0
         pedGroupMap[k].pos += p.volumen_total_m3 ?? 0
+        if (p.vuelta) pedGroupMap[k].vueltas.add(p.vuelta)
       }
 
       let rows: DatosRangoDia[] = flotaData.map((f: any) => {
@@ -986,13 +989,13 @@ export default function MetricasPage() {
           kgUsados: Math.round(pg.kg),
           posUsadas: Math.round(pg.pos),
           pctKg: cam?.tonelaje_max_kg ? (() => {
-            const esSabR = new Date(f.fecha + 'T12:00:00').getDay() === 6
-            const vMax = esSabR ? 2 : (VUELTAS_MAX_DEFAULT[cam.sucursal] ?? 3)
+            const numV = pg.vueltas.size || 1
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
             return pct(pg.kg, cam.tonelaje_max_kg * vMax)
           })() : 0,
           pctPos: cam?.posiciones_total ? (() => {
-            const esSabR = new Date(f.fecha + 'T12:00:00').getDay() === 6
-            const vMax = esSabR ? 2 : (VUELTAS_MAX_DEFAULT[cam.sucursal] ?? 3)
+            const numV = pg.vueltas.size || 1
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
             return pct(pg.pos, cam.posiciones_total * vMax)
           })() : 0,
           kmReal: f.km_ruta ?? null,

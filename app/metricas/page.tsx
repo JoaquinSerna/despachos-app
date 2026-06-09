@@ -925,10 +925,15 @@ export default function MetricasPage() {
 
       const [flotaRes, pedidosRes, camionesRes, chofRes] = await Promise.all([
         flotaQ,
-        supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
-          .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
-          .neq('estado', 'cancelado').not('camion_id', 'is', null)
-          .limit(10000),
+        // Filtrar por sucursal si está seleccionada para evitar corte por límite en rangos largos
+        (() => {
+          let q = supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
+            .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
+            .neq('estado', 'cancelado').not('camion_id', 'is', null)
+            .limit(50000)
+          if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+          return q
+        })(),
         supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
         supabase.from('usuarios').select('id, nombre'),
       ])

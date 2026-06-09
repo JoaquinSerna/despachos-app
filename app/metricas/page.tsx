@@ -274,6 +274,7 @@ export default function MetricasPage() {
   const [filtroRangoChoferes, setFiltroRangoChoferes] = useState<string[]>([])
   const [filtroFechasExcluidas, setFiltroFechasExcluidas] = useState<string[]>([])
   const [ocultarSinActividad, setOcultarSinActividad] = useState(false)
+  const [filtroFlotaRango, setFiltroFlotaRango] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
   const [datosRangoAll, setDatosRangoAll] = useState<DatosRangoDia[]>([]) // datos sin filtrar
   const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
   const [loadingRango, setLoadingRango] = useState(false)
@@ -301,6 +302,8 @@ export default function MetricasPage() {
   // Aplicar filtros multi-select sobre datos ya cargados (sin re-buscar)
   useEffect(() => {
     let filtered = datosRangoAll
+    if (filtroFlotaRango === 'con_pedidos') filtered = filtered.filter(r => r.pedidos > 0)
+    else if (filtroFlotaRango === 'sin_pedidos') filtered = filtered.filter(r => r.pedidos === 0)
     if (filtroRangoCamiones.length > 0) filtered = filtered.filter(r => filtroRangoCamiones.includes(r.camion_codigo))
     if (filtroRangoChoferes.length > 0) filtered = filtered.filter(r => filtroRangoChoferes.includes(r.chofer_nombre))
     if (filtroFechasExcluidas.length > 0) filtered = filtered.filter(r => !filtroFechasExcluidas.includes(r.fecha))
@@ -309,7 +312,7 @@ export default function MetricasPage() {
       filtered = filtered.filter(r => fechasConActividad.has(r.fecha))
     }
     setDatosRango(filtered)
-  }, [datosRangoAll, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
+  }, [datosRangoAll, filtroFlotaRango, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
@@ -1008,6 +1011,7 @@ export default function MetricasPage() {
       rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
 
       setDatosRangoAll(rows)
+      setFiltroFlotaRango('todos')
       setFiltroRangoCamiones([])
       setFiltroRangoChoferes([])
       setFiltroFechasExcluidas([])
@@ -1127,6 +1131,33 @@ export default function MetricasPage() {
                     className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />
                 </div>
+                {/* Filtro con/sin pedidos — aparece después de buscar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const conPed = datosRangoAll.filter(r => r.pedidos > 0).length
+                  const sinPed = datosRangoAll.filter(r => r.pedidos === 0).length
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Flota</label>
+                      <div className="flex gap-1.5">
+                        {([
+                          { key: 'todos' as const, label: `Todos (${datosRangoAll.length})` },
+                          { key: 'con_pedidos' as const, label: `Con pedidos (${conPed})` },
+                          { key: 'sin_pedidos' as const, label: `Sin pedidos (${sinPed})` },
+                        ]).map(f => (
+                          <button key={f.key} onClick={() => setFiltroFlotaRango(f.key)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                            style={{
+                              background: filtroFlotaRango === f.key ? '#254A96' : '#f4f4f3',
+                              color: filtroFlotaRango === f.key ? 'white' : '#666',
+                            }}>
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
                 {/* Chips multi-select camiones — aparecen después de buscar */}
                 {datosRangoAll.length > 0 && (() => {
                   const camiones = [...new Set(datosRangoAll.map(r => r.camion_codigo))].sort()

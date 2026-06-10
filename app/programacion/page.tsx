@@ -1113,6 +1113,11 @@ function ProgramacionInner() {
   const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
   const [recalculandoTodos, setRecalculandoTodos] = useState(false)
   const dragTransferRef = useRef<Pedido | null>(null)
+  // Sugerencias de consolidación: pedidos en misma zona pero distinta vuelta
+  interface ConsolidacionPar { aId: string; aNv: string; aCliente: string; aVuelta: number; bId: string; bNv: string; bCliente: string; bVuelta: number; razon: string }
+  const [consolidaciones, setConsolidaciones] = useState<ConsolidacionPar[]>([])
+  const [consolidacionDismissed, setConsolidacionDismissed] = useState(false)
+  const [consolidacionExpandido, setConsolidacionExpandido] = useState(false)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
@@ -1147,6 +1152,56 @@ function ProgramacionInner() {
   // Cargar transferencias en paralelo (independiente de la vuelta activa)
   useEffect(() => { cargarTransferencias() }, [fecha, sucursal])
   useEffect(() => { cargarDatos() }, [fecha, sucursal, vueltaActiva])
+  useEffect(() => { setConsolidacionDismissed(false); detectarConsolidaciones() }, [fecha, sucursal])
+
+  async function detectarConsolidaciones() {
+    try {
+      const { data } = await supabase
+        .from('pedidos')
+        .select('id, nv, cliente, latitud, longitud, vuelta, requiere_volcador')
+        .eq('fecha_entrega', fecha)
+        .eq('sucursal', sucursal)
+        .in('estado', ['pendiente', 'programado'])
+        .gt('vuelta', 0) // excluir "fuera de prog." (vuelta=0)
+      if (!data || data.length < 2) { setConsolidaciones([]); return }
+
+      // Excluir volcador — sus camiones son específicos y no aplica consolidar
+      const elegibles = data.filter((p: any) => !p.requiere_volcador)
+
+      const normCliente = (s: string) => s.toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|sas|sa|srl)\b/g, '')
+        .replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+
+      const pares: ConsolidacionPar[] = []
+      const seen = new Set<string>()
+
+      for (let i = 0; i < elegibles.length; i++) {
+        for (let j = i + 1; j < elegibles.length; j++) {
+          const a = elegibles[i], b = elegibles[j]
+          if (a.vuelta === b.vuelta) continue
+
+          const key = [a.id, b.id].sort().join('|')
+          if (seen.has(key)) continue
+
+          const mismoCliente = normCliente(a.cliente) === normCliente(b.cliente)
+          const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
+          const distancia = tienenCoords ? distanciaKm(a.latitud, a.longitud, b.latitud, b.longitud) : null
+          const cercanos = distancia !== null && distancia < 3
+
+          if (mismoCliente || cercanos) {
+            seen.add(key)
+            pares.push({
+              aId: a.id, aNv: a.nv, aCliente: a.cliente, aVuelta: a.vuelta,
+              bId: b.id, bNv: b.nv, bCliente: b.cliente, bVuelta: b.vuelta,
+              razon: mismoCliente ? 'mismo cliente' : `${Math.round(distancia! * 10) / 10} km`,
+            })
+          }
+        }
+      }
+      setConsolidaciones(pares)
+    } catch { /* silencioso */ }
+  }
 
   async function cargarTransferencias() {
     try {
@@ -2032,6 +2087,14 @@ function ProgramacionInner() {
                 title="Recalcula posiciones y peso de todos los pedidos visibles">
                 {recalculandoTodos ? '⏳…' : '♻️ Recalcular'}
               </button>
+              {consolidaciones.length > 0 && (
+                <button onClick={() => { setConsolidacionDismissed(false); setConsolidacionExpandido(true) }}
+                  className="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+                  style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
+                  title="Ver oportunidades de consolidación de pedidos en misma zona">
+                  🔀 {consolidaciones.length} consolid.
+                </button>
+              )}
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>
@@ -2112,6 +2175,59 @@ function ProgramacionInner() {
                 Dejar sin asignar
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Banner consolidación: pedidos en misma zona en distintas vueltas */}
+        {consolidaciones.length > 0 && !consolidacionDismissed && (
+          <div className="mb-2 rounded-xl overflow-hidden" style={{ border: '1px solid #fde68a', background: '#fffbeb' }}>
+            <div className="px-4 py-3 flex items-center gap-3">
+              <span className="text-lg">🔀</span>
+              <div className="flex-1 min-w-0">
+                <span className="font-semibold text-sm" style={{ color: '#92400e' }}>
+                  {consolidaciones.length === 1
+                    ? '1 oportunidad de consolidación'
+                    : `${consolidaciones.length} oportunidades de consolidación`}
+                </span>
+                <span className="text-xs ml-2" style={{ color: '#b45309' }}>
+                  — pedidos en la misma zona asignados a distintas vueltas
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button onClick={() => setConsolidacionExpandido(e => !e)}
+                  className="text-xs px-2.5 py-1.5 rounded-lg font-medium"
+                  style={{ background: '#fde68a', color: '#92400e' }}>
+                  {consolidacionExpandido ? 'Ocultar ▲' : 'Ver detalle ▼'}
+                </button>
+                <button onClick={() => setConsolidacionDismissed(true)}
+                  className="text-xs px-2 py-1.5 rounded-lg"
+                  style={{ color: '#b45309', background: '#fef9c3' }}
+                  title="Descartar aviso">✕</button>
+              </div>
+            </div>
+            {consolidacionExpandido && (
+              <div className="px-4 pb-3 pt-0 space-y-1.5">
+                {consolidaciones.map((par, i) => (
+                  <div key={i} className="flex items-center gap-2 flex-wrap text-xs rounded-lg px-3 py-2"
+                    style={{ background: 'white', border: '1px solid #fde68a', color: '#92400e' }}>
+                    <span className="font-medium" style={{ color: '#254A96' }}>V{par.aVuelta}</span>
+                    <span className="truncate max-w-[150px]" title={par.aCliente}>{par.aCliente}</span>
+                    <span style={{ color: '#fbbf24' }}>NV {par.aNv}</span>
+                    <span style={{ color: '#b45309' }}>↔</span>
+                    <span className="font-medium" style={{ color: '#254A96' }}>V{par.bVuelta}</span>
+                    <span className="truncate max-w-[150px]" title={par.bCliente}>{par.bCliente}</span>
+                    <span style={{ color: '#fbbf24' }}>NV {par.bNv}</span>
+                    <span className="ml-auto px-2 py-0.5 rounded-full text-xs font-medium"
+                      style={{ background: '#fef3c7', color: '#92400e' }}>
+                      {par.razon}
+                    </span>
+                  </div>
+                ))}
+                <p className="text-xs pt-1" style={{ color: '#b45309' }}>
+                  💡 Unificar estas entregas en una misma vuelta puede mejorar la eficiencia del recorrido.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

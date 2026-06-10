@@ -1057,11 +1057,27 @@ function maxVueltasPorDistancia(distKm: number): number {
   return 1
 }
 
-function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, number> {
+function calcularOrdenRuta(pedidos: Pedido[], sucursal: string, ordenGoogle?: Record<string, number>): Record<string, number> {
   const deposito = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
   const conCoords = pedidos.filter(p => p.latitud && p.longitud)
   const sinCoords = pedidos.filter(p => !p.latitud || !p.longitud)
 
+  // Si Google ya calculó el orden, usarlo directamente (es el optimizado)
+  if (ordenGoogle && Object.keys(ordenGoogle).length > 0) {
+    const resultado: Record<string, number> = {}
+    pedidos.forEach((p, i) => {
+      resultado[p.id] = ordenGoogle[p.id] ?? (pedidos.length + i + 1)
+    })
+    return resultado
+  }
+
+  if (conCoords.length === 0) {
+    const resultado: Record<string, number> = {}
+    sinCoords.forEach((p, i) => { resultado[p.id] = i + 1 })
+    return resultado
+  }
+
+  // Paso 1 — Nearest Neighbor: solución inicial
   const ordenados: Pedido[] = []
   const restantes = [...conCoords]
   let latActual = deposito.lat
@@ -1078,6 +1094,39 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
     ordenados.push(siguiente)
     latActual = siguiente.latitud!
     lngActual = siguiente.longitud!
+  }
+
+  // Paso 2 — 2-opt: eliminar cruces invirtiendo segmentos hasta que no mejore
+  // Distancia total incluyendo salida desde el depósito
+  function totalDist(ruta: Pedido[]): number {
+    let d = 0
+    let pLat = deposito.lat, pLng = deposito.lng
+    for (const p of ruta) {
+      d += distanciaKm(pLat, pLng, p.latitud!, p.longitud!)
+      pLat = p.latitud!; pLng = p.longitud!
+    }
+    return d
+  }
+
+  let mejorado = true
+  while (mejorado && ordenados.length > 2) {
+    mejorado = false
+    const distActual = totalDist(ordenados)
+    outer: for (let i = 0; i < ordenados.length - 1; i++) {
+      for (let j = i + 2; j < ordenados.length; j++) {
+        // Invertir el segmento [i+1 … j]
+        const candidato = [
+          ...ordenados.slice(0, i + 1),
+          ...ordenados.slice(i + 1, j + 1).reverse(),
+          ...ordenados.slice(j + 1),
+        ]
+        if (totalDist(candidato) < distActual - 0.001) {
+          ordenados.splice(0, ordenados.length, ...candidato)
+          mejorado = true
+          break outer // reiniciar el bucle con la nueva ruta mejorada
+        }
+      }
+    }
   }
 
   const todos = [...ordenados, ...sinCoords]
@@ -1762,6 +1811,8 @@ function ProgramacionInner() {
   const enrichGenRef = useRef(0)
   // Guarda la última sugerencia IA para comparar con la confirmación final
   const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string } | null>(null)
+  // Orden de visitas optimizado devuelto por Google Route Opt (pedido_id → posición en ruta)
+  const ordenGoogleRef = useRef<Record<string, number>>({})
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => { setToast({ msg, tipo }); setTimeout(() => setToast(null), 3000) }
 
@@ -2289,6 +2340,10 @@ function ProgramacionInner() {
         const data = await res.json()
         if (data.asignacion) {
           Object.assign(asigs, data.asignacion)
+          // Guardar orden de visitas optimizado de Google para usarlo en Confirmar
+          if (data.ordenEntrega && Object.keys(data.ordenEntrega).length > 0) {
+            ordenGoogleRef.current = data.ordenEntrega
+          }
           const isGoogle = (data.engine ?? '').includes('google')
           const engineLabel = isGoogle ? '🗺️ Google Route Opt.' : '🤖 IA (Claude)'
           if (data.cambios?.length) {
@@ -2337,6 +2392,7 @@ function ProgramacionInner() {
     // Limpiar estado local inmediatamente
     const limpio = pedidos.map(p => ({ ...p, camion_id: null }))
     setPedidos(limpio); construirColumnas(limpio, camiones); setConfirmado(false)
+    ordenGoogleRef.current = {} // descartar orden guardado de Google
     // Limpiar DB si había algo confirmado
     if (conAsignacion.length > 0) {
       setGuardando(true)
@@ -2391,9 +2447,17 @@ function ProgramacionInner() {
     })
 
     const ordenes: Record<string, number> = {}
+    const ordenGoogle = ordenGoogleRef.current
     Object.entries(porCamion).forEach(([, pedidosCamion]) => {
-      const orden = calcularOrdenRuta(pedidosCamion, sucursal)
-      Object.assign(ordenes, orden)
+      // Filtrar el orden de Google solo para los pedidos de este camión
+      // Si el ruteador movió algún pedido manualmente (no está en ordenGoogle), calcularOrdenRuta
+      // detectará que ese pedido no tiene orden y caerá al final — o bien recalculará todo si
+      // ningún pedido del camión tiene orden de Google
+      const tieneOrdenGoogle = pedidosCamion.some(p => ordenGoogle[p.id] != null)
+      const ordenCamion = tieneOrdenGoogle
+        ? calcularOrdenRuta(pedidosCamion, sucursal, ordenGoogle)
+        : calcularOrdenRuta(pedidosCamion, sucursal)
+      Object.assign(ordenes, ordenCamion)
     })
 
     try {

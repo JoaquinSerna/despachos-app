@@ -115,7 +115,7 @@ async function sugerirConRouteOptimization(
   ya_asignados: PedidoInput[],
   sugerencia: Record<string, string | null>,
   sucursal: string,
-): Promise<{ asignacion: Record<string, string | null>; cambios: any[]; engine: string }> {
+): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string }> {
 
   const projectId = process.env.GOOGLE_CLOUD_PROJECT!
   const bearerToken = await getGoogleBearerToken()
@@ -127,7 +127,7 @@ async function sugerirConRouteOptimization(
 
   // Si no hay pedidos con coordenadas, no vale la pena llamar a la API
   if (conCoords.length === 0) {
-    return { asignacion: sugerencia, cambios: [], engine: 'algorithm-fallback-no-coords' }
+    return { asignacion: sugerencia, ordenEntrega: {}, cambios: [], engine: 'algorithm-fallback-no-coords' }
   }
 
   // Calcular carga actual de cada camión (ya_asignados)
@@ -339,16 +339,26 @@ async function sugerirConRouteOptimization(
 
   const result = await response.json()
 
-  // Mapear respuesta → { pedido_id: camion_codigo }
+  // Mapear respuesta → { pedido_id: camion_codigo } + orden de visitas optimizado
   const asignacion: Record<string, string | null> = { ...sugerencia }
+  // ordenEntrega: por camión → { pedido_id: posición_en_ruta }
+  // Representa el orden real que devuelve Google (ya optimizado)
+  const ordenEntrega: Record<string, number> = {}
 
   // Pedidos que la API asignó a camiones
   if (result.routes) {
     for (const route of result.routes) {
       const camionCodigo = route.vehicleLabel as string
-      for (const visit of (route.visits ?? [])) {
+      const visits = route.visits ?? []
+      // Contador de posición dentro de la ruta de este camión
+      const contadorPorCamion: Record<string, number> = {}
+      for (const visit of visits) {
         const pedidoId = visit.shipmentLabel as string
-        if (pedidoId) asignacion[pedidoId] = camionCodigo
+        if (pedidoId) {
+          asignacion[pedidoId] = camionCodigo
+          if (!contadorPorCamion[camionCodigo]) contadorPorCamion[camionCodigo] = 1
+          ordenEntrega[pedidoId] = contadorPorCamion[camionCodigo]++
+        }
       }
     }
   }
@@ -381,7 +391,7 @@ async function sugerirConRouteOptimization(
     }
   }
 
-  return { asignacion, cambios, engine: 'google-route-optimization' }
+  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization' }
 }
 
 // ─── Claude Haiku (motor original) ───────────────────────────────────────────
@@ -569,7 +579,7 @@ export async function POST(request: NextRequest) {
     // Elegir motor según env vars
     const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
 
-    let result: { asignacion: Record<string, string | null>; cambios: any[]; tokens?: any; engine: string }
+    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string }
 
     if (useGoogleApi) {
       try {

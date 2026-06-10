@@ -1096,12 +1096,13 @@ interface ConsolidacionGrupo {
 }
 
 function ConsolidacionBanner({
-  grupos, descartados, onDescartar, onAceptar, fecha,
+  grupos, descartados, onDescartar, onAceptar, onEditarPosiciones, fecha,
 }: {
   grupos: ConsolidacionGrupo[]
   descartados: Set<string>
   onDescartar: (key: string) => void
   onAceptar: (key: string, pedidoIds: string[], targetVuelta: number) => Promise<void>
+  onEditarPosiciones: (id: string, posiciones: number) => Promise<void>
   fecha: string
 }) {
   const [expandido, setExpandido] = useState(false)
@@ -1110,6 +1111,9 @@ function ConsolidacionBanner({
   const [aceptandoKey, setAceptandoKey] = useState<string | null>(null)
   const [aceptarVuelta, setAceptarVuelta] = useState<number>(1)
   const [procesando, setProcesando] = useState(false)
+  const [editandoPosId, setEditandoPosId] = useState<string | null>(null)
+  const [editPosVal, setEditPosVal] = useState('')
+  const [guardandoPos, setGuardandoPos] = useState(false)
 
   const visibles = grupos.filter(g => !descartados.has(g.key))
   if (visibles.length === 0) return null
@@ -1247,8 +1251,56 @@ function ConsolidacionBanner({
                           {item.idDespacho && (
                             <span className="shrink-0" style={{ color: '#B9BBB7' }}>SD {item.idDespacho}</span>
                           )}
-                          {item.posiciones != null && item.posiciones > 0 && (
-                            <span className="shrink-0 font-medium" style={{ color: '#254A96' }}>{item.posiciones} pos.</span>
+                          {/* Posiciones — click para editar inline */}
+                          {editandoPosId === item.id ? (
+                            <span className="flex items-center gap-1 shrink-0">
+                              <input
+                                type="number" min={0} step={1}
+                                value={editPosVal}
+                                onChange={e => setEditPosVal(e.target.value)}
+                                onKeyDown={async e => {
+                                  if (e.key === 'Enter') {
+                                    const v = parseInt(editPosVal)
+                                    if (!isNaN(v) && v >= 0) {
+                                      setGuardandoPos(true)
+                                      await onEditarPosiciones(item.id, v)
+                                      setGuardandoPos(false)
+                                    }
+                                    setEditandoPosId(null)
+                                  }
+                                  if (e.key === 'Escape') setEditandoPosId(null)
+                                }}
+                                autoFocus
+                                className="w-14 border rounded px-1 py-0.5 text-center"
+                                style={{ fontSize: 11, borderColor: '#254A96', color: '#254A96' }}
+                              />
+                              <button
+                                disabled={guardandoPos}
+                                onClick={async () => {
+                                  const v = parseInt(editPosVal)
+                                  if (!isNaN(v) && v >= 0) {
+                                    setGuardandoPos(true)
+                                    await onEditarPosiciones(item.id, v)
+                                    setGuardandoPos(false)
+                                  }
+                                  setEditandoPosId(null)
+                                }}
+                                className="px-1.5 py-0.5 rounded font-semibold text-white disabled:opacity-50"
+                                style={{ fontSize: 10, background: '#254A96' }}>
+                                {guardandoPos ? '…' : '✓'}
+                              </button>
+                              <button onClick={() => setEditandoPosId(null)}
+                                className="px-1 py-0.5 rounded"
+                                style={{ fontSize: 10, color: '#666', background: '#f0f0f0' }}>✕</button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => { setEditandoPosId(item.id); setEditPosVal(String(item.posiciones ?? 0)) }}
+                              className="shrink-0 font-medium px-1.5 py-0.5 rounded"
+                              style={{ color: '#254A96', background: '#e8edf8', fontSize: 11 }}
+                              title="Editar posiciones">
+                              {item.posiciones != null && item.posiciones > 0 ? `${item.posiciones} pos.` : '— pos.'}
+                            </button>
                           )}
                           {item.peso != null && item.peso > 0 && (
                             <span className="shrink-0" style={{ color: '#B9BBB7' }}>{item.peso.toLocaleString()} kg</span>
@@ -1488,8 +1540,15 @@ function ProgramacionInner() {
         )
       })
 
-      // Primero "mismo_cliente", luego "proximidad"
-      factibles.sort((a, b) => (a.tipo === 'mismo_cliente' ? -1 : 1) - (b.tipo === 'mismo_cliente' ? -1 : 1))
+      // Ordenar por posiciones totales desc, luego kg desc
+      factibles.sort((a, b) => {
+        const posA = a.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
+        const posB = b.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
+        if (posB !== posA) return posB - posA
+        const kgA = a.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
+        const kgB = b.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
+        return kgB - kgA
+      })
       setConsolidaciones(factibles)
     } catch { /* silencioso */ }
   }
@@ -2110,6 +2169,18 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
+  async function handleEditarPosicionesConsolidacion(pedidoId: string, posiciones: number) {
+    await patchPedido(pedidoId, { volumen_total_m3: posiciones })
+    // Actualizar el estado local de consolidaciones para reflejar el nuevo valor
+    setConsolidaciones(prev => prev.map(grupo => ({
+      ...grupo,
+      pedidos: grupo.pedidos.map(p => p.id === pedidoId ? { ...p, posiciones } : p),
+    })))
+    // También actualizar el kanban si el pedido está en la vuelta activa
+    const act = pedidos.map(p => p.id === pedidoId ? { ...p, volumen_total_m3: posiciones } : p)
+    setPedidos(act); construirColumnas(act, camiones)
+  }
+
   async function handleSepararPedido(id: string, itemsNuevo: any[], itemsMantener: any[]) {
     try {
       const res = await fetch('/api/separar-pedido', {
@@ -2488,6 +2559,7 @@ function ProgramacionInner() {
           descartados={consolidacionDescartados}
           onDescartar={key => setConsolidacionDescartados(prev => new Set([...prev, key]))}
           onAceptar={handleAceptarConsolidacion}
+          onEditarPosiciones={handleEditarPosicionesConsolidacion}
           fecha={fecha}
         />
 

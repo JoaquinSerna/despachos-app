@@ -1372,8 +1372,23 @@ function ProgramacionInner() {
         .gt('vuelta', 0) // excluir "fuera de prog." (vuelta=0)
       if (!data || data.length < 2) { setConsolidaciones([]); return }
 
-      // Excluir volcador — sus camiones son específicos y no aplica consolidar
-      const elegibles = data.filter((p: any) => !p.requiere_volcador)
+      // Excluir volcador por flag + detectar granel en items aunque el flag no esté seteado
+      // (puede pasar si el pedido nunca se cargó en la vuelta activa y el auto-detect no corrió)
+      const conFlag = data.filter((p: any) => !p.requiere_volcador)
+      let pedidosConGranel = new Set<string>()
+      if (conFlag.length > 0) {
+        const { data: itemsGranel } = await supabase
+          .from('pedido_items')
+          .select('pedido_id, nombre')
+          .in('pedido_id', conFlag.map((p: any) => p.id))
+        const GRANEL_KW = ['granel', 'estabilizado', 'cascote', 'gravilla', 'pedregullo', 'tosca', 'arena fina', 'arena gruesa']
+        pedidosConGranel = new Set(
+          (itemsGranel ?? [])
+            .filter((it: any) => GRANEL_KW.some(kw => it.nombre.toLowerCase().includes(kw)))
+            .map((it: any) => it.pedido_id as string)
+        )
+      }
+      const elegibles = conFlag.filter((p: any) => !pedidosConGranel.has(p.id))
 
       const normCliente = (s: string) => s.toLowerCase()
         .normalize('NFD').replace(/[̀-ͯ]/g, '')

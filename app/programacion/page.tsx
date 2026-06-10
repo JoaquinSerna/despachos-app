@@ -1085,6 +1085,215 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
   todos.forEach((p, i) => { resultado[p.id] = i + 1 })
   return resultado
 }
+// ── Interfaces y componente de consolidación ────────────────────────────────
+interface ConsolidacionItem {
+  id: string; nv: string; idDespacho: string | null; cliente: string
+  vuelta: number; direccion: string; peso: number | null; posiciones: number | null
+}
+interface ConsolidacionGrupo {
+  key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string
+  distanciaKm?: number; pedidos: ConsolidacionItem[]
+}
+
+function ConsolidacionBanner({
+  grupos, descartados, onDescartar, onAceptar, fecha,
+}: {
+  grupos: ConsolidacionGrupo[]
+  descartados: Set<string>
+  onDescartar: (key: string) => void
+  onAceptar: (key: string, pedidoIds: string[], targetVuelta: number) => Promise<void>
+  fecha: string
+}) {
+  const [expandido, setExpandido] = useState(false)
+  const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
+  const [itemsData, setItemsData] = useState<Record<string, { nombre: string; cantidad: number; unidad: string }[]>>({})
+  const [aceptandoKey, setAceptandoKey] = useState<string | null>(null)
+  const [aceptarVuelta, setAceptarVuelta] = useState<number>(1)
+  const [procesando, setProcesando] = useState(false)
+
+  const visibles = grupos.filter(g => !descartados.has(g.key))
+  if (visibles.length === 0) return null
+
+  async function toggleItems(pedidoId: string) {
+    setItemsExpandidos(prev => {
+      const s = new Set(prev)
+      if (s.has(pedidoId)) { s.delete(pedidoId); return s }
+      s.add(pedidoId); return s
+    })
+    if (itemsData[pedidoId] !== undefined) return
+    try {
+      const res = await fetch(`/api/pedido-items?ids=${pedidoId}`)
+      const json = await res.json()
+      const items = (json.items ?? []).filter((it: any) => it.pedido_id === pedidoId)
+      setItemsData(prev => ({ ...prev, [pedidoId]: items }))
+    } catch { setItemsData(prev => ({ ...prev, [pedidoId]: [] })) }
+  }
+
+  async function confirmarAceptar(key: string, pedidoIds: string[]) {
+    setProcesando(true)
+    await onAceptar(key, pedidoIds, aceptarVuelta)
+    setAceptandoKey(null)
+    setProcesando(false)
+  }
+
+  return (
+    <div className="mb-2 rounded-xl overflow-hidden" style={{ border: '1px solid #fde68a', background: '#fffbeb' }}>
+      {/* Header global */}
+      <div className="px-4 py-2.5 flex items-center gap-3">
+        <span className="text-base">🔀</span>
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold text-sm" style={{ color: '#92400e' }}>
+            {visibles.length === 1 ? '1 oportunidad de consolidación' : `${visibles.length} oportunidades de consolidación`}
+          </span>
+          <span className="text-xs ml-2" style={{ color: '#b45309' }}>— pedidos en la misma zona en distintas vueltas</span>
+        </div>
+        <button onClick={() => setExpandido(e => !e)}
+          className="text-xs px-2.5 py-1.5 rounded-lg font-medium shrink-0"
+          style={{ background: '#fde68a', color: '#92400e' }}>
+          {expandido ? 'Ocultar ▲' : 'Ver detalle ▼'}
+        </button>
+      </div>
+
+      {/* Lista de grupos — scrollable */}
+      {expandido && (
+        <div className="px-3 pb-3 pt-0 space-y-2 overflow-y-auto" style={{ maxHeight: '45vh' }}>
+          {visibles.map(grupo => {
+            const totalPos = grupo.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
+            const totalKg  = grupo.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
+            const isAceptando = aceptandoKey === grupo.key
+            return (
+              <div key={grupo.key} className="rounded-xl overflow-hidden"
+                style={{ border: '1px solid #fde68a', background: 'white' }}>
+
+                {/* Cabecera del grupo */}
+                <div className="px-3 py-2 flex items-center gap-2 flex-wrap"
+                  style={{ background: grupo.tipo === 'mismo_cliente' ? '#fef9c3' : '#f0fdf4', borderBottom: '1px solid #fde68a' }}>
+                  <div className="flex items-center gap-2 min-w-0 flex-1 flex-wrap">
+                    <span className="text-xs font-semibold" style={{ color: '#92400e' }}>
+                      {grupo.tipo === 'mismo_cliente' ? '👤' : '📍'} {grupo.etiqueta}
+                    </span>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0"
+                      style={{ background: grupo.tipo === 'mismo_cliente' ? '#fde68a' : '#bbf7d0', color: grupo.tipo === 'mismo_cliente' ? '#92400e' : '#065f46' }}>
+                      {grupo.tipo === 'mismo_cliente' ? 'mismo cliente' : `${grupo.distanciaKm} km`}
+                    </span>
+                    <span className="text-xs shrink-0" style={{ color: '#b45309' }}>
+                      {grupo.pedidos.length} ped.
+                      {totalPos > 0 ? ` · ${totalPos} pos.` : ''}
+                      {totalKg > 0 ? ` · ${Math.round(totalKg).toLocaleString()} kg` : ''}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => {
+                        if (isAceptando) { setAceptandoKey(null); return }
+                        const minVuelta = Math.min(...grupo.pedidos.map(p => p.vuelta))
+                        setAceptarVuelta(minVuelta)
+                        setAceptandoKey(grupo.key)
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg font-medium"
+                      style={{ background: '#d1fae5', color: '#065f46' }}>
+                      ✓ Consolidar
+                    </button>
+                    <button onClick={() => onDescartar(grupo.key)}
+                      className="text-xs px-2 py-1 rounded-lg"
+                      style={{ color: '#b45309', background: '#fef3c7' }}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {/* Panel de aceptar — elegir vuelta destino */}
+                {isAceptando && (
+                  <div className="px-3 py-2 flex items-center gap-3 flex-wrap"
+                    style={{ background: '#f0fdf4', borderBottom: '1px solid #bbf7d0' }}>
+                    <span className="text-xs font-medium shrink-0" style={{ color: '#065f46' }}>Unificar en:</span>
+                    <div className="flex gap-1 flex-wrap">
+                      {vueltasDisponibles(fecha).map(v => (
+                        <button key={v} onClick={() => setAceptarVuelta(v)}
+                          className="text-xs px-2 py-1 rounded-lg font-medium transition-colors"
+                          style={{ background: aceptarVuelta === v ? '#254A96' : '#e8edf8', color: aceptarVuelta === v ? 'white' : '#254A96' }}>
+                          {v === 5 ? 'DHora' : `V${v}`}
+                        </button>
+                      ))}
+                    </div>
+                    <button onClick={() => confirmarAceptar(grupo.key, grupo.pedidos.map(p => p.id))}
+                      disabled={procesando}
+                      className="text-xs px-3 py-1 rounded-lg font-semibold text-white disabled:opacity-50 shrink-0"
+                      style={{ background: '#065f46' }}>
+                      {procesando ? '…' : 'Mover todos'}
+                    </button>
+                    <button onClick={() => setAceptandoKey(null)}
+                      className="text-xs px-2 py-1 rounded-lg shrink-0"
+                      style={{ color: '#666', background: '#f0f0f0' }}>Cancelar</button>
+                  </div>
+                )}
+
+                {/* Pedidos del grupo */}
+                <div>
+                  {grupo.pedidos.map((item, idx) => {
+                    const isExp = itemsExpandidos.has(item.id)
+                    const items = itemsData[item.id]
+                    const isLast = idx === grupo.pedidos.length - 1
+                    return (
+                      <div key={item.id} style={{ borderBottom: isLast ? 'none' : '1px solid #fef9c3' }}>
+                        {/* Línea principal */}
+                        <div className="px-3 py-1.5 flex items-center gap-2 text-xs">
+                          <span className="shrink-0 font-bold px-1.5 py-0.5 rounded text-white"
+                            style={{ fontSize: 10, background: '#254A96' }}>V{item.vuelta}</span>
+                          <span className="font-medium truncate" style={{ color: '#1a1a1a', maxWidth: 150 }} title={item.cliente}>
+                            {item.cliente}
+                          </span>
+                          <span className="shrink-0" style={{ color: '#B9BBB7' }}>NV {item.nv}</span>
+                          {item.idDespacho && (
+                            <span className="shrink-0" style={{ color: '#B9BBB7' }}>SD {item.idDespacho}</span>
+                          )}
+                          {item.posiciones != null && item.posiciones > 0 && (
+                            <span className="shrink-0 font-medium" style={{ color: '#254A96' }}>{item.posiciones} pos.</span>
+                          )}
+                          {item.peso != null && item.peso > 0 && (
+                            <span className="shrink-0" style={{ color: '#B9BBB7' }}>{item.peso.toLocaleString()} kg</span>
+                          )}
+                          <button onClick={() => toggleItems(item.id)}
+                            className="ml-auto shrink-0 px-1.5 py-0.5 rounded"
+                            style={{ fontSize: 10, color: '#B9BBB7', background: '#f4f4f3' }}
+                            title={isExp ? 'Ocultar detalle' : 'Ver productos'}>
+                            {isExp ? '▲' : '▼'}
+                          </button>
+                        </div>
+                        {/* Detalle expandible */}
+                        {isExp && (
+                          <div className="pl-10 pr-3 pb-2 text-xs space-y-0.5">
+                            {item.direccion && (
+                              <p style={{ color: '#9ca3af' }}>{item.direccion}</p>
+                            )}
+                            {items === undefined ? (
+                              <p style={{ color: '#B9BBB7' }}>Cargando ítems…</p>
+                            ) : items.length === 0 ? (
+                              <p style={{ color: '#B9BBB7' }}>Sin ítems cargados</p>
+                            ) : items.map((it, i) => (
+                              <p key={i} style={{ color: '#555' }}>
+                                <span style={{ color: '#254A96', fontWeight: 600 }}>{it.cantidad}</span>
+                                {it.unidad ? ` ${it.unidad}` : ''} — {it.nombre}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-xs px-1 pt-0.5" style={{ color: '#b45309' }}>
+            💡 "Consolidar" mueve todos los pedidos del grupo a la vuelta elegida para programarlos juntos.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ProgramacionInner() {
   const params = useSearchParams()
   const [fecha, setFecha] = useState(params.get('fecha') ?? hoy())
@@ -1113,12 +1322,9 @@ function ProgramacionInner() {
   const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
   const [recalculandoTodos, setRecalculandoTodos] = useState(false)
   const dragTransferRef = useRef<Pedido | null>(null)
-  // Sugerencias de consolidación: pedidos en misma zona pero distinta vuelta
-  interface ConsolidacionItem { id: string; nv: string; cliente: string; vuelta: number; direccion: string; peso: number | null }
-  interface ConsolidacionGrupo { key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string; distanciaKm?: number; pedidos: ConsolidacionItem[] }
+  // Sugerencias de consolidación (interfaces definidas fuera del componente)
   const [consolidaciones, setConsolidaciones] = useState<ConsolidacionGrupo[]>([])
   const [consolidacionDescartados, setConsolidacionDescartados] = useState<Set<string>>(new Set())
-  const [consolidacionExpandido, setConsolidacionExpandido] = useState(false)
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
@@ -1159,7 +1365,7 @@ function ProgramacionInner() {
     try {
       const { data } = await supabase
         .from('pedidos')
-        .select('id, nv, cliente, direccion, latitud, longitud, vuelta, requiere_volcador, peso_total_kg')
+        .select('id, nv, id_despacho, cliente, direccion, latitud, longitud, vuelta, requiere_volcador, peso_total_kg, volumen_total_m3')
         .eq('fecha_entrega', fecha)
         .eq('sucursal', sucursal)
         .in('estado', ['pendiente', 'programado'])
@@ -1175,8 +1381,10 @@ function ProgramacionInner() {
         .replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
 
       const toItem = (p: any): ConsolidacionItem => ({
-        id: p.id, nv: p.nv, cliente: p.cliente, vuelta: p.vuelta,
+        id: p.id, nv: p.nv, idDespacho: p.id_despacho ?? null,
+        cliente: p.cliente, vuelta: p.vuelta,
         direccion: p.direccion ?? '', peso: p.peso_total_kg ?? null,
+        posiciones: p.volumen_total_m3 ?? null,
       })
 
       const sugerencias: ConsolidacionGrupo[] = []
@@ -1846,6 +2054,19 @@ function ProgramacionInner() {
     } catch { showToast('Error al mover sucursal', 'err') }
   }
 
+  async function handleAceptarConsolidacion(key: string, pedidoIds: string[], targetVuelta: number) {
+    try {
+      await Promise.all(pedidoIds.map(id =>
+        patchPedido(id, { vuelta: targetVuelta, camion_id: null, estado: 'pendiente', orden_entrega: null })
+      ))
+      setConsolidacionDescartados(prev => new Set([...prev, key]))
+      showToast(`${pedidoIds.length} pedidos consolidados en V${targetVuelta}`)
+      detectarConsolidaciones()
+      cargarDatos()
+      if (userId) logAuditoria(userId, userNombre, 'Consolidó pedidos de misma zona', 'Programación', { fecha, sucursal, vuelta_destino: targetVuelta, cantidad: pedidoIds.length })
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+  }
+
   async function handleSepararPedido(id: string, itemsNuevo: any[], itemsMantener: any[]) {
     try {
       const res = await fetch('/api/separar-pedido', {
@@ -2128,7 +2349,7 @@ function ProgramacionInner() {
                 {recalculandoTodos ? '⏳…' : '♻️ Recalcular'}
               </button>
               {consolidaciones.filter(g => !consolidacionDescartados.has(g.key)).length > 0 && (
-                <button onClick={() => { setConsolidacionDescartados(new Set()); setConsolidacionExpandido(true) }}
+                <button onClick={() => setConsolidacionDescartados(new Set())}
                   className="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                   style={{ background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
                   title="Ver oportunidades de consolidación de pedidos en misma zona">
@@ -2218,83 +2439,14 @@ function ProgramacionInner() {
           </div>
         )}
 
-        {/* Banner consolidación: pedidos en misma zona en distintas vueltas */}
-        {(() => {
-          const visibles = consolidaciones.filter(g => !consolidacionDescartados.has(g.key))
-          if (visibles.length === 0) return null
-          return (
-            <div className="mb-2 rounded-xl overflow-hidden" style={{ border: '1px solid #fde68a', background: '#fffbeb' }}>
-              {/* Header */}
-              <div className="px-4 py-2.5 flex items-center gap-3">
-                <span className="text-base">🔀</span>
-                <div className="flex-1 min-w-0">
-                  <span className="font-semibold text-sm" style={{ color: '#92400e' }}>
-                    {visibles.length === 1 ? '1 oportunidad de consolidación' : `${visibles.length} oportunidades de consolidación`}
-                  </span>
-                  <span className="text-xs ml-2" style={{ color: '#b45309' }}>
-                    — pedidos en la misma zona asignados a distintas vueltas
-                  </span>
-                </div>
-                <button onClick={() => setConsolidacionExpandido(e => !e)}
-                  className="text-xs px-2.5 py-1.5 rounded-lg font-medium shrink-0"
-                  style={{ background: '#fde68a', color: '#92400e' }}>
-                  {consolidacionExpandido ? 'Ocultar ▲' : 'Ver detalle ▼'}
-                </button>
-              </div>
-              {/* Lista — scrollable con altura máxima para no ocupar pantalla */}
-              {consolidacionExpandido && (
-                <div className="px-3 pb-3 pt-0 space-y-1.5 overflow-y-auto" style={{ maxHeight: '38vh' }}>
-                  {visibles.map(grupo => (
-                    <div key={grupo.key} className="rounded-xl overflow-hidden"
-                      style={{ border: '1px solid #fde68a', background: 'white' }}>
-                      {/* Cabecera del grupo */}
-                      <div className="px-3 py-2 flex items-center justify-between gap-2"
-                        style={{ background: grupo.tipo === 'mismo_cliente' ? '#fef9c3' : '#f0fdf4', borderBottom: '1px solid #fde68a' }}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-xs font-semibold truncate" style={{ color: '#92400e' }}>
-                            {grupo.tipo === 'mismo_cliente' ? '👤' : '📍'} {grupo.etiqueta}
-                          </span>
-                          <span className="shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium"
-                            style={{ background: grupo.tipo === 'mismo_cliente' ? '#fde68a' : '#bbf7d0', color: grupo.tipo === 'mismo_cliente' ? '#92400e' : '#065f46' }}>
-                            {grupo.tipo === 'mismo_cliente' ? 'mismo cliente' : `${grupo.distanciaKm} km`}
-                          </span>
-                        </div>
-                        <button onClick={() => setConsolidacionDescartados(prev => new Set([...prev, grupo.key]))}
-                          className="shrink-0 text-xs px-2 py-0.5 rounded-lg"
-                          style={{ color: '#b45309', background: '#fef3c7' }}
-                          title="Descartar esta sugerencia">✕ Descartar</button>
-                      </div>
-                      {/* Pedidos del grupo */}
-                      <div className="divide-y" style={{ borderColor: '#fef9c3' }}>
-                        {grupo.pedidos.map(item => (
-                          <div key={item.id} className="px-3 py-1.5 flex items-start gap-2 text-xs">
-                            <span className="shrink-0 font-bold px-1.5 py-0.5 rounded text-white text-[10px]"
-                              style={{ background: '#254A96' }}>V{item.vuelta}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-medium truncate max-w-[180px]" style={{ color: '#1a1a1a' }} title={item.cliente}>{item.cliente}</span>
-                                <span style={{ color: '#B9BBB7' }}>NV {item.nv}</span>
-                                {item.peso != null && item.peso > 0 && (
-                                  <span style={{ color: '#B9BBB7' }}>{item.peso.toLocaleString()} kg</span>
-                                )}
-                              </div>
-                              {item.direccion && (
-                                <p className="truncate mt-0.5" style={{ color: '#9ca3af', maxWidth: 320 }} title={item.direccion}>{item.direccion}</p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  <p className="text-xs px-1 pt-1" style={{ color: '#b45309' }}>
-                    💡 Unificar estas entregas en una misma vuelta puede mejorar la eficiencia del recorrido.
-                  </p>
-                </div>
-              )}
-            </div>
-          )
-        })()}
+        {/* Banner consolidación */}
+        <ConsolidacionBanner
+          grupos={consolidaciones}
+          descartados={consolidacionDescartados}
+          onDescartar={key => setConsolidacionDescartados(prev => new Set([...prev, key]))}
+          onAceptar={handleAceptarConsolidacion}
+          fecha={fecha}
+        />
 
         {vueltaActiva === VUELTA_TRANSFERENCIAS ? (
           /* ── Vista transferencias: kanban igual al principal ── */

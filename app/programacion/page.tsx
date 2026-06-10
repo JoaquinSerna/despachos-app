@@ -1460,9 +1460,37 @@ function ProgramacionInner() {
         }
       }
 
+      // ── Paso 3: verificar que algún camión de la flota aguante el grupo completo ─
+      // Obtener camiones disponibles para la fecha/sucursal
+      const { data: flotaDia } = await supabase
+        .from('flota_dia').select('camion_codigo')
+        .eq('fecha', fecha).eq('activo', true)
+        .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`)
+      let codigos: string[] = (flotaDia ?? []).map((f: any) => f.camion_codigo)
+      if (codigos.length === 0) {
+        const { data: base } = await supabase.from('camiones_flota').select('codigo').eq('sucursal', sucursal).eq('activo', true)
+        codigos = (base ?? []).map((b: any) => b.codigo)
+      }
+      let flota: { posiciones_total: number; tonelaje_max_kg: number }[] = []
+      if (codigos.length > 0) {
+        const { data: cd } = await supabase.from('camiones_flota')
+          .select('posiciones_total, tonelaje_max_kg').in('codigo', codigos).eq('activo', true)
+        flota = cd ?? []
+      }
+      // Solo mostrar grupos donde al menos un camión puede absorber la suma total
+      const factibles = sugerencias.filter(grupo => {
+        const totalPos = grupo.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
+        const totalKg  = grupo.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
+        if (flota.length === 0) return true // sin datos de flota, mostrar igual
+        return flota.some(c =>
+          c.tonelaje_max_kg >= totalKg &&
+          (c.posiciones_total === 0 || totalPos === 0 || c.posiciones_total >= totalPos)
+        )
+      })
+
       // Primero "mismo_cliente", luego "proximidad"
-      sugerencias.sort((a, b) => (a.tipo === 'mismo_cliente' ? -1 : 1) - (b.tipo === 'mismo_cliente' ? -1 : 1))
-      setConsolidaciones(sugerencias)
+      factibles.sort((a, b) => (a.tipo === 'mismo_cliente' ? -1 : 1) - (b.tipo === 'mismo_cliente' ? -1 : 1))
+      setConsolidaciones(factibles)
     } catch { /* silencioso */ }
   }
 

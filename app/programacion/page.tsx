@@ -1141,7 +1141,7 @@ interface ConsolidacionItem {
   latitud: number | null; longitud: number | null
 }
 // camionBase: lo que sale de la DB (sin vueltasLibres todavía)
-interface ConsolidacionCamionBase { codigo: string; tipo_unidad: string; posiciones_total: number; tonelaje_max_kg: number }
+interface ConsolidacionCamionBase { codigo: string; tipo_unidad: string; posiciones_total: number; tonelaje_max_kg: number; volcador?: boolean; grua_hidraulica?: boolean }
 // camion con vueltas libres calculadas para un grupo/pedido concreto
 interface ConsolidacionCamion extends ConsolidacionCamionBase { vueltasLibres: number[] }
 interface PedidoEnRiesgo {
@@ -1149,6 +1149,13 @@ interface PedidoEnRiesgo {
   posiciones: number | null; peso: number | null
   camionesIds: string[]
   camionVueltasLibres: Record<string, number[]> // cod → vueltas con capacidad libre
+}
+interface PedidoParaSeparar {
+  id: string; nv: string; cliente: string; vuelta: number
+  peso: number; posiciones: number | null
+  nPartes: number   // mínimo de partes necesarias
+  pesoXParte: number // peso aproximado por parte
+  camionesVolcador: ConsolidacionCamionBase[] // volcadores disponibles con capacidad
 }
 interface ConsolidacionGrupo {
   key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string
@@ -1245,7 +1252,8 @@ function MapaGrupoConsolidacion({ pedidos, sucursal }: { pedidos: ConsolidacionI
 
 function PreProgramacionPanel({
   grupos, descartados, onDescartar, onAceptar, onAsignar, onEditarPosiciones,
-  onAsignarRestricto, pedidosEnRiesgo, flota, fecha, sucursal,
+  onAsignarRestricto, onSepararGranel,
+  pedidosEnRiesgo, pedidosParaSeparar, flota, fecha, sucursal,
 }: {
   grupos: ConsolidacionGrupo[]
   descartados: Set<string>
@@ -1254,15 +1262,19 @@ function PreProgramacionPanel({
   onAsignar: (key: string, pedidoIds: string[], targetVuelta: number, camionCodigo: string) => Promise<void>
   onEditarPosiciones: (id: string, posiciones: number) => Promise<void>
   onAsignarRestricto: (pedidoId: string, camionCodigo: string, vuelta: number) => Promise<void>
+  onSepararGranel: (pedidoId: string, nPartes: number) => Promise<void>
   pedidosEnRiesgo: PedidoEnRiesgo[]
+  pedidosParaSeparar: PedidoParaSeparar[]
   flota: ConsolidacionCamionBase[]
   fecha: string
   sucursal: string
 }) {
   const [expandido, setExpandido] = useState(false)
+  const [sec0Open, setSec0Open] = useState(true)
   const [sec1Open, setSec1Open] = useState(true)
   const [sec2Open, setSec2Open] = useState(true)
   const [sec3Open, setSec3Open] = useState(false)
+  const [separandoId, setSeparandoId] = useState<string | null>(null)
   // consolidación
   const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
   const [itemsData, setItemsData] = useState<Record<string, { nombre: string; cantidad: number; unidad: string }[]>>({})
@@ -1283,7 +1295,7 @@ function PreProgramacionPanel({
   const pocasOpciones = pedidosEnRiesgo.filter(p => p.camionesIds.length === 2)
   const visibles = grupos.filter(g => !descartados.has(g.key))
 
-  const hayAlgo = restrictos.length > 0 || visibles.length > 0 || pocasOpciones.length > 0
+  const hayAlgo = pedidosParaSeparar.length > 0 || restrictos.length > 0 || visibles.length > 0 || pocasOpciones.length > 0
   if (!hayAlgo) return null
 
   // Agrupar restrictos por camión
@@ -1328,6 +1340,11 @@ function PreProgramacionPanel({
         <span className="text-sm">⚙️</span>
         <span className="font-semibold text-sm shrink-0" style={{ color: '#254A96' }}>Pre-programación y consolidación</span>
         <div className="flex gap-1.5 flex-wrap">
+          {pedidosParaSeparar.length > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: '#fce7f3', color: '#9d174d' }}>
+              ✂️ {pedidosParaSeparar.length} para separar
+            </span>
+          )}
           {restrictos.length > 0 && (
             <span className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: '#fde8e8', color: '#E52322' }}>
               ⚡ {restrictos.length} restricto{restrictos.length > 1 ? 's' : ''}
@@ -1353,6 +1370,76 @@ function PreProgramacionPanel({
 
       {expandido && (
         <div className="overflow-y-auto" style={{ maxHeight: '55vh' }}>
+
+        {/* ── Sección 0: Pedidos para separar ──────────────────────────────── */}
+        {pedidosParaSeparar.length > 0 && (
+          <div style={{ borderTop: '2px solid #f9a8d4' }}>
+            <button className="w-full px-4 py-2 flex items-center gap-2 text-left"
+              style={{ background: '#fce7f3' }}
+              onClick={() => setSec0Open(o => !o)}>
+              <span className="text-xs font-semibold" style={{ color: '#9d174d' }}>
+                ✂️ Separar antes de programar — pedidos de granel que exceden un camión volcador
+              </span>
+              <span className="text-xs ml-auto" style={{ color: '#be185d' }}>
+                {pedidosParaSeparar.length} pedido{pedidosParaSeparar.length > 1 ? 's' : ''} · {sec0Open ? '▲' : '▼'}
+              </span>
+            </button>
+            {sec0Open && (
+              <div className="bg-white divide-y" style={{ borderColor: '#fce7f3' }}>
+                {pedidosParaSeparar.map(p => (
+                  <div key={p.id}>
+                    {/* Línea del pedido */}
+                    <div className="px-3 py-2 flex items-center gap-2 flex-wrap text-xs">
+                      <span className="shrink-0 font-bold px-1.5 py-0.5 rounded text-white"
+                        style={{ fontSize: 10, background: VUELTA_MAP_COLORS[p.vuelta] ?? '#666' }}>V{p.vuelta}</span>
+                      <span className="font-medium truncate" style={{ color: '#1a1a1a', maxWidth: 180 }} title={p.cliente}>{p.cliente}</span>
+                      <span style={{ color: '#B9BBB7' }}>NV {p.nv}</span>
+                      <span style={{ color: '#9d174d', fontWeight: 600 }}>{(p.peso / 1000).toFixed(1)} tn</span>
+                      {p.posiciones != null && p.posiciones > 0 && (
+                        <span style={{ color: '#254A96' }}>{p.posiciones} pos.</span>
+                      )}
+                      {/* Indicador de la división propuesta */}
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium"
+                        style={{ background: '#fce7f3', color: '#9d174d' }}>
+                        → {p.nPartes} × ~{(p.pesoXParte / 1000).toFixed(1)} tn
+                      </span>
+                      {p.camionesVolcador.length > 0 && (
+                        <span className="text-xs" style={{ color: '#B9BBB7' }}>
+                          en {p.camionesVolcador.map(c => c.codigo).join(' + ')}
+                        </span>
+                      )}
+                      <button
+                        disabled={separandoId === p.id}
+                        onClick={async () => {
+                          setSeparandoId(p.id)
+                          await onSepararGranel(p.id, p.nPartes)
+                          setSeparandoId(null)
+                        }}
+                        className="ml-auto shrink-0 text-xs px-3 py-1.5 rounded-lg font-semibold text-white disabled:opacity-50"
+                        style={{ background: '#9d174d' }}>
+                        {separandoId === p.id ? '…' : `✂️ Separar en ${p.nPartes}`}
+                      </button>
+                    </div>
+                    {/* Preview de la división */}
+                    <div className="px-10 pb-2 flex gap-2 flex-wrap">
+                      {Array.from({ length: p.nPartes }, (_, i) => {
+                        const cam = p.camionesVolcador[i]
+                        const kg = i < p.nPartes - 1 ? p.pesoXParte : p.peso - p.pesoXParte * (p.nPartes - 1)
+                        return (
+                          <span key={i} className="text-xs px-2 py-0.5 rounded-lg"
+                            style={{ background: '#fce7f3', color: '#9d174d' }}>
+                            Parte {i + 1}: ~{(kg / 1000).toFixed(1)} tn
+                            {cam ? ` → ${cam.codigo}` : ''}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Sección 1: Restrictos ─────────────────────────────────────────── */}
         {restrictos.length > 0 && (
@@ -1799,6 +1886,7 @@ function ProgramacionInner() {
   const [consolidaciones, setConsolidaciones] = useState<ConsolidacionGrupo[]>([])
   const [consolidacionDescartados, setConsolidacionDescartados] = useState<Set<string>>(new Set())
   const [pedidosEnRiesgo, setPedidosEnRiesgo] = useState<PedidoEnRiesgo[]>([])
+  const [pedidosParaSeparar, setPedidosParaSeparar] = useState<PedidoParaSeparar[]>([])
   const [flotaConsolidacion, setFlotaConsolidacion] = useState<ConsolidacionCamionBase[]>([])
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
@@ -1865,7 +1953,7 @@ function ProgramacionInner() {
       let flotaBase: ConsolidacionCamionBase[] = []
       if (codigos.length > 0) {
         const { data: cd } = await supabase.from('camiones_flota')
-          .select('codigo, tipo_unidad, posiciones_total, tonelaje_max_kg').in('codigo', codigos).eq('activo', true)
+          .select('codigo, tipo_unidad, posiciones_total, tonelaje_max_kg, volcador, grua_hidraulica').in('codigo', codigos).eq('activo', true)
         flotaBase = (cd ?? []).sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
       }
 
@@ -1890,7 +1978,35 @@ function ProgramacionInner() {
         })
       }
 
-      if (!data || data.length < 1) { setConsolidaciones([]); setPedidosEnRiesgo([]); return }
+      if (!data || data.length < 1) { setConsolidaciones([]); setPedidosEnRiesgo([]); setPedidosParaSeparar([]); return }
+
+      // ── Detectar pedidos volcador demasiado grandes para un solo camión ─────
+      // Se usan TODOS los pedidos del día (incluso los ya asignados) para avisar
+      const flotaVolcador = flotaBase.filter(c => c.volcador)
+      if (flotaVolcador.length >= 2) {
+        const maxIndKg = Math.max(...flotaVolcador.map(c => c.tonelaje_max_kg))
+        const sumaKg = flotaVolcador.reduce((s, c) => s + c.tonelaje_max_kg, 0)
+        const paraSep: PedidoParaSeparar[] = []
+        for (const p of data.filter((p: any) => p.requiere_volcador)) {
+          const kg = p.peso_total_kg ?? 0
+          if (kg > maxIndKg && kg <= sumaKg) {
+            const nPartes = Math.ceil(kg / maxIndKg)
+            const camsOk = flotaVolcador
+              .filter(c => c.tonelaje_max_kg >= Math.ceil(kg / nPartes))
+              .sort((a, b) => b.tonelaje_max_kg - a.tonelaje_max_kg)
+              .slice(0, nPartes)
+            paraSep.push({
+              id: p.id, nv: p.nv, cliente: p.cliente, vuelta: p.vuelta,
+              peso: kg, posiciones: p.volumen_total_m3 ?? null,
+              nPartes, pesoXParte: Math.round(kg / nPartes),
+              camionesVolcador: camsOk,
+            })
+          }
+        }
+        setPedidosParaSeparar(paraSep)
+      } else {
+        setPedidosParaSeparar([])
+      }
 
       // ── Filtrar volcador + granel ─────────────────────────────────────────────
       const conFlag = data.filter((p: any) => !p.requiere_volcador)
@@ -2658,6 +2774,22 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
+  async function handleSepararGranel(pedidoId: string, nPartes: number) {
+    try {
+      const res = await fetch('/api/separar-pedido-granel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedido_id: pedidoId, n_partes: nPartes, _usuario_id: userId, _usuario_nombre: userNombre }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      showToast(`Pedido separado en ${nPartes} partes iguales`)
+      setPedidosParaSeparar(prev => prev.filter(p => p.id !== pedidoId))
+      detectarConsolidaciones()
+      cargarDatos()
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+  }
+
   async function handleAsignarRestricto(pedidoId: string, camionCodigo: string, vuelta: number) {
     try {
       await patchPedido(pedidoId, { vuelta, camion_id: camionCodigo, estado: 'programado', orden_entrega: null })
@@ -2975,12 +3107,17 @@ function ProgramacionInner() {
                 title="Recalcula posiciones y peso de todos los pedidos visibles">
                 {recalculandoTodos ? '⏳…' : '♻️ Recalcular'}
               </button>
-              {(pedidosEnRiesgo.filter(p => p.camionesIds.length === 1).length > 0 || consolidaciones.filter(g => !consolidacionDescartados.has(g.key)).length > 0) && (
+              {(pedidosParaSeparar.length > 0 || pedidosEnRiesgo.filter(p => p.camionesIds.length === 1).length > 0 || consolidaciones.filter(g => !consolidacionDescartados.has(g.key)).length > 0) && (
                 <button onClick={() => setConsolidacionDescartados(new Set())}
                   className="px-3 py-2 text-sm font-medium rounded-lg transition-colors"
-                  style={{ background: pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#fde8e8' : '#fffbeb', color: pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#E52322' : '#b45309', border: `1px solid ${pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#fca5a5' : '#fde68a'}` }}
+                  style={{
+                    background: pedidosParaSeparar.length > 0 ? '#fce7f3' : pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#fde8e8' : '#fffbeb',
+                    color: pedidosParaSeparar.length > 0 ? '#9d174d' : pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#E52322' : '#b45309',
+                    border: `1px solid ${pedidosParaSeparar.length > 0 ? '#f9a8d4' : pedidosEnRiesgo.some(p => p.camionesIds.length === 1) ? '#fca5a5' : '#fde68a'}`,
+                  }}
                   title="Ver panel de pre-programación">
                   ⚙️ Pre-prog.
+                  {pedidosParaSeparar.length > 0 && ` ✂️${pedidosParaSeparar.length}`}
                   {pedidosEnRiesgo.filter(p => p.camionesIds.length === 1).length > 0 && ` ⚡${pedidosEnRiesgo.filter(p => p.camionesIds.length === 1).length}`}
                   {consolidaciones.filter(g => !consolidacionDescartados.has(g.key)).length > 0 && ` 🔀${consolidaciones.filter(g => !consolidacionDescartados.has(g.key)).length}`}
                 </button>
@@ -3077,7 +3214,9 @@ function ProgramacionInner() {
           onAsignar={handleAsignarGrupoConsolidacion}
           onEditarPosiciones={handleEditarPosicionesConsolidacion}
           onAsignarRestricto={handleAsignarRestricto}
+          onSepararGranel={handleSepararGranel}
           pedidosEnRiesgo={pedidosEnRiesgo}
+          pedidosParaSeparar={pedidosParaSeparar}
           flota={flotaConsolidacion}
           fecha={fecha}
           sucursal={sucursal}

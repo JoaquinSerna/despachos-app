@@ -270,8 +270,13 @@ export default function MetricasPage() {
   const [camionesNoActivados, setCamionesNoActivados] = useState<{ camion_codigo: string; sucursal: string }[]>([])
   const [rangoDesde, setRangoDesde] = useState(primerDiaMes)
   const [rangoHasta, setRangoHasta] = useState(hoy)
-  const [filtroRangoCamion, setFiltroRangoCamion] = useState('')
-  const [filtroRangoChofer, setFiltroRangoChofer] = useState('')
+  const [filtroRangoCamiones, setFiltroRangoCamiones] = useState<string[]>([])
+  const [filtroRangoChoferes, setFiltroRangoChoferes] = useState<string[]>([])
+  const [filtroFechasExcluidas, setFiltroFechasExcluidas] = useState<string[]>([])
+  const [ocultarSinActividad, setOcultarSinActividad] = useState(false)
+  const [filtroFlotaRango, setFiltroFlotaRango] = useState<'todos' | 'con_pedidos' | 'sin_pedidos'>('todos')
+  const [filtroTiposUnidad, setFiltroTiposUnidad] = useState<string[]>([])
+  const [datosRangoAll, setDatosRangoAll] = useState<DatosRangoDia[]>([]) // datos sin filtrar
   const [datosRango, setDatosRango] = useState<DatosRangoDia[]>([])
   const [loadingRango, setLoadingRango] = useState(false)
 
@@ -294,6 +299,22 @@ export default function MetricasPage() {
 
   useEffect(() => { if (vista === 'diaria') cargarDiaria() }, [fecha, vista])
   useEffect(() => { if (vista === 'mensual') cargarMensual() }, [mes, vista])
+
+  // Aplicar filtros multi-select sobre datos ya cargados (sin re-buscar)
+  useEffect(() => {
+    let filtered = datosRangoAll
+    if (filtroFlotaRango === 'con_pedidos') filtered = filtered.filter(r => r.pedidos > 0)
+    else if (filtroFlotaRango === 'sin_pedidos') filtered = filtered.filter(r => r.pedidos === 0)
+    if (filtroTiposUnidad.length > 0) filtered = filtered.filter(r => filtroTiposUnidad.includes(r.tipo_unidad))
+    if (filtroRangoCamiones.length > 0) filtered = filtered.filter(r => filtroRangoCamiones.includes(r.camion_codigo))
+    if (filtroRangoChoferes.length > 0) filtered = filtered.filter(r => filtroRangoChoferes.includes(r.chofer_nombre))
+    if (filtroFechasExcluidas.length > 0) filtered = filtered.filter(r => !filtroFechasExcluidas.includes(r.fecha))
+    if (ocultarSinActividad) {
+      const fechasConActividad = new Set(datosRangoAll.filter(r => r.pedidos > 0).map(r => r.fecha))
+      filtered = filtered.filter(r => fechasConActividad.has(r.fecha))
+    }
+    setDatosRango(filtered)
+  }, [datosRangoAll, filtroFlotaRango, filtroTiposUnidad, filtroRangoCamiones, filtroRangoChoferes, filtroFechasExcluidas, ocultarSinActividad])
 
   const buscar = () => {
     if (vista === 'diaria') cargarDiaria()
@@ -846,8 +867,8 @@ export default function MetricasPage() {
 
     const [{ data: flotaMes }, { data: pedidosMes }, { data: camionesData }] = await Promise.all([
       supabase.from('flota_dia').select('fecha, camion_codigo, hora_inicio, hora_fin, km_ruta').gte('fecha', fechaInicio).lte('fecha', fechaFin).eq('activo', true),
-      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3').gte('fecha_entrega', fechaInicio).lte('fecha_entrega', fechaFin).neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+      supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta').gte('fecha_entrega', fechaInicio).lte('fecha_entrega', fechaFin).neq('estado', 'cancelado').not('camion_id', 'is', null),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
     ])
 
     const camionMap: Record<string, any> = {}
@@ -874,8 +895,12 @@ export default function MetricasPage() {
         const pedidosDia = pedidosDias.filter(p => p.fecha_entrega === f.fecha)
         const kg = pedidosDia.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pedidosDia.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
-        sumPctKg += pct(kg, camion.tonelaje_max_kg)
-        sumPctPos += pct(pos, camion.posiciones_total)
+        const numVueltasDia = new Set(pedidosDia.map((p: any) => p.vuelta).filter(Boolean)).size || 1
+        const vueltasMaxMes = calcVueltasMaxEfectivas(
+          camion.sucursal, numVueltasDia, f.km_ruta ?? 0, camion.km_max_dia ?? 200, f.fecha
+        )
+        sumPctKg += pct(kg, camion.tonelaje_max_kg * vueltasMaxMes)
+        sumPctPos += pct(pos, camion.posiciones_total * vueltasMaxMes)
         if (f.hora_inicio && f.hora_fin && f.km_ruta) {
           const min = (new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000
           sumMinKm += min / f.km_ruta; diasConTiempo++
@@ -909,11 +934,16 @@ export default function MetricasPage() {
 
       const [flotaRes, pedidosRes, camionesRes, chofRes] = await Promise.all([
         flotaQ,
-        supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3')
-          .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
-          .neq('estado', 'cancelado').not('camion_id', 'is', null)
-          .limit(10000),
-        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+        // Filtrar por sucursal si está seleccionada para evitar corte por límite en rangos largos
+        (() => {
+          let q = supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta')
+            .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
+            .neq('estado', 'cancelado').not('camion_id', 'is', null)
+            .limit(50000)
+          if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+          return q
+        })(),
+        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
         supabase.from('usuarios').select('id, nombre'),
       ])
 
@@ -936,18 +966,19 @@ export default function MetricasPage() {
       const choferMap: Record<string, string> = {}
       for (const u of chofData) choferMap[u.id] = u.nombre
 
-      const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number }> = {}
+      const pedGroupMap: Record<string, { pedidos: number; kg: number; pos: number; vueltas: Set<number> }> = {}
       for (const p of pedidosData) {
         const k = `${p.camion_id}|${p.fecha_entrega}`
-        if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0 }
+        if (!pedGroupMap[k]) pedGroupMap[k] = { pedidos: 0, kg: 0, pos: 0, vueltas: new Set() }
         pedGroupMap[k].pedidos++
         pedGroupMap[k].kg += p.peso_total_kg ?? 0
         pedGroupMap[k].pos += p.volumen_total_m3 ?? 0
+        if (p.vuelta) pedGroupMap[k].vueltas.add(p.vuelta)
       }
 
       let rows: DatosRangoDia[] = flotaData.map((f: any) => {
         const cam = camionMap[f.camion_codigo]
-        const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0 }
+        const pg = pedGroupMap[`${f.camion_codigo}|${f.fecha}`] ?? { pedidos: 0, kg: 0, pos: 0, vueltas: new Set<number>() }
         const durMin = f.hora_inicio && f.hora_fin
           ? Math.round((new Date(f.hora_fin).getTime() - new Date(f.hora_inicio).getTime()) / 60000)
           : null
@@ -962,8 +993,16 @@ export default function MetricasPage() {
           pedidos: pg.pedidos,
           kgUsados: Math.round(pg.kg),
           posUsadas: Math.round(pg.pos),
-          pctKg: cam?.tonelaje_max_kg ? pct(pg.kg, cam.tonelaje_max_kg) : 0,
-          pctPos: cam?.posiciones_total ? pct(pg.pos, cam.posiciones_total) : 0,
+          pctKg: cam?.tonelaje_max_kg ? (() => {
+            const numV = pg.vueltas.size || 1
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
+            return pct(pg.kg, cam.tonelaje_max_kg * vMax)
+          })() : 0,
+          pctPos: cam?.posiciones_total ? (() => {
+            const numV = pg.vueltas.size || 1
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
+            return pct(pg.pos, cam.posiciones_total * vMax)
+          })() : 0,
           kmReal: f.km_ruta ?? null,
           hora_inicio: f.hora_inicio ?? null,
           hora_fin: f.hora_fin ?? null,
@@ -971,10 +1010,15 @@ export default function MetricasPage() {
         }
       })
 
-      if (filtroRangoCamion) rows = rows.filter(r => r.camion_codigo === filtroRangoCamion)
-      if (filtroRangoChofer) rows = rows.filter(r => r.chofer_nombre === filtroRangoChofer)
       rows.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion_codigo.localeCompare(b.camion_codigo))
 
+      setDatosRangoAll(rows)
+      setFiltroFlotaRango('todos')
+      setFiltroTiposUnidad([])
+      setFiltroRangoCamiones([])
+      setFiltroRangoChoferes([])
+      setFiltroFechasExcluidas([])
+      setOcultarSinActividad(false)
       setDatosRango(rows)
     } catch (e: any) {
       console.error('cargarRango exception:', e)
@@ -1090,28 +1134,172 @@ export default function MetricasPage() {
                     className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />
                 </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Camión</label>
-                  <select value={filtroRangoCamion} onChange={e => setFiltroRangoCamion(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                    style={{ borderColor: '#e8edf8', color: filtroRangoCamion ? '#254A96' : '#999' }}>
-                    <option value="">Todos</option>
-                    {[...new Set(datosRango.map(r => r.camion_codigo))].sort().map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Chofer</label>
-                  <select value={filtroRangoChofer} onChange={e => setFiltroRangoChofer(e.target.value)}
-                    className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                    style={{ borderColor: '#e8edf8', color: filtroRangoChofer ? '#254A96' : '#999' }}>
-                    <option value="">Todos</option>
-                    {[...new Set(datosRango.map(r => r.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort().map(c => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Filtro con/sin pedidos — aparece después de buscar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const conPed = datosRangoAll.filter(r => r.pedidos > 0).length
+                  const sinPed = datosRangoAll.filter(r => r.pedidos === 0).length
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Flota</label>
+                      <div className="flex gap-1.5">
+                        {([
+                          { key: 'todos' as const, label: `Todos (${datosRangoAll.length})` },
+                          { key: 'con_pedidos' as const, label: `Con pedidos (${conPed})` },
+                          { key: 'sin_pedidos' as const, label: `Sin pedidos (${sinPed})` },
+                        ]).map(f => (
+                          <button key={f.key} onClick={() => setFiltroFlotaRango(f.key)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                            style={{
+                              background: filtroFlotaRango === f.key ? '#254A96' : '#f4f4f3',
+                              color: filtroFlotaRango === f.key ? 'white' : '#666',
+                            }}>
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips multi-select tipo de unidad */}
+                {datosRangoAll.length > 0 && (() => {
+                  const tipos = [...new Set(datosRangoAll.map(r => r.tipo_unidad).filter(Boolean))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Tipo de unidad {filtroTiposUnidad.length > 0 && <span style={{ color: '#E52322' }}>({filtroTiposUnidad.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {tipos.map(t => {
+                          const sel = filtroTiposUnidad.includes(t)
+                          return (
+                            <button key={t} type="button"
+                              onClick={() => setFiltroTiposUnidad(prev => sel ? prev.filter(x => x !== t) : [...prev, t])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {t}
+                            </button>
+                          )
+                        })}
+                        {filtroTiposUnidad.length > 0 && (
+                          <button type="button" onClick={() => setFiltroTiposUnidad([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips multi-select camiones — aparecen después de buscar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const camiones = [...new Set(datosRangoAll.map(r => r.camion_codigo))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Camiones {filtroRangoCamiones.length > 0 && <span style={{ color: '#E52322' }}>({filtroRangoCamiones.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {camiones.map(c => {
+                          const sel = filtroRangoCamiones.includes(c)
+                          return (
+                            <button key={c} type="button"
+                              onClick={() => setFiltroRangoCamiones(prev => sel ? prev.filter(x => x !== c) : [...prev, c])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {c}
+                            </button>
+                          )
+                        })}
+                        {filtroRangoCamiones.length > 0 && (
+                          <button type="button" onClick={() => setFiltroRangoCamiones([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips multi-select choferes */}
+                {datosRangoAll.length > 0 && (() => {
+                  const choferes = [...new Set(datosRangoAll.map(r => r.chofer_nombre).filter(n => n && n !== 'Sin chofer'))].sort()
+                  return (
+                    <div>
+                      <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                        Choferes {filtroRangoChoferes.length > 0 && <span style={{ color: '#E52322' }}>({filtroRangoChoferes.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {choferes.map(c => {
+                          const sel = filtroRangoChoferes.includes(c)
+                          return (
+                            <button key={c} type="button"
+                              onClick={() => setFiltroRangoChoferes(prev => sel ? prev.filter(x => x !== c) : [...prev, c])}
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors"
+                              style={{ borderColor: sel ? '#254A96' : '#e8edf8', background: sel ? '#e8edf8' : 'white', color: sel ? '#254A96' : '#999' }}>
+                              {c}
+                            </button>
+                          )
+                        })}
+                        {filtroRangoChoferes.length > 0 && (
+                          <button type="button" onClick={() => setFiltroRangoChoferes([])}
+                            className="px-2 py-1.5 rounded-lg text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>✕</button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Chips de fechas — deseleccioná feriados o días sin operar */}
+                {datosRangoAll.length > 0 && (() => {
+                  const fechas = [...new Set(datosRangoAll.map(r => r.fecha))].sort()
+                  const excl = filtroFechasExcluidas
+                  return (
+                    <div>
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <label className="text-xs font-medium" style={{ color: '#254A96' }}>
+                          Días {excl.length > 0 && <span style={{ color: '#E52322' }}>({excl.length} excluidos)</span>}
+                        </label>
+                        <button type="button"
+                          onClick={() => setOcultarSinActividad(v => !v)}
+                          className="px-2 py-0.5 rounded text-xs font-medium border transition-colors"
+                          style={{ borderColor: ocultarSinActividad ? '#254A96' : '#e8edf8', background: ocultarSinActividad ? '#e8edf8' : 'white', color: ocultarSinActividad ? '#254A96' : '#B9BBB7' }}>
+                          {ocultarSinActividad ? '✓' : ''} Ocultar sin actividad
+                        </button>
+                        {excl.length > 0 && (
+                          <button type="button" onClick={() => setFiltroFechasExcluidas([])}
+                            className="px-2 py-0.5 rounded text-xs border"
+                            style={{ borderColor: '#e8edf8', color: '#B9BBB7' }}>Restaurar todos</button>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {fechas.map(f => {
+                          const excluida = excl.includes(f)
+                          const d = new Date(f + 'T12:00:00')
+                          const label = d.toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+                          const esFinde = [0, 6].includes(d.getDay())
+                          return (
+                            <button key={f} type="button"
+                              onClick={() => setFiltroFechasExcluidas(prev => excluida ? prev.filter(x => x !== f) : [...prev, f])}
+                              className="px-2 py-1 rounded text-xs border transition-colors"
+                              title={excluida ? 'Click para incluir' : 'Click para excluir'}
+                              style={{
+                                borderColor: excluida ? '#fca5a5' : '#e8edf8',
+                                background: excluida ? '#fde8e8' : 'white',
+                                color: excluida ? '#E52322' : esFinde ? '#b45309' : '#666',
+                                textDecoration: excluida ? 'line-through' : 'none',
+                                opacity: excluida ? 0.7 : 1,
+                              }}>
+                              {label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
+
               </>
             )}
             <div>
@@ -1303,8 +1491,10 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
   })
 
   const totalPedidos = datosFiltrados.reduce((a, d) => a + d.pedidos, 0)
-  const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctKg, 0) / datosFiltrados.length) : 0
-  const avgPctPos = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.pctPos, 0) / datosFiltrados.length) : 0
+  // Usar ocupDiariaPct (tonelaje × vueltasMaxEfectivas) en lugar de pct (tonelaje × vueltas reales)
+  // para que el resumen refleje la eficiencia real contra el potencial del día completo
+  const avgPctKg = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.ocupDiariaPctKg, 0) / datosFiltrados.length) : 0
+  const avgPctPos = datosFiltrados.length > 0 ? Math.round(datosFiltrados.reduce((a, d) => a + d.ocupDiariaPctPos, 0) / datosFiltrados.length) : 0
   const totalDistancia = datosFiltrados.reduce((a, d) => a + d.distanciaTotalKm, 0)
 
   const conPedidos = datos.filter(d => d.pedidos > 0).length

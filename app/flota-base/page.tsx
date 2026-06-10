@@ -43,7 +43,7 @@ export default function FlotaBasePage() {
   const [userId, setUserId] = useState('')
   const [userNombre, setUserNombre] = useState('')
   const [nuevoCamion, setNuevoCamion] = useState({
-    codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520',
+    codigo: '', tipo_unidad: 'HIDROGRUA', sucursal: 'LP520',
     pos_caja: 10, pos_acoplado: 0, posiciones_total: 10, tonelaje_max_kg: 5000,
     grua_hidraulica: false, volcador: false, activo: true,
     chofer_id_default: '', km_max_dia: 200,
@@ -143,7 +143,7 @@ export default function FlotaBasePage() {
       showToast(`Camión ${nuevoCamion.codigo.toUpperCase()} creado`)
       if (userId) logAuditoria(userId, userNombre, 'Creó camión', 'Flota Base', { codigo: nuevoCamion.codigo.trim().toUpperCase(), tipo_unidad: nuevoCamion.tipo_unidad, sucursal: nuevoCamion.sucursal, posiciones_total: posTotal, tonelaje_max_kg: nuevoCamion.tonelaje_max_kg })
       setMostrarNuevo(false)
-      setNuevoCamion({ codigo: '', tipo_unidad: 'Camión', sucursal: 'LP520', pos_caja: 10, pos_acoplado: 0, posiciones_total: 10, tonelaje_max_kg: 5000, grua_hidraulica: false, volcador: false, activo: true, chofer_id_default: '', km_max_dia: 200 })
+      setNuevoCamion({ codigo: '', tipo_unidad: 'HIDROGRUA', sucursal: 'LP520', pos_caja: 10, pos_acoplado: 0, posiciones_total: 10, tonelaje_max_kg: 5000, grua_hidraulica: false, volcador: false, activo: true, chofer_id_default: '', km_max_dia: 200 })
       cargar()
     }
     setGuardando(false)
@@ -414,17 +414,33 @@ export default function FlotaBasePage() {
                       {/* Formulario edición */}
                       {editando && (
                         <div className="px-4 py-4 space-y-4" style={{ borderTop: `1px solid ${colors.bg}` }}>
-                          <div>
-                            <label className="block text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>
-                              Sucursal base
-                            </label>
-                            <select
-                              value={c.sucursal}
-                              onChange={e => actualizar(c.codigo, 'sucursal', e.target.value)}
-                              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                              style={{ borderColor: '#e8edf8' }}>
-                              {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>
+                                Sucursal base
+                              </label>
+                              <select
+                                value={c.sucursal}
+                                onChange={e => actualizar(c.codigo, 'sucursal', e.target.value)}
+                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                                style={{ borderColor: '#e8edf8' }}>
+                                {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold mb-1.5" style={{ color: '#254A96' }}>
+                                Tipo de unidad
+                              </label>
+                              <select
+                                value={c.tipo_unidad}
+                                onChange={e => actualizar(c.codigo, 'tipo_unidad', e.target.value)}
+                                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                                style={{ borderColor: '#e8edf8' }}>
+                                {['HIDROGRUA','HIDROGRUA+TRAILER','HIDROGRUA+VOLCADOR','SEMI','SEMI ALQUILADO','Camioneta'].map(t => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            </div>
                           </div>
 
                         <div className="grid grid-cols-2 gap-4">

@@ -104,7 +104,13 @@ export async function POST(req: NextRequest) {
       let pesoTotal = 0
       const sinMatch: string[] = []
 
+      // Keywords de hierro largo que bloquean el camión (excluye pretensado, vigueta, alambre)
+      const HIERRO_LARGO_KW = ['hierro', 'barra', 'varilla', 'malla']
+      let esHierroLargo = false
+
       for (const item of items) {
+        const nombreLower = item.nombre.toLowerCase()
+        if (HIERRO_LARGO_KW.some(kw => nombreLower.includes(kw))) esHierroLargo = true
         const material = matchMaterial(item.nombre, materiales ?? [], aliasMap)
         if (!material || !material.cant_x_unid_log) {
           sinMatch.push(item.nombre)
@@ -114,6 +120,12 @@ export async function POST(req: NextRequest) {
         const pesoUnitario = material.peso_kg_x_posicion / material.cant_x_unid_log
         posicionesTotal += posiciones
         pesoTotal += item.cantidad * pesoUnitario
+      }
+
+      // Hierros largos pesados (>2000kg) bloquean el ancho del camión:
+      // override posiciones para reflejar ocupación real (ceil kg/1000, mínimo 2)
+      if (esHierroLargo && Math.round(pesoTotal) > 2000) {
+        posicionesTotal = Math.max(posicionesTotal, Math.ceil(pesoTotal / 1000))
       }
 
       // Actualizar el pedido

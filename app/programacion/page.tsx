@@ -1152,7 +1152,10 @@ function ProgramacionInner() {
     try {
       const [res, { data: fd }] = await Promise.all([
         fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`),
-        supabase.from('flota_dia').select('camion_codigo').eq('fecha', fecha).eq('sucursal', sucursal).eq('activo', true),
+        // Incluir camiones propios de la sucursal + camiones de otra sucursal disponibles acá (sucursal_extra)
+        supabase.from('flota_dia').select('camion_codigo, sucursal_extra, sucursal_extra_desde_vuelta')
+          .eq('fecha', fecha).eq('activo', true)
+          .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
       ])
       const data = await res.json()
       const list = Array.isArray(data) ? data : []
@@ -1676,6 +1679,10 @@ function ProgramacionInner() {
           return r ? { ...p, peso_total_kg: r.peso_kg, volumen_total_m3: r.posiciones, pedido_grande: false } : p
         })
         setPedidos(act); construirColumnas(act, camiones)
+        // Guardar explícitamente (respaldo ante cargarDatos() concurrente)
+        await Promise.allSettled(resultados.map(r =>
+          patchPedido(r.id, { peso_total_kg: r.peso_kg, volumen_total_m3: r.posiciones, pedido_grande: false })
+        ))
         const sinMatch = resultados.filter(r => r.items_sin_match?.length > 0).length
         showToast(`↺ ${resultados.length} recalculados${sinMatch > 0 ? ` · ${sinMatch} con items sin match` : ''}`)
         if (userId) logAuditoria(userId, userNombre, 'Recalculó posiciones (masivo)', 'Programación', { fecha, sucursal, vuelta: vueltaActiva, cantidad: resultados.length, sin_match: sinMatch })
@@ -1688,6 +1695,10 @@ function ProgramacionInner() {
     const pedido = pedidos.find(p => p.id === id)
     const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false } : p)
     setPedidos(act); construirColumnas(act, camiones)
+    // Guardar explícitamente para evitar que cargarDatos() posterior sobrescriba con valores viejos
+    try {
+      await patchPedido(id, { peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false })
+    } catch { /* el API de recalcular ya guardó, este patch es respaldo */ }
     showToast(`↺ Recalculado: ${peso} kg · ${posiciones} pos.`)
     if (userId && pedido) logAuditoria(userId, userNombre, 'Recalculó posiciones', 'Programación', { nv: pedido.nv, cliente: pedido.cliente, peso_nuevo: peso, pos_nuevo: posiciones })
   }

@@ -1089,14 +1089,102 @@ function calcularOrdenRuta(pedidos: Pedido[], sucursal: string): Record<string, 
 interface ConsolidacionItem {
   id: string; nv: string; idDespacho: string | null; cliente: string
   vuelta: number; direccion: string; peso: number | null; posiciones: number | null
+  latitud: number | null; longitud: number | null
 }
 interface ConsolidacionGrupo {
   key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string
   distanciaKm?: number; pedidos: ConsolidacionItem[]
 }
 
+const VUELTA_MAP_COLORS: Record<number, string> = {
+  1: '#254A96', 2: '#10b981', 3: '#f59e0b', 4: '#7c3aed', 5: '#f97316',
+}
+
+function MapaGrupoConsolidacion({ pedidos, sucursal }: { pedidos: ConsolidacionItem[]; sucursal: string }) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const leafletRef = useRef<any>(null)
+
+  useEffect(() => {
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link')
+      link.id = 'leaflet-css'; link.rel = 'stylesheet'
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+      document.head.appendChild(link)
+    }
+    function initMap() {
+      if (!mapRef.current) return
+      const L = (window as any).L
+      if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
+
+      const depot = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
+      const conCoords = pedidos.filter(p => p.latitud != null && p.longitud != null)
+      const map = L.map(mapRef.current).setView([depot.lat, depot.lng], 12)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a>', maxZoom: 18,
+      }).addTo(map)
+
+      // Depósito
+      L.marker([depot.lat, depot.lng], {
+        icon: L.divIcon({
+          html: `<div style="background:#1a1a1a;color:white;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:bold;white-space:nowrap;box-shadow:0 2px 4px rgba(0,0,0,.35)">🏭 ${sucursal}</div>`,
+          className: '', iconSize: [80, 20], iconAnchor: [40, 10],
+        })
+      }).addTo(map)
+
+      const bounds: [number, number][] = [[depot.lat, depot.lng]]
+
+      // Polilínea punteada por vuelta (muestra cómo está hoy separado)
+      const porVuelta = new Map<number, ConsolidacionItem[]>()
+      conCoords.forEach(p => { if (!porVuelta.has(p.vuelta)) porVuelta.set(p.vuelta, []); porVuelta.get(p.vuelta)!.push(p) })
+      for (const [vuelta, vps] of porVuelta) {
+        L.polyline(
+          [[depot.lat, depot.lng], ...vps.map(p => [p.latitud!, p.longitud!] as [number, number])],
+          { color: VUELTA_MAP_COLORS[vuelta] ?? '#666', weight: 2.5, opacity: 0.7, dashArray: '6,4' }
+        ).addTo(map)
+      }
+
+      // Marcadores por pedido
+      conCoords.forEach(p => {
+        const color = VUELTA_MAP_COLORS[p.vuelta] ?? '#666'
+        L.marker([p.latitud!, p.longitud!], {
+          icon: L.divIcon({
+            html: `<div style="background:${color};color:white;padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.3);white-space:nowrap">V${p.vuelta}</div>`,
+            className: '', iconSize: [32, 22], iconAnchor: [16, 11],
+          })
+        }).bindPopup(`<div style="min-width:180px">
+          <div style="font-weight:700;color:${color};font-size:12px">Vuelta ${p.vuelta}</div>
+          <div style="font-weight:700;font-size:12px;margin-top:2px">${p.cliente}</div>
+          <div style="font-size:11px;color:#6b7280">NV ${p.nv}${p.idDespacho ? ` · SD ${p.idDespacho}` : ''}</div>
+          ${p.direccion ? `<div style="font-size:11px;color:#374151;margin-top:2px">${p.direccion}</div>` : ''}
+          <div style="font-size:11px;color:#9ca3af;margin-top:3px">${p.posiciones ?? '?'} pos. · ${(p.peso ?? 0).toLocaleString()} kg</div>
+        </div>`).addTo(map)
+        bounds.push([p.latitud!, p.longitud!])
+      })
+
+      if (bounds.length > 1) map.fitBounds(bounds, { padding: [28, 28] })
+      leafletRef.current = map
+    }
+    if ((window as any).L) { setTimeout(initMap, 50) }
+    else {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+      script.onload = () => setTimeout(initMap, 50)
+      document.body.appendChild(script)
+    }
+    return () => { if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null } }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tieneCoords = pedidos.some(p => p.latitud != null)
+  if (!tieneCoords) return (
+    <div className="flex items-center justify-center py-6 text-xs" style={{ color: '#B9BBB7', borderTop: '1px solid #fde68a' }}>
+      Sin coordenadas para mostrar mapa
+    </div>
+  )
+  return <div ref={mapRef} style={{ height: 220, width: '100%', borderTop: '1px solid #fde68a' }} />
+}
+
 function ConsolidacionBanner({
-  grupos, descartados, onDescartar, onAceptar, onEditarPosiciones, fecha,
+  grupos, descartados, onDescartar, onAceptar, onEditarPosiciones, fecha, sucursal,
 }: {
   grupos: ConsolidacionGrupo[]
   descartados: Set<string>
@@ -1104,6 +1192,7 @@ function ConsolidacionBanner({
   onAceptar: (key: string, pedidoIds: string[], targetVuelta: number) => Promise<void>
   onEditarPosiciones: (id: string, posiciones: number) => Promise<void>
   fecha: string
+  sucursal: string
 }) {
   const [expandido, setExpandido] = useState(false)
   const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
@@ -1114,6 +1203,7 @@ function ConsolidacionBanner({
   const [editandoPosId, setEditandoPosId] = useState<string | null>(null)
   const [editPosVal, setEditPosVal] = useState('')
   const [guardandoPos, setGuardandoPos] = useState(false)
+  const [mapaExpandidoKey, setMapaExpandidoKey] = useState<string | null>(null)
 
   const visibles = grupos.filter(g => !descartados.has(g.key))
   if (visibles.length === 0) return null
@@ -1198,6 +1288,11 @@ function ConsolidacionBanner({
                       style={{ background: '#d1fae5', color: '#065f46' }}>
                       ✓ Consolidar
                     </button>
+                    <button
+                      onClick={() => setMapaExpandidoKey(mapaExpandidoKey === grupo.key ? null : grupo.key)}
+                      className="text-xs px-2 py-1 rounded-lg font-medium"
+                      style={{ background: mapaExpandidoKey === grupo.key ? '#254A96' : '#e8edf8', color: mapaExpandidoKey === grupo.key ? 'white' : '#254A96' }}
+                      title="Ver preview de mapa">🗺️</button>
                     <button onClick={() => onDescartar(grupo.key)}
                       className="text-xs px-2 py-1 rounded-lg"
                       style={{ color: '#b45309', background: '#fef3c7' }}>
@@ -1334,6 +1429,10 @@ function ConsolidacionBanner({
                     )
                   })}
                 </div>
+                {/* Mini-mapa del grupo */}
+                {mapaExpandidoKey === grupo.key && (
+                  <MapaGrupoConsolidacion pedidos={grupo.pedidos} sucursal={sucursal} />
+                )}
               </div>
             )
           })}
@@ -1452,6 +1551,7 @@ function ProgramacionInner() {
         cliente: p.cliente, vuelta: p.vuelta,
         direccion: p.direccion ?? '', peso: p.peso_total_kg ?? null,
         posiciones: p.volumen_total_m3 ?? null,
+        latitud: p.latitud ?? null, longitud: p.longitud ?? null,
       })
 
       const sugerencias: ConsolidacionGrupo[] = []
@@ -2561,6 +2661,7 @@ function ProgramacionInner() {
           onAceptar={handleAceptarConsolidacion}
           onEditarPosiciones={handleEditarPosicionesConsolidacion}
           fecha={fecha}
+          sucursal={sucursal}
         />
 
         {vueltaActiva === VUELTA_TRANSFERENCIAS ? (

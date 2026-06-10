@@ -1091,9 +1091,11 @@ interface ConsolidacionItem {
   vuelta: number; direccion: string; peso: number | null; posiciones: number | null
   latitud: number | null; longitud: number | null
 }
+interface ConsolidacionCamion { codigo: string; tipo_unidad: string; posiciones_total: number; tonelaje_max_kg: number }
 interface ConsolidacionGrupo {
   key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string
   distanciaKm?: number; pedidos: ConsolidacionItem[]
+  camionesCompatibles: ConsolidacionCamion[]
 }
 
 const VUELTA_MAP_COLORS: Record<number, string> = {
@@ -1184,12 +1186,13 @@ function MapaGrupoConsolidacion({ pedidos, sucursal }: { pedidos: ConsolidacionI
 }
 
 function ConsolidacionBanner({
-  grupos, descartados, onDescartar, onAceptar, onEditarPosiciones, fecha, sucursal,
+  grupos, descartados, onDescartar, onAceptar, onAsignar, onEditarPosiciones, fecha, sucursal,
 }: {
   grupos: ConsolidacionGrupo[]
   descartados: Set<string>
   onDescartar: (key: string) => void
   onAceptar: (key: string, pedidoIds: string[], targetVuelta: number) => Promise<void>
+  onAsignar: (key: string, pedidoIds: string[], targetVuelta: number, camionCodigo: string) => Promise<void>
   onEditarPosiciones: (id: string, posiciones: number) => Promise<void>
   fecha: string
   sucursal: string
@@ -1198,6 +1201,7 @@ function ConsolidacionBanner({
   const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
   const [itemsData, setItemsData] = useState<Record<string, { nombre: string; cantidad: number; unidad: string }[]>>({})
   const [aceptandoKey, setAceptandoKey] = useState<string | null>(null)
+  const [aceptandoCamion, setAceptandoCamion] = useState<string | null>(null) // null = solo mover, string = asignar a camión
   const [aceptarVuelta, setAceptarVuelta] = useState<number>(1)
   const [procesando, setProcesando] = useState(false)
   const [editandoPosId, setEditandoPosId] = useState<string | null>(null)
@@ -1225,8 +1229,13 @@ function ConsolidacionBanner({
 
   async function confirmarAceptar(key: string, pedidoIds: string[]) {
     setProcesando(true)
-    await onAceptar(key, pedidoIds, aceptarVuelta)
+    if (aceptandoCamion) {
+      await onAsignar(key, pedidoIds, aceptarVuelta, aceptandoCamion)
+    } else {
+      await onAceptar(key, pedidoIds, aceptarVuelta)
+    }
     setAceptandoKey(null)
+    setAceptandoCamion(null)
     setProcesando(false)
   }
 
@@ -1279,14 +1288,15 @@ function ConsolidacionBanner({
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       onClick={() => {
-                        if (isAceptando) { setAceptandoKey(null); return }
+                        if (isAceptando && !aceptandoCamion) { setAceptandoKey(null); return }
                         const minVuelta = Math.min(...grupo.pedidos.map(p => p.vuelta))
                         setAceptarVuelta(minVuelta)
+                        setAceptandoCamion(null)
                         setAceptandoKey(grupo.key)
                       }}
                       className="text-xs px-2 py-1 rounded-lg font-medium"
-                      style={{ background: '#d1fae5', color: '#065f46' }}>
-                      ✓ Consolidar
+                      style={{ background: isAceptando && !aceptandoCamion ? '#065f46' : '#d1fae5', color: isAceptando && !aceptandoCamion ? 'white' : '#065f46' }}>
+                      ✓ Mover a vuelta
                     </button>
                     <button
                       onClick={() => setMapaExpandidoKey(mapaExpandidoKey === grupo.key ? null : grupo.key)}
@@ -1301,11 +1311,13 @@ function ConsolidacionBanner({
                   </div>
                 </div>
 
-                {/* Panel de aceptar — elegir vuelta destino */}
+                {/* Panel vuelta destino — consolidar o asignar a camión */}
                 {isAceptando && (
                   <div className="px-3 py-2 flex items-center gap-3 flex-wrap"
-                    style={{ background: '#f0fdf4', borderBottom: '1px solid #bbf7d0' }}>
-                    <span className="text-xs font-medium shrink-0" style={{ color: '#065f46' }}>Unificar en:</span>
+                    style={{ background: aceptandoCamion ? '#eff6ff' : '#f0fdf4', borderBottom: `1px solid ${aceptandoCamion ? '#bfdbfe' : '#bbf7d0'}` }}>
+                    <span className="text-xs font-medium shrink-0" style={{ color: aceptandoCamion ? '#1d4ed8' : '#065f46' }}>
+                      {aceptandoCamion ? `Asignar a ${aceptandoCamion} en:` : 'Mover todos en:'}
+                    </span>
                     <div className="flex gap-1 flex-wrap">
                       {vueltasDisponibles(fecha).map(v => (
                         <button key={v} onClick={() => setAceptarVuelta(v)}
@@ -1318,12 +1330,41 @@ function ConsolidacionBanner({
                     <button onClick={() => confirmarAceptar(grupo.key, grupo.pedidos.map(p => p.id))}
                       disabled={procesando}
                       className="text-xs px-3 py-1 rounded-lg font-semibold text-white disabled:opacity-50 shrink-0"
-                      style={{ background: '#065f46' }}>
-                      {procesando ? '…' : 'Mover todos'}
+                      style={{ background: aceptandoCamion ? '#1d4ed8' : '#065f46' }}>
+                      {procesando ? '…' : aceptandoCamion ? `Programar en ${aceptandoCamion}` : 'Mover todos'}
                     </button>
-                    <button onClick={() => setAceptandoKey(null)}
+                    <button onClick={() => { setAceptandoKey(null); setAceptandoCamion(null) }}
                       className="text-xs px-2 py-1 rounded-lg shrink-0"
                       style={{ color: '#666', background: '#f0f0f0' }}>Cancelar</button>
+                  </div>
+                )}
+
+                {/* Camiones compatibles — botones de asignación directa */}
+                {grupo.camionesCompatibles.length > 0 && (
+                  <div className="px-3 py-2 flex items-center gap-2 flex-wrap"
+                    style={{ background: '#f8faff', borderBottom: '1px solid #e8edf8' }}>
+                    <span className="text-xs shrink-0" style={{ color: '#B9BBB7' }}>📦 Asignar en:</span>
+                    {grupo.camionesCompatibles.map(c => {
+                      const isActive = isAceptando && aceptandoCamion === c.codigo
+                      return (
+                        <button key={c.codigo}
+                          onClick={() => {
+                            if (isActive) { setAceptandoKey(null); setAceptandoCamion(null); return }
+                            const minVuelta = Math.min(...grupo.pedidos.map(p => p.vuelta))
+                            setAceptarVuelta(minVuelta)
+                            setAceptandoCamion(c.codigo)
+                            setAceptandoKey(grupo.key)
+                          }}
+                          className="text-xs px-2 py-1 rounded-lg font-medium transition-colors"
+                          style={{ background: isActive ? '#254A96' : '#e8edf8', color: isActive ? 'white' : '#254A96' }}
+                          title={`${c.tipo_unidad} · ${c.posiciones_total > 0 ? `${c.posiciones_total} pos.` : ''} · ${(c.tonelaje_max_kg / 1000).toFixed(0)}t`}>
+                          {c.codigo}
+                          <span style={{ opacity: 0.7, fontSize: 9 }}>
+                            {c.posiciones_total > 0 ? ` ${c.posiciones_total}p` : ''}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -1520,7 +1561,9 @@ function ProgramacionInner() {
         .eq('fecha_entrega', fecha)
         .eq('sucursal', sucursal)
         .in('estado', ['pendiente', 'programado'])
-        .gt('vuelta', 0) // excluir "fuera de prog." (vuelta=0)
+        .gt('vuelta', 0)            // excluir "fuera de prog." (vuelta=0)
+        .is('camion_id', null)      // excluir pedidos ya asignados a camión
+        .is('grupo_confirmacion', null) // excluir pedidos ya agrupados/consolidados
       if (!data || data.length < 2) { setConsolidaciones([]); return }
 
       // Excluir volcador por flag + detectar granel en items aunque el flag no esté seteado
@@ -1573,6 +1616,7 @@ function ProgramacionInner() {
             tipo: 'mismo_cliente',
             etiqueta: grupo[0].cliente,
             pedidos: grupo.map(toItem).sort((a, b) => a.vuelta - b.vuelta),
+            camionesCompatibles: [],
           })
         }
       }
@@ -1607,6 +1651,7 @@ function ProgramacionInner() {
               etiqueta: `${ea.pedidos[0].cliente} ↔ ${eb.pedidos[0].cliente}`,
               distanciaKm: Math.round(dist * 10) / 10,
               pedidos: todosPedidos,
+              camionesCompatibles: [],
             })
           }
         }
@@ -1623,22 +1668,25 @@ function ProgramacionInner() {
         const { data: base } = await supabase.from('camiones_flota').select('codigo').eq('sucursal', sucursal).eq('activo', true)
         codigos = (base ?? []).map((b: any) => b.codigo)
       }
-      let flota: { posiciones_total: number; tonelaje_max_kg: number }[] = []
+      let flota: ConsolidacionCamion[] = []
       if (codigos.length > 0) {
         const { data: cd } = await supabase.from('camiones_flota')
-          .select('posiciones_total, tonelaje_max_kg').in('codigo', codigos).eq('activo', true)
-        flota = cd ?? []
+          .select('codigo, tipo_unidad, posiciones_total, tonelaje_max_kg').in('codigo', codigos).eq('activo', true)
+        flota = (cd ?? []).sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
       }
       // Solo mostrar grupos donde al menos un camión puede absorber la suma total
-      const factibles = sugerencias.filter(grupo => {
-        const totalPos = grupo.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
-        const totalKg  = grupo.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
-        if (flota.length === 0) return true // sin datos de flota, mostrar igual
-        return flota.some(c =>
-          c.tonelaje_max_kg >= totalKg &&
-          (c.posiciones_total === 0 || totalPos === 0 || c.posiciones_total >= totalPos)
-        )
-      })
+      // y calcular cuáles camiones son compatibles con cada grupo
+      const factibles = sugerencias
+        .map(grupo => {
+          const totalPos = grupo.pedidos.reduce((s, p) => s + (p.posiciones ?? 0), 0)
+          const totalKg  = grupo.pedidos.reduce((s, p) => s + (p.peso ?? 0), 0)
+          const camionesCompatibles = flota.filter(c =>
+            c.tonelaje_max_kg >= totalKg &&
+            (c.posiciones_total === 0 || totalPos === 0 || c.posiciones_total >= totalPos)
+          )
+          return { ...grupo, camionesCompatibles }
+        })
+        .filter(grupo => flota.length === 0 || grupo.camionesCompatibles.length > 0)
 
       // Ordenar por posiciones totales desc, luego kg desc
       factibles.sort((a, b) => {
@@ -2257,15 +2305,30 @@ function ProgramacionInner() {
   }
 
   async function handleAceptarConsolidacion(key: string, pedidoIds: string[], targetVuelta: number) {
+    const grupoId = crypto.randomUUID()
     try {
       await Promise.all(pedidoIds.map(id =>
-        patchPedido(id, { vuelta: targetVuelta, camion_id: null, estado: 'pendiente', orden_entrega: null })
+        patchPedido(id, { vuelta: targetVuelta, camion_id: null, estado: 'pendiente', orden_entrega: null, grupo_confirmacion: grupoId })
       ))
       setConsolidacionDescartados(prev => new Set([...prev, key]))
       showToast(`${pedidoIds.length} pedidos consolidados en V${targetVuelta}`)
       detectarConsolidaciones()
       cargarDatos()
-      if (userId) logAuditoria(userId, userNombre, 'Consolidó pedidos de misma zona', 'Programación', { fecha, sucursal, vuelta_destino: targetVuelta, cantidad: pedidoIds.length })
+      if (userId) logAuditoria(userId, userNombre, 'Consolidó pedidos de misma zona', 'Programación', { fecha, sucursal, vuelta_destino: targetVuelta, cantidad: pedidoIds.length, grupo_id: grupoId })
+    } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+  }
+
+  async function handleAsignarGrupoConsolidacion(key: string, pedidoIds: string[], targetVuelta: number, camionCodigo: string) {
+    const grupoId = crypto.randomUUID()
+    try {
+      await Promise.all(pedidoIds.map(id =>
+        patchPedido(id, { vuelta: targetVuelta, camion_id: camionCodigo, estado: 'programado', orden_entrega: null, grupo_confirmacion: grupoId })
+      ))
+      setConsolidacionDescartados(prev => new Set([...prev, key]))
+      showToast(`${pedidoIds.length} pedidos asignados a ${camionCodigo} en V${targetVuelta}`)
+      detectarConsolidaciones()
+      cargarDatos()
+      if (userId) logAuditoria(userId, userNombre, 'Asignó grupo consolidado a camión', 'Programación', { fecha, sucursal, camion: camionCodigo, vuelta_destino: targetVuelta, cantidad: pedidoIds.length, grupo_id: grupoId })
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
@@ -2659,6 +2722,7 @@ function ProgramacionInner() {
           descartados={consolidacionDescartados}
           onDescartar={key => setConsolidacionDescartados(prev => new Set([...prev, key]))}
           onAceptar={handleAceptarConsolidacion}
+          onAsignar={handleAsignarGrupoConsolidacion}
           onEditarPosiciones={handleEditarPosicionesConsolidacion}
           fecha={fecha}
           sucursal={sucursal}

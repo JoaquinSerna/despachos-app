@@ -208,11 +208,20 @@ async function sugerirConRouteOptimization(
       if (vi.length > 0) finalAllowed = vi
     }
     // 2. Mismo cliente
+    // Si ya hay una restricción dura (ej: volcador), la intersección puede quedar vacía porque
+    // el grupo combinado no cabe en el camión requerido → en ese caso NO borrar la restricción dura,
+    // simplemente ignorar el agrupamiento para este pedido (Google puede separar el grupo con penalty).
     if (allowedByPedido[p.id]) {
-      finalAllowed = finalAllowed
-        ? finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
-        : allowedByPedido[p.id]
-      if (finalAllowed.length === 0) finalAllowed = null
+      if (finalAllowed !== null) {
+        // Hay restricción dura previa (volcador) → intersectar solo si el resultado no queda vacío
+        const inter = finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
+        if (inter.length > 0) finalAllowed = inter
+        // Si inter es vacío: el grupo mismo-cliente no puede ir junto (volcador no tiene tonelaje)
+        // → mantener la restricción volcador y dejar que Google decida con penalty
+      } else {
+        finalAllowed = allowedByPedido[p.id]
+        if (finalAllowed.length === 0) finalAllowed = null
+      }
     }
     // 3. Único camión elegible por capacidad → forzarlo (pedido grande que sólo cabe en uno)
     if (!finalAllowed && elegiblesPorCapacidad.length === 1) {

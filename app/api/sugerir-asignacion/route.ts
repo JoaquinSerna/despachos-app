@@ -95,6 +95,18 @@ function getShipmentType(p: PedidoInput): string {
   return 'general'
 }
 
+// ¿El pedido necesita grúa hidráulica para la descarga?
+// Los volcador no la necesitan (descargan solos). El hierro se puede bajar sin grúa.
+// Todo lo demás (bolsas, bloques, pallets, etc.) requiere grúa.
+const HIERRO_KW_GRUA = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'zingueria', 'upn', 'ipn']
+function requiereGrua(p: PedidoInput): boolean {
+  if (p.requiere_volcador) return false
+  const items = p.items ?? []
+  if (items.length === 0) return true // sin items → asumir que necesita grúa
+  const esPuroHierro = items.every(it => HIERRO_KW_GRUA.some(kw => it.nombre.toLowerCase().includes(kw)))
+  return !esPuroHierro
+}
+
 // ─── Route Optimization API (Google) ─────────────────────────────────────────
 
 async function sugerirConRouteOptimization(
@@ -206,6 +218,21 @@ async function sugerirConRouteOptimization(
     if (p.requiere_volcador) {
       const vi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.volcador).map(({ i }) => i)
       if (vi.length > 0) finalAllowed = vi
+    }
+    // 1b. Grúa hidráulica — excluir camiones sin grúa para pedidos que la requieren
+    // (ej: SEMI sin grúa no puede descargar pallets/bolsas aunque entre por tonelaje y posiciones)
+    if (requiereGrua(p)) {
+      const gi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.grua_hidraulica).map(({ i }) => i)
+      // Solo aplicar si efectivamente excluye algún camión (hay camiones sin grúa en la flota)
+      if (gi.length > 0 && gi.length < camiones.length) {
+        if (finalAllowed !== null) {
+          const inter = finalAllowed.filter(i => gi.includes(i))
+          if (inter.length > 0) finalAllowed = inter
+          // Si inter queda vacío: no borrar la restricción volcador/grúa previa
+        } else {
+          finalAllowed = gi
+        }
+      }
     }
     // 2. Mismo cliente
     // Si ya hay una restricción dura (ej: volcador), la intersección puede quedar vacía porque

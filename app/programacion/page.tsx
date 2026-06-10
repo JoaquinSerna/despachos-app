@@ -1092,6 +1092,7 @@ interface ConsolidacionItem {
   latitud: number | null; longitud: number | null
 }
 interface ConsolidacionCamion { codigo: string; tipo_unidad: string; posiciones_total: number; tonelaje_max_kg: number }
+interface PedidoEnRiesgo { id: string; nv: string; cliente: string; vuelta: number; posiciones: number | null; peso: number | null; camionesIds: string[] }
 interface ConsolidacionGrupo {
   key: string; tipo: 'mismo_cliente' | 'proximidad'; etiqueta: string
   distanciaKm?: number; pedidos: ConsolidacionItem[]
@@ -1186,7 +1187,7 @@ function MapaGrupoConsolidacion({ pedidos, sucursal }: { pedidos: ConsolidacionI
 }
 
 function ConsolidacionBanner({
-  grupos, descartados, onDescartar, onAceptar, onAsignar, onEditarPosiciones, fecha, sucursal,
+  grupos, descartados, onDescartar, onAceptar, onAsignar, onEditarPosiciones, fecha, sucursal, pedidosEnRiesgo,
 }: {
   grupos: ConsolidacionGrupo[]
   descartados: Set<string>
@@ -1196,6 +1197,7 @@ function ConsolidacionBanner({
   onEditarPosiciones: (id: string, posiciones: number) => Promise<void>
   fecha: string
   sucursal: string
+  pedidosEnRiesgo: PedidoEnRiesgo[]
 }) {
   const [expandido, setExpandido] = useState(false)
   const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
@@ -1336,6 +1338,25 @@ function ConsolidacionBanner({
                     <button onClick={() => { setAceptandoKey(null); setAceptandoCamion(null) }}
                       className="text-xs px-2 py-1 rounded-lg shrink-0"
                       style={{ color: '#666', background: '#f0f0f0' }}>Cancelar</button>
+                    {/* Warning si el camión es la única opción de algún pedido en riesgo */}
+                    {aceptandoCamion && (() => {
+                      const conflictos = pedidosEnRiesgo.filter(p =>
+                        p.camionesIds.length === 1 && p.camionesIds[0] === aceptandoCamion &&
+                        !grupo.pedidos.some(gp => gp.id === p.id)
+                      )
+                      if (conflictos.length === 0) return null
+                      return (
+                        <div className="w-full mt-1 px-2 py-1.5 rounded-lg text-xs flex items-start gap-1.5"
+                          style={{ background: '#fde8e8', color: '#E52322', border: '1px solid #fca5a5' }}>
+                          <span className="shrink-0">⚠️</span>
+                          <span>
+                            <strong>{aceptandoCamion} es la única opción</strong> para{' '}
+                            {conflictos.map(p => `NV ${p.nv} (${p.cliente.split(' ')[0]})`).join(', ')}
+                            . Si lo asignás acá, ese pedido queda sin camión.
+                          </span>
+                        </div>
+                      )
+                    })()}
                   </div>
                 )}
 
@@ -1346,6 +1367,11 @@ function ConsolidacionBanner({
                     <span className="text-xs shrink-0" style={{ color: '#B9BBB7' }}>📦 Asignar en:</span>
                     {grupo.camionesCompatibles.map(c => {
                       const isActive = isAceptando && aceptandoCamion === c.codigo
+                      // ¿Este camión es la única opción de algún pedido en riesgo (que no esté en este grupo)?
+                      const esPeligroso = pedidosEnRiesgo.some(p =>
+                        p.camionesIds.length === 1 && p.camionesIds[0] === c.codigo &&
+                        !grupo.pedidos.some(gp => gp.id === p.id)
+                      )
                       return (
                         <button key={c.codigo}
                           onClick={() => {
@@ -1355,9 +1381,16 @@ function ConsolidacionBanner({
                             setAceptandoCamion(c.codigo)
                             setAceptandoKey(grupo.key)
                           }}
-                          className="text-xs px-2 py-1 rounded-lg font-medium transition-colors"
-                          style={{ background: isActive ? '#254A96' : '#e8edf8', color: isActive ? 'white' : '#254A96' }}
-                          title={`${c.tipo_unidad} · ${c.posiciones_total > 0 ? `${c.posiciones_total} pos.` : ''} · ${(c.tonelaje_max_kg / 1000).toFixed(0)}t`}>
+                          className="text-xs px-2 py-1 rounded-lg font-medium transition-colors relative"
+                          style={{
+                            background: isActive ? '#254A96' : esPeligroso ? '#fde8e8' : '#e8edf8',
+                            color: isActive ? 'white' : esPeligroso ? '#E52322' : '#254A96',
+                            border: esPeligroso ? '1px solid #fca5a5' : 'none',
+                          }}
+                          title={esPeligroso
+                            ? `⚠️ Este camión es la única opción de otro pedido en riesgo`
+                            : `${c.tipo_unidad} · ${c.posiciones_total > 0 ? `${c.posiciones_total} pos.` : ''} · ${(c.tonelaje_max_kg / 1000).toFixed(0)}t`}>
+                          {esPeligroso && <span style={{ marginRight: 2 }}>⚠️</span>}
                           {c.codigo}
                           <span style={{ opacity: 0.7, fontSize: 9 }}>
                             {c.posiciones_total > 0 ? ` ${c.posiciones_total}p` : ''}
@@ -1478,8 +1511,53 @@ function ConsolidacionBanner({
             )
           })}
           <p className="text-xs px-1 pt-0.5" style={{ color: '#b45309' }}>
-            💡 "Consolidar" mueve todos los pedidos del grupo a la vuelta elegida para programarlos juntos.
+            💡 "Mover a vuelta" agrupa sin asignar. "Asignar en camión" programa directo.
           </p>
+
+          {/* Pedidos en riesgo — capacidad muy limitada */}
+          {pedidosEnRiesgo.length > 0 && (
+            <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid #fca5a5' }}>
+              <div className="px-3 py-2 flex items-center gap-2"
+                style={{ background: '#fde8e8' }}>
+                <span>⚠️</span>
+                <span className="text-xs font-semibold" style={{ color: '#E52322' }}>
+                  {pedidosEnRiesgo.length === 1
+                    ? '1 pedido con opciones de camión muy limitadas'
+                    : `${pedidosEnRiesgo.length} pedidos con opciones de camión muy limitadas`}
+                </span>
+                <span className="text-xs ml-auto" style={{ color: '#b91c1c' }}>
+                  No asignés sus camiones a otros grupos
+                </span>
+              </div>
+              <div className="divide-y bg-white" style={{ borderColor: '#fde8e8' }}>
+                {pedidosEnRiesgo.map(p => (
+                  <div key={p.id} className="px-3 py-1.5 flex items-center gap-2 text-xs flex-wrap">
+                    <span className="font-bold px-1.5 py-0.5 rounded text-white shrink-0"
+                      style={{ fontSize: 10, background: p.camionesIds.length === 1 ? '#E52322' : '#f59e0b' }}>
+                      V{p.vuelta}
+                    </span>
+                    <span className="font-medium" style={{ color: '#1a1a1a' }}>{p.cliente}</span>
+                    <span style={{ color: '#B9BBB7' }}>NV {p.nv}</span>
+                    {p.posiciones != null && p.posiciones > 0 && (
+                      <span style={{ color: '#254A96', fontWeight: 600 }}>{p.posiciones} pos.</span>
+                    )}
+                    {p.peso != null && p.peso > 0 && (
+                      <span style={{ color: '#B9BBB7' }}>{p.peso.toLocaleString()} kg</span>
+                    )}
+                    <span className="ml-auto shrink-0 px-2 py-0.5 rounded-full text-xs font-medium"
+                      style={{
+                        background: p.camionesIds.length === 1 ? '#fde8e8' : '#fef3c7',
+                        color: p.camionesIds.length === 1 ? '#E52322' : '#b45309',
+                      }}>
+                      {p.camionesIds.length === 1
+                        ? `Solo entra en ${p.camionesIds[0]}`
+                        : `Solo entra en ${p.camionesIds.join(' o ')}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1517,6 +1595,7 @@ function ProgramacionInner() {
   // Sugerencias de consolidación (interfaces definidas fuera del componente)
   const [consolidaciones, setConsolidaciones] = useState<ConsolidacionGrupo[]>([])
   const [consolidacionDescartados, setConsolidacionDescartados] = useState<Set<string>>(new Set())
+  const [pedidosEnRiesgo, setPedidosEnRiesgo] = useState<PedidoEnRiesgo[]>([])
   const [modalRutas, setModalRutas] = useState(false)
   const [vultasCerradasManual, setVultasCerradasManual] = useState<Set<number>>(new Set())
   const [camionesBlockeados, setCamionesBlockeados] = useState<Set<string>>(() => {
@@ -1698,6 +1777,34 @@ function ProgramacionInner() {
         return kgB - kgA
       })
       setConsolidaciones(factibles)
+
+      // ── Detectar pedidos con opciones de camión muy limitadas (1 o 2 trucks) ──
+      // Incluye TODOS los pedidos del día (no solo los de grupos), sin filtrar por grupo_confirmacion
+      // porque queremos advertir incluso si no hay sugerencia de consolidación para ese pedido
+      if (flota.length > 0) {
+        const enRiesgo: PedidoEnRiesgo[] = []
+        for (const p of conFlag) { // conFlag = elegibles sin volcador, pero SÍ puede tener grupo o camion
+          const pos = p.volumen_total_m3 ?? 0
+          const kg = p.peso_total_kg ?? 0
+          if (pos === 0 && kg === 0) continue // pedido sin datos → no analizar
+          const camsOk = flota.filter(c =>
+            c.tonelaje_max_kg >= kg &&
+            (c.posiciones_total === 0 || pos === 0 || c.posiciones_total >= pos)
+          )
+          if (camsOk.length > 0 && camsOk.length <= 2) {
+            enRiesgo.push({
+              id: p.id, nv: p.nv, cliente: p.cliente, vuelta: p.vuelta,
+              posiciones: p.volumen_total_m3 ?? null, peso: p.peso_total_kg ?? null,
+              camionesIds: camsOk.map(c => c.codigo),
+            })
+          }
+        }
+        // Ordenar por cantidad de opciones asc (los de 1 sola opción primero), luego por posiciones desc
+        enRiesgo.sort((a, b) => a.camionesIds.length - b.camionesIds.length || (b.posiciones ?? 0) - (a.posiciones ?? 0))
+        setPedidosEnRiesgo(enRiesgo)
+      } else {
+        setPedidosEnRiesgo([])
+      }
     } catch { /* silencioso */ }
   }
 
@@ -2726,6 +2833,7 @@ function ProgramacionInner() {
           onEditarPosiciones={handleEditarPosicionesConsolidacion}
           fecha={fecha}
           sucursal={sucursal}
+          pedidosEnRiesgo={pedidosEnRiesgo}
         />
 
         {vueltaActiva === VUELTA_TRANSFERENCIAS ? (

@@ -1152,7 +1152,10 @@ function ProgramacionInner() {
     try {
       const [res, { data: fd }] = await Promise.all([
         fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`),
-        supabase.from('flota_dia').select('camion_codigo').eq('fecha', fecha).eq('sucursal', sucursal).eq('activo', true),
+        // Incluir camiones propios de la sucursal + camiones de otra sucursal disponibles acá (sucursal_extra)
+        supabase.from('flota_dia').select('camion_codigo, sucursal_extra, sucursal_extra_desde_vuelta')
+          .eq('fecha', fecha).eq('activo', true)
+          .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
       ])
       const data = await res.json()
       const list = Array.isArray(data) ? data : []

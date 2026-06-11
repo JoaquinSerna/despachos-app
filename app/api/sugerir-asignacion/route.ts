@@ -130,13 +130,17 @@ async function sugerirConRouteOptimization(
     return { asignacion: sugerencia, ordenEntrega: {}, cambios: [], engine: 'algorithm-fallback-no-coords' }
   }
 
+  // Camiones con límite de posiciones para carga no-granel
+  const PALLET_MAX: Record<string, number> = { 'CA-68': 1 }
+
   // Calcular carga actual de cada camión (ya_asignados)
-  const cargaActual: Record<string, { kg: number; pos: number }> = {}
-  camiones.forEach(c => { cargaActual[c.codigo] = { kg: 0, pos: 0 } })
+  const cargaActual: Record<string, { kg: number; pos: number; posGranel: number }> = {}
+  camiones.forEach(c => { cargaActual[c.codigo] = { kg: 0, pos: 0, posGranel: 0 } })
   ya_asignados.forEach(p => {
     if (p.camion_id && cargaActual[p.camion_id]) {
       cargaActual[p.camion_id].kg += p.peso_total_kg ?? 0
       cargaActual[p.camion_id].pos += p.volumen_total_m3 ?? 0
+      if (p.requiere_volcador) cargaActual[p.camion_id].posGranel += p.volumen_total_m3 ?? 0
     }
   })
 
@@ -204,8 +208,15 @@ async function sugerirConRouteOptimization(
     const elegiblesPorCapacidad = camiones
       .map((c, i) => ({ c, i }))
       .filter(({ c }) => {
-        const libreKg = c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)
-        const librePos = c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)
+        const carga = cargaActual[c.codigo] ?? { kg: 0, pos: 0, posGranel: 0 }
+        const libreKg = c.tonelaje_max_kg - carga.kg
+        let librePos = c.posiciones_total - carga.pos
+        // Regla especial: camiones con límite pallet — solo si tienen granel ya cargado
+        const palletMaxC = PALLET_MAX[c.codigo]
+        if (!p.requiere_volcador && palletMaxC !== undefined && carga.posGranel > 0) {
+          const posNonGranel = carga.pos - carga.posGranel
+          librePos = Math.max(0, palletMaxC - posNonGranel)
+        }
         return libreKg >= (p.peso_total_kg ?? 0) &&
           (c.posiciones_total === 0 || librePos >= (p.volumen_total_m3 ?? 0))
       })
@@ -262,7 +273,7 @@ async function sugerirConRouteOptimization(
 
     return {
       label: p.id,
-      penaltyCost: 1000000,
+      penaltyCost: p.requiere_volcador ? 9000000 : 1000000,
       deliveries: [delivery],
       loadDemands: {
         weight_kg: { amount: String(Math.round(p.peso_total_kg ?? 0)) },
@@ -279,21 +290,31 @@ async function sugerirConRouteOptimization(
     .map(buildShipment)
 
   // Construir vehicles (camiones con capacidad residual)
-  const vehicles = camiones.map(c => ({
-    label: c.codigo,
-    startLocation: { latitude: depot.lat, longitude: depot.lng },
-    endLocation: { latitude: depot.lat, longitude: depot.lng },
-    loadLimits: {
-      weight_kg: {
-        maxLoad: String(Math.max(0, Math.round(c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)))),
+  const vehicles = camiones.map(c => {
+    const carga = cargaActual[c.codigo] ?? { kg: 0, pos: 0, posGranel: 0 }
+    const palletMaxC = PALLET_MAX[c.codigo]
+    let librePos = c.posiciones_total - carga.pos
+    if (palletMaxC !== undefined && carga.posGranel > 0) {
+      // Camión con límite de pallets ya cargado con granel: solo queda palletMax - pallet_ya_cargado
+      const posNonGranel = carga.pos - carga.posGranel
+      librePos = Math.max(0, palletMaxC - posNonGranel)
+    }
+    return {
+      label: c.codigo,
+      startLocation: { latitude: depot.lat, longitude: depot.lng },
+      endLocation: { latitude: depot.lat, longitude: depot.lng },
+      loadLimits: {
+        weight_kg: {
+          maxLoad: String(Math.max(0, Math.round(c.tonelaje_max_kg - carga.kg))),
+        },
+        positions_x10: {
+          maxLoad: String(Math.max(0, Math.round(librePos * 10))),
+        },
       },
-      positions_x10: {
-        maxLoad: String(Math.max(0, Math.round((c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)) * 10))),
-      },
-    },
-    costPerKilometer: 1.0,
-    costPerHour: 30.0,
-  }))
+      costPerKilometer: 1.0,
+      costPerHour: 30.0,
+    }
+  })
 
   // Incompatibilidades: hierro_largo no va con general ni granel en el mismo camión
   const shipmentTypeIncompatibilities = [

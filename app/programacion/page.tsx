@@ -3125,7 +3125,7 @@ function ProgramacionInner() {
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>
-              <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0 || confirmado}
+              <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0}
                 className="px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-40"
                 style={{ background: confirmado ? '#d1fae5' : '#254A96', color: confirmado ? '#065f46' : 'white' }}>
                 {guardando ? 'Guardando…' : confirmado ? '✓ Confirmado' : 'Confirmar'}

@@ -1,7 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { GoogleAuth } from 'google-auth-library'
 
 const client = new Anthropic()
+
+// Obtiene un Bearer token usando el Service Account JSON
+async function getGoogleBearerToken(): Promise<string> {
+  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+  if (!serviceAccountJson) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON no está configurada')
+  // Limpiar posibles caracteres extra (comillas envolventes, espacios, BOM)
+  const cleaned = serviceAccountJson
+    .trim()
+    .replace(/^["']/, '')   // quitar comilla inicial si hay
+    .replace(/["']$/, '')   // quitar comilla final si hay
+  let credentials: any
+  try {
+    credentials = JSON.parse(cleaned)
+  } catch (e: any) {
+    throw new Error(`JSON inválido en GOOGLE_SERVICE_ACCOUNT_JSON: ${e.message}. Primeros 30 chars: ${cleaned.slice(0, 30)}`)
+  }
+  const auth = new GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  })
+  const token = await auth.getAccessToken()
+  if (!token) throw new Error('No se pudo obtener el Bearer token de Google')
+  return token
+}
 
 function distKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371
@@ -24,6 +49,7 @@ interface PedidoInput {
   requiere_volcador?: boolean
   barrio_cerrado?: boolean
   camion_id?: string | null
+  vuelta?: number
   items?: { nombre: string }[]
 }
 
@@ -36,118 +62,453 @@ interface CamionInput {
   volcador: boolean
 }
 
-// Camiones con límite de posiciones para carga no-granel (además de la carga volcador)
-const PALLET_MAX: Record<string, number> = { 'CA-68': 1 }
+// Coordenadas de depósitos por sucursal
+const DEPOSITOS: Record<string, { lat: number; lng: number }> = {
+  'LP520':    { lat: -34.965403, lng: -58.06488 },
+  'LP139':    { lat: -34.914872, lng: -58.023912 },
+  'Guernica': { lat: -34.91118,  lng: -58.39945 },
+  'Cañuelas': { lat: -35.0004012, lng: -58.7474278 },
+  'Pinamar':  { lat: -37.207852, lng: -56.972302 },
+}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json()
-    const { pedidos, camiones, ya_asignados, sugerencia, sucursal } = body as {
-      pedidos: PedidoInput[]
-      camiones: CamionInput[]
-      ya_asignados: PedidoInput[]
-      sugerencia: Record<string, string | null>
-      sucursal: string
+// Ventanas horarias por vuelta (UTC, Argentina = UTC-3)
+function getTimeWindow(vuelta: number, dateStr: string) {
+  const windows: Record<number, { start: string; end: string }> = {
+    1: { start: `${dateStr}T11:00:00Z`, end: `${dateStr}T13:00:00Z` },  // 08-10 ART
+    2: { start: `${dateStr}T13:00:00Z`, end: `${dateStr}T15:00:00Z` },  // 10-12 ART
+    3: { start: `${dateStr}T16:00:00Z`, end: `${dateStr}T18:00:00Z` },  // 13-15 ART
+    4: { start: `${dateStr}T18:00:00Z`, end: `${dateStr}T20:00:00Z` },  // 15-17 ART
+    5: { start: `${dateStr}T20:00:00Z`, end: `${dateStr}T23:00:00Z` },  // 17-20 ART
+  }
+  const w = windows[vuelta]
+  if (!w) return null
+  return { startTime: w.start, endTime: w.end }
+}
+
+// Tipo de shipment según items del pedido
+function getShipmentType(p: PedidoInput): string {
+  if (p.requiere_volcador) return 'granel'
+  const LARGO = ['chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'zingueria']
+  if ((p.items ?? []).some(it => LARGO.some(k => it.nombre.toLowerCase().includes(k)))) return 'hierro_largo'
+  const HIERRO = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado']
+  if ((p.items ?? []).some(it => HIERRO.some(k => it.nombre.toLowerCase().includes(k)))) return 'hierro_normal'
+  return 'general'
+}
+
+// ¿El pedido necesita grúa hidráulica para la descarga?
+// Los volcador no la necesitan (descargan solos). El hierro se puede bajar sin grúa.
+// Todo lo demás (bolsas, bloques, pallets, etc.) requiere grúa.
+const HIERRO_KW_GRUA = ['hierro', 'barra', 'varilla', 'malla', 'vigueta', 'alambre', 'pretensado', 'armadura', 'chapa', 'perfil', 'caño', 'tubo', 'canal', 'angulo', 'zingueria', 'upn', 'ipn']
+function requiereGrua(p: PedidoInput): boolean {
+  if (p.requiere_volcador) return false
+  const items = p.items ?? []
+  if (items.length === 0) return true // sin items → asumir que necesita grúa
+  const esPuroHierro = items.every(it => HIERRO_KW_GRUA.some(kw => it.nombre.toLowerCase().includes(kw)))
+  return !esPuroHierro
+}
+
+// ─── Route Optimization API (Google) ─────────────────────────────────────────
+
+async function sugerirConRouteOptimization(
+  pedidos: PedidoInput[],
+  camiones: CamionInput[],
+  ya_asignados: PedidoInput[],
+  sugerencia: Record<string, string | null>,
+  sucursal: string,
+): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string }> {
+
+  const projectId = process.env.GOOGLE_CLOUD_PROJECT!
+  const bearerToken = await getGoogleBearerToken()
+  const depot = DEPOSITOS[sucursal] ?? { lat: -34.9205, lng: -57.9536 }
+
+  // Separar pedidos con y sin coordenadas
+  const conCoords = pedidos.filter(p => p.latitud != null && p.longitud != null)
+  const sinCoords = pedidos.filter(p => p.latitud == null || p.longitud == null)
+
+  // Si no hay pedidos con coordenadas, no vale la pena llamar a la API
+  if (conCoords.length === 0) {
+    return { asignacion: sugerencia, ordenEntrega: {}, cambios: [], engine: 'algorithm-fallback-no-coords' }
+  }
+
+  // Camiones con límite de posiciones para carga no-granel
+  const PALLET_MAX: Record<string, number> = { 'CA-68': 1 }
+
+  // Calcular carga actual de cada camión (ya_asignados)
+  const cargaActual: Record<string, { kg: number; pos: number; posGranel: number }> = {}
+  camiones.forEach(c => { cargaActual[c.codigo] = { kg: 0, pos: 0, posGranel: 0 } })
+  ya_asignados.forEach(p => {
+    if (p.camion_id && cargaActual[p.camion_id]) {
+      cargaActual[p.camion_id].kg += p.peso_total_kg ?? 0
+      cargaActual[p.camion_id].pos += p.volumen_total_m3 ?? 0
+      if (p.requiere_volcador) cargaActual[p.camion_id].posGranel += p.volumen_total_m3 ?? 0
     }
+  })
 
-    // Construir el estado completo de cada camión DESPUÉS de aplicar la sugerencia del algoritmo
-    const pedidosPorCamion: Record<string, PedidoInput[]> = {}
-    camiones.forEach(c => { pedidosPorCamion[c.codigo] = [] })
+  // Fecha de hoy para ventanas horarias
+  const dateStr = new Date().toISOString().split('T')[0]
+  const vuelta = conCoords[0]?.vuelta ?? 1
 
-    ya_asignados.forEach(p => {
-      if (p.camion_id && pedidosPorCamion[p.camion_id]) {
-        pedidosPorCamion[p.camion_id].push(p)
+  // ── Detectar grupos de mismo cliente (fuzzy) dentro de 2km ───────────────
+  const normCliente = (s: string) => s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|sas|sa|srl)\b/g, '')
+    .replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+
+  const parentG: Record<string, string> = {}
+  conCoords.forEach(p => { parentG[p.id] = p.id })
+  const findG = (id: string): string => parentG[id] === id ? id : (parentG[id] = findG(parentG[id]))
+  const unionG = (a: string, b: string) => { parentG[findG(a)] = findG(b) }
+
+  for (let i = 0; i < conCoords.length; i++) {
+    for (let j = i + 1; j < conCoords.length; j++) {
+      const a = conCoords[i], b = conCoords[j]
+      if (normCliente(a.cliente) === normCliente(b.cliente)) {
+        if (distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) <= 2) unionG(a.id, b.id)
       }
-    })
-    pedidos.forEach(p => {
-      const cam = sugerencia[p.id]
-      if (cam && pedidosPorCamion[cam]) {
-        pedidosPorCamion[cam].push(p)
-      }
-    })
-
-    const sinAsignar = pedidos.filter(p => sugerencia[p.id] === null || sugerencia[p.id] === undefined)
-
-    function descPedido(p: PedidoInput) {
-      const loc = p.localidad ? `[${p.localidad}]` : ''
-      return `NV${p.nv} | ${p.cliente} | "${p.direccion}" ${loc} | ${p.volumen_total_m3 ?? 0}pos ${p.peso_total_kg ?? 0}kg`
     }
+  }
+  // Grupos con >1 pedido del mismo cliente
+  const gruposCliente = new Map<string, PedidoInput[]>()
+  conCoords.forEach(p => {
+    const root = findG(p.id)
+    if (!gruposCliente.has(root)) gruposCliente.set(root, [])
+    gruposCliente.get(root)!.push(p)
+  })
+  // Para cada grupo, calcular qué camiones tienen capacidad combinada suficiente
+  const allowedByPedido: Record<string, number[]> = {}
+  for (const [, grupoPedidos] of gruposCliente) {
+    if (grupoPedidos.length <= 1) continue
+    const totalKg = grupoPedidos.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+    const totalPos = grupoPedidos.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    const eligibles = camiones
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => {
+        const libreKg = c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)
+        const librePos = c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)
+        return libreKg >= totalKg && (c.posiciones_total === 0 || librePos >= totalPos)
+      })
+      .map(({ i }) => i)
+    if (eligibles.length > 0) {
+      grupoPedidos.forEach(p => { allowedByPedido[p.id] = eligibles })
+    }
+    // Si no hay camión con capacidad suficiente para el grupo completo → no forzamos (Google decide)
+  }
 
-    // Resumen de camiones con carga real post-sugerencia
-    const camionesStr = camiones.map(c => {
-      const ps = pedidosPorCamion[c.codigo]
-      const kgUsado = ps.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
-      const posUsado = ps.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
-      const listaStr = ps.length
-        ? ps.map(p => `    - ${descPedido(p)}`).join('\n')
-        : '    (vacío)'
-      return `${c.codigo} [${c.tipo_unidad}, grua=${c.grua_hidraulica ? 'SÍ' : 'NO'}, volcador=${c.volcador ? 'SÍ' : 'NO'}] Máx:${c.tonelaje_max_kg}kg/${c.posiciones_total}pos — Libre:${c.tonelaje_max_kg - kgUsado}kg/${c.posiciones_total - posUsado}pos\n${listaStr}`
-    }).join('\n\n')
+  // ── Construir shipments ordenados: grandes primero (FFD) ────────────────────
+  // Pedidos que caben sólo en UN camión (por capacidad de posiciones) → forzar ese camión
+  const buildShipment = (p: PedidoInput) => {
+    const tw = getTimeWindow(vuelta, dateStr)
+    const delivery: any = {
+      arrivalLocation: { latitude: p.latitud!, longitude: p.longitud! },
+      duration: '600s',
+    }
+    if (tw) delivery.timeWindows = [tw]
 
-    const sinAsignarStr = sinAsignar.length
-      ? sinAsignar.map(p => `  - ${descPedido(p)}`).join('\n')
-      : '  (ninguno)'
+    // Camiones elegibles por capacidad individual
+    const elegiblesPorCapacidad = camiones
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => {
+        const carga = cargaActual[c.codigo] ?? { kg: 0, pos: 0, posGranel: 0 }
+        const libreKg = c.tonelaje_max_kg - carga.kg
+        let librePos = c.posiciones_total - carga.pos
+        // Regla especial: camiones con límite pallet — solo si tienen granel ya cargado
+        const palletMaxC = PALLET_MAX[c.codigo]
+        if (!p.requiere_volcador && palletMaxC !== undefined && carga.posGranel > 0) {
+          const posNonGranel = carga.pos - carga.posGranel
+          librePos = Math.max(0, palletMaxC - posNonGranel)
+        }
+        return libreKg >= (p.peso_total_kg ?? 0) &&
+          (c.posiciones_total === 0 || librePos >= (p.volumen_total_m3 ?? 0))
+      })
+      .map(({ i }) => i)
 
-    // Pre-computar clusters geográficos entre todos los pedidos (sin asignar)
-    // para mostrárselos explícitamente a la IA
-    function computarClusters(ps: PedidoInput[]): PedidoInput[][] {
-      const n = ps.length
-      const parent = Array.from({ length: n }, (_, i) => i)
-      function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
-      function union(i: number, j: number) { parent[find(i)] = find(j) }
-      const normStr = (s: string) => s.toLowerCase()
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
-        .replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
-      const normCliente = (c: string) => c.toLowerCase()
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
-        .replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
-      function nombreBarrio(dir: string): string {
-        if (!dir) return ''
-        const SKIP = /^(buenos aires|córdoba|cordoba|santa fe|mendoza|prov\.|pcia\.|argentina|bs\.? ?as?\.?)$/i
-        const parts = dir.split(',').map(s => s.trim()).filter(Boolean)
-        const candidates = parts.filter(p => !/\d/.test(p) && !SKIP.test(p) && p.length > 2 && p.length < 50)
-        const raw = candidates.length >= 2 ? candidates[candidates.length - 2] : candidates[candidates.length - 1]
-        if (!raw) return ''
-        return raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
-      }
-      for (let i = 0; i < n; i++) {
-        for (let j = i + 1; j < n; j++) {
-          const a = ps[i], b = ps[j]
-          if (a.barrio_cerrado && b.barrio_cerrado) {
-            const ba = nombreBarrio(a.direccion), bb = nombreBarrio(b.direccion)
-            if (ba && bb && ba === bb) { union(i, j); continue }
-          }
-          if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
-          const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
-          if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {
-            if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
-            continue
-          }
-          if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 15) union(i, j)
+    // Calcular allowedVehicleIndices combinando: volcador + mismo cliente + único elegible
+    let finalAllowed: number[] | null = null
+
+    // 1. Volcador
+    if (p.requiere_volcador) {
+      const vi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.volcador).map(({ i }) => i)
+      if (vi.length > 0) finalAllowed = vi
+    }
+    // 1b. Grúa hidráulica — excluir camiones sin grúa para pedidos que la requieren
+    // (ej: SEMI sin grúa no puede descargar pallets/bolsas aunque entre por tonelaje y posiciones)
+    if (requiereGrua(p)) {
+      const gi = camiones.map((c, i) => ({ c, i })).filter(({ c }) => c.grua_hidraulica).map(({ i }) => i)
+      // Solo aplicar si efectivamente excluye algún camión (hay camiones sin grúa en la flota)
+      if (gi.length > 0 && gi.length < camiones.length) {
+        if (finalAllowed !== null) {
+          const inter = finalAllowed.filter(i => gi.includes(i))
+          if (inter.length > 0) finalAllowed = inter
+          // Si inter queda vacío: no borrar la restricción volcador/grúa previa
+        } else {
+          finalAllowed = gi
         }
       }
-      const groups = new Map<number, PedidoInput[]>()
-      for (let i = 0; i < n; i++) {
-        const r = find(i)
-        if (!groups.has(r)) groups.set(r, [])
-        groups.get(r)!.push(ps[i])
+    }
+    // 2. Mismo cliente
+    // Si ya hay una restricción dura (ej: volcador), la intersección puede quedar vacía porque
+    // el grupo combinado no cabe en el camión requerido → en ese caso NO borrar la restricción dura,
+    // simplemente ignorar el agrupamiento para este pedido (Google puede separar el grupo con penalty).
+    if (allowedByPedido[p.id]) {
+      if (finalAllowed !== null) {
+        // Hay restricción dura previa (volcador) → intersectar solo si el resultado no queda vacío
+        const inter = finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
+        if (inter.length > 0) finalAllowed = inter
+        // Si inter es vacío: el grupo mismo-cliente no puede ir junto (volcador no tiene tonelaje)
+        // → mantener la restricción volcador y dejar que Google decida con penalty
+      } else {
+        finalAllowed = allowedByPedido[p.id]
+        if (finalAllowed.length === 0) finalAllowed = null
       }
-      return Array.from(groups.values()).filter(g => g.length > 1)
+    }
+    // 3. Único camión elegible por capacidad → forzarlo (pedido grande que sólo cabe en uno)
+    if (!finalAllowed && elegiblesPorCapacidad.length === 1) {
+      finalAllowed = elegiblesPorCapacidad
+    }
+    // 4. Intersectar con elegibles por capacidad si hay restricción y múltiples opciones
+    if (finalAllowed && elegiblesPorCapacidad.length > 0) {
+      const inter = finalAllowed.filter(i => elegiblesPorCapacidad.includes(i))
+      if (inter.length > 0) finalAllowed = inter
     }
 
-    const clusters = computarClusters(pedidos)
-    const clustersStr = clusters.length > 0
-      ? clusters.map((g, i) => {
-          const dist = g.length === 2 && g[0].latitud && g[1].latitud
-            ? ` (${distKm(g[0].latitud!, g[0].longitud!, g[1].latitud!, g[1].longitud!).toFixed(1)} km entre sí)`
-            : ''
-          return `  Grupo ${i + 1}: ${g.map(p => `NV${p.nv} (${p.cliente})`).join(' + ')}${dist}`
-        }).join('\n')
-      : '  (ninguno — todos a distancias distintas)'
+    return {
+      label: p.id,
+      penaltyCost: p.requiere_volcador ? 9000000 : 1000000,
+      deliveries: [delivery],
+      loadDemands: {
+        weight_kg: { amount: String(Math.round(p.peso_total_kg ?? 0)) },
+        positions_x10: { amount: String(Math.round((p.volumen_total_m3 ?? 0) * 10)) },
+      },
+      shipmentType: getShipmentType(p),
+      ...(finalAllowed && finalAllowed.length > 0 ? { allowedVehicleIndices: finalAllowed } : {}),
+    }
+  }
 
-    const pedidosIds = pedidos.map(p => `"${p.id}": NV${p.nv}`).join(', ')
+  // Ordenar por posiciones descendentes (FFD: First Fit Decreasing)
+  const shipments = [...conCoords]
+    .sort((a, b) => (b.volumen_total_m3 ?? 0) - (a.volumen_total_m3 ?? 0))
+    .map(buildShipment)
 
-    const prompt = `Sos un asistente de logística para ${sucursal}, empresa de materiales de construcción en Argentina.
+  // Construir vehicles (camiones con capacidad residual)
+  const vehicles = camiones.map(c => {
+    const carga = cargaActual[c.codigo] ?? { kg: 0, pos: 0, posGranel: 0 }
+    const palletMaxC = PALLET_MAX[c.codigo]
+    let librePos = c.posiciones_total - carga.pos
+    if (palletMaxC !== undefined && carga.posGranel > 0) {
+      // Camión con límite de pallets ya cargado con granel: solo queda palletMax - pallet_ya_cargado
+      const posNonGranel = carga.pos - carga.posGranel
+      librePos = Math.max(0, palletMaxC - posNonGranel)
+    }
+    return {
+      label: c.codigo,
+      startLocation: { latitude: depot.lat, longitude: depot.lng },
+      endLocation: { latitude: depot.lat, longitude: depot.lng },
+      loadLimits: {
+        weight_kg: {
+          maxLoad: String(Math.max(0, Math.round(c.tonelaje_max_kg - carga.kg))),
+        },
+        positions_x10: {
+          maxLoad: String(Math.max(0, Math.round(librePos * 10))),
+        },
+      },
+      costPerKilometer: 1.0,
+      costPerHour: 30.0,
+    }
+  })
+
+  // Incompatibilidades: hierro_largo no va con general ni granel en el mismo camión
+  const shipmentTypeIncompatibilities = [
+    { types: ['hierro_largo', 'general'], incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE' },
+    { types: ['hierro_largo', 'granel'], incompatibilityMode: 'NOT_PERFORMED_BY_SAME_VEHICLE' },
+  ]
+
+  const requestBody = {
+    model: {
+      globalStartTime: `${dateStr}T08:00:00Z`,
+      globalEndTime: `${dateStr}T23:59:00Z`,
+      shipments,
+      vehicles,
+      shipmentTypeIncompatibilities,
+    },
+    searchMode: 'CONSUME_ALL_AVAILABLE_TIME',
+    considerRoadTraffic: false,
+  }
+
+  // Probar múltiples URLs — Maps Platform puede requerir formato diferente
+  const URLS_TO_TRY = [
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/global:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/us-central1:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}/locations/europe-west1:optimizeTours`,
+    `https://routeoptimization.googleapis.com/v1/projects/${projectId}:optimizeTours`,
+  ]
+  let response: Response | null = null
+  let lastErr = ''
+  for (const url of URLS_TO_TRY) {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${bearerToken}` },
+      body: JSON.stringify(requestBody),
+    })
+    if (r.ok) { response = r; break }
+    const errText = await r.text()
+    lastErr = `${r.status}/${url.split('/locations/')[1] ?? 'no-loc'}: ${errText.slice(0, 120)}`
+    if (!errText.includes('Unsupported location') && !errText.includes('NOT_FOUND') && r.status !== 404) {
+      throw new Error(`Route Optimization API error ${lastErr}`)
+    }
+  }
+  if (!response) throw new Error(`Route Optimization API falló en todas las regiones. Último error: ${lastErr}`)
+
+  const result = await response.json()
+
+  // Mapear respuesta → { pedido_id: camion_codigo } + orden de visitas optimizado
+  const asignacion: Record<string, string | null> = { ...sugerencia }
+  // ordenEntrega: por camión → { pedido_id: posición_en_ruta }
+  // Representa el orden real que devuelve Google (ya optimizado)
+  const ordenEntrega: Record<string, number> = {}
+
+  // Pedidos que la API asignó a camiones
+  if (result.routes) {
+    for (const route of result.routes) {
+      const camionCodigo = route.vehicleLabel as string
+      const visits = route.visits ?? []
+      // Contador de posición dentro de la ruta de este camión
+      const contadorPorCamion: Record<string, number> = {}
+      for (const visit of visits) {
+        const pedidoId = visit.shipmentLabel as string
+        if (pedidoId) {
+          asignacion[pedidoId] = camionCodigo
+          if (!contadorPorCamion[camionCodigo]) contadorPorCamion[camionCodigo] = 1
+          ordenEntrega[pedidoId] = contadorPorCamion[camionCodigo]++
+        }
+      }
+    }
+  }
+
+  // Pedidos que la API no pudo asignar (skippedShipments)
+  if (result.skippedShipments) {
+    for (const skipped of result.skippedShipments) {
+      const pedidoId = skipped.label as string
+      if (pedidoId) asignacion[pedidoId] = null
+    }
+  }
+
+  // Pedidos sin coordenadas → usar la sugerencia del algoritmo original
+  for (const p of sinCoords) {
+    asignacion[p.id] = sugerencia[p.id] ?? null
+  }
+
+  // Calcular cambios respecto a la sugerencia original
+  const cambios: any[] = []
+  for (const p of conCoords) {
+    const antes = sugerencia[p.id]
+    const despues = asignacion[p.id]
+    if (antes !== despues) {
+      cambios.push({
+        nv: p.nv,
+        de: antes ?? 'sin asignar',
+        a: despues ?? 'sin asignar',
+        motivo: 'Route Optimization API',
+      })
+    }
+  }
+
+  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization' }
+}
+
+// ─── Claude Haiku (motor original) ───────────────────────────────────────────
+
+async function sugerirConClaude(
+  pedidos: PedidoInput[],
+  camiones: CamionInput[],
+  ya_asignados: PedidoInput[],
+  sugerencia: Record<string, string | null>,
+  sucursal: string,
+): Promise<{ asignacion: Record<string, string | null>; cambios: any[]; tokens?: any; engine: string }> {
+
+  const pedidosPorCamion: Record<string, PedidoInput[]> = {}
+  camiones.forEach(c => { pedidosPorCamion[c.codigo] = [] })
+
+  ya_asignados.forEach(p => {
+    if (p.camion_id && pedidosPorCamion[p.camion_id]) pedidosPorCamion[p.camion_id].push(p)
+  })
+  pedidos.forEach(p => {
+    const cam = sugerencia[p.id]
+    if (cam && pedidosPorCamion[cam]) pedidosPorCamion[cam].push(p)
+  })
+
+  const sinAsignar = pedidos.filter(p => sugerencia[p.id] === null || sugerencia[p.id] === undefined)
+
+  function descPedido(p: PedidoInput) {
+    const loc = p.localidad ? `[${p.localidad}]` : ''
+    return `NV${p.nv} | ${p.cliente} | "${p.direccion}" ${loc} | ${p.volumen_total_m3 ?? 0}pos ${p.peso_total_kg ?? 0}kg`
+  }
+
+  const camionesStr = camiones.map(c => {
+    const ps = pedidosPorCamion[c.codigo]
+    const kgUsado = ps.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+    const posUsado = ps.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+    const listaStr = ps.length ? ps.map(p => `    - ${descPedido(p)}`).join('\n') : '    (vacío)'
+    return `${c.codigo} [${c.tipo_unidad}, grua=${c.grua_hidraulica ? 'SÍ' : 'NO'}, volcador=${c.volcador ? 'SÍ' : 'NO'}] Máx:${c.tonelaje_max_kg}kg/${c.posiciones_total}pos — Libre:${c.tonelaje_max_kg - kgUsado}kg/${c.posiciones_total - posUsado}pos\n${listaStr}`
+  }).join('\n\n')
+
+  const sinAsignarStr = sinAsignar.length
+    ? sinAsignar.map(p => `  - ${descPedido(p)}`).join('\n')
+    : '  (ninguno)'
+
+  function computarClusters(ps: PedidoInput[]): PedidoInput[][] {
+    const n = ps.length
+    const parent = Array.from({ length: n }, (_, i) => i)
+    function find(i: number): number { return parent[i] === i ? i : (parent[i] = find(parent[i])) }
+    function union(i: number, j: number) { parent[find(i)] = find(j) }
+    const normStr = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[.,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+    const normCliente = (c: string) => c.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\./g, '').replace(/[,\-#°]/g, ' ').replace(/\s+/g, ' ').trim()
+    function nombreBarrio(dir: string): string {
+      if (!dir) return ''
+      const SKIP = /^(buenos aires|córdoba|cordoba|santa fe|mendoza|prov\.|pcia\.|argentina|bs\.? ?as?\.?)$/i
+      const parts = dir.split(',').map(s => s.trim()).filter(Boolean)
+      const candidates = parts.filter(p => !/\d/.test(p) && !SKIP.test(p) && p.length > 2 && p.length < 50)
+      const raw = candidates.length >= 2 ? candidates[candidates.length - 2] : candidates[candidates.length - 1]
+      if (!raw) return ''
+      return raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
+    }
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = ps[i], b = ps[j]
+        if (a.barrio_cerrado && b.barrio_cerrado) {
+          const ba = nombreBarrio(a.direccion), bb = nombreBarrio(b.direccion)
+          if (ba && bb && ba === bb) { union(i, j); continue }
+        }
+        if (a.direccion && b.direccion && normStr(a.direccion) === normStr(b.direccion)) { union(i, j); continue }
+        const tienenCoords = a.latitud != null && a.longitud != null && b.latitud != null && b.longitud != null
+        if (a.cliente && b.cliente && normCliente(a.cliente) === normCliente(b.cliente)) {
+          if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 2) union(i, j)
+          continue
+        }
+        if (tienenCoords && distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) < 15) union(i, j)
+      }
+    }
+    const groups = new Map<number, PedidoInput[]>()
+    for (let i = 0; i < n; i++) {
+      const r = find(i)
+      if (!groups.has(r)) groups.set(r, [])
+      groups.get(r)!.push(ps[i])
+    }
+    return Array.from(groups.values()).filter(g => g.length > 1)
+  }
+
+  const clusters = computarClusters(pedidos)
+  const clustersStr = clusters.length > 0
+    ? clusters.map((g, i) => {
+        const dist = g.length === 2 && g[0].latitud && g[1].latitud
+          ? ` (${distKm(g[0].latitud!, g[0].longitud!, g[1].latitud!, g[1].longitud!).toFixed(1)} km entre sí)`
+          : ''
+        return `  Grupo ${i + 1}: ${g.map(p => `NV${p.nv} (${p.cliente})`).join(' + ')}${dist}`
+      }).join('\n')
+    : '  (ninguno — todos a distancias distintas)'
+
+  const pedidosIds = pedidos.map(p => `"${p.id}": NV${p.nv}`).join(', ')
+
+  const prompt = `Sos un asistente de logística para ${sucursal}, empresa de materiales de construcción en Argentina.
 
 CAMIONES Y ASIGNACIÓN ACTUAL DEL ALGORITMO:
 ${camionesStr}
@@ -164,8 +525,6 @@ REGLAS QUE NO PODÉS VIOLAR:
 - Nunca superes kg ni posiciones máximas de un camión
 - requiere grua → solo camiones con grua=SÍ
 - requiere volcador → solo camiones con volcador=SÍ
-- CA-68: puede llevar granel (volcador) + máximo 1 posición de carga NO granel. Si ya tiene granel, solo 1 pallet más.
-- Cuando no entran todos: priorizá siempre los pedidos con requiere_volcador=true antes de dejar afuera pallets
 - Los pedidos de cada GRUPO GEOGRÁFICO deben quedar en el MISMO camión (prioridad máxima)
 
 TU TAREA:
@@ -182,78 +541,90 @@ Respondé ÚNICAMENTE con JSON válido, sin texto antes ni después:
 
 La "asignacion" debe incluir TODOS los ids de la lista.`
 
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }],
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  const text = (response.content[0] as { type: string; text: string }).text.trim()
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return { asignacion: sugerencia, cambios: [], engine: 'claude-haiku-fallback' }
+
+  const result = JSON.parse(jsonMatch[0])
+
+  const asignacionFinal: Record<string, string | null> = { ...sugerencia }
+  const cambiosValidos: any[] = []
+
+  if (result.asignacion && typeof result.asignacion === 'object') {
+    const kgProp: Record<string, number> = {}
+    const posProp: Record<string, number> = {}
+    camiones.forEach(c => {
+      kgProp[c.codigo] = ya_asignados.filter(p => p.camion_id === c.codigo).reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
+      posProp[c.codigo] = ya_asignados.filter(p => p.camion_id === c.codigo).reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
     })
+    for (const [pedidoId, camCod] of Object.entries(result.asignacion as Record<string, string | null>)) {
+      const p = pedidos.find(x => x.id === pedidoId)
+      if (!p || !camCod) continue
+      const c = camiones.find(x => x.codigo === camCod)
+      if (!c) continue
+      kgProp[camCod] = (kgProp[camCod] ?? 0) + (p.peso_total_kg ?? 0)
+      posProp[camCod] = (posProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
+    }
+    let valido = true
+    for (const c of camiones) {
+      if ((kgProp[c.codigo] ?? 0) > c.tonelaje_max_kg || (posProp[c.codigo] ?? 0) > c.posiciones_total) { valido = false; break }
+    }
+    if (valido) {
+      Object.assign(asignacionFinal, result.asignacion)
+      cambiosValidos.push(...(result.cambios ?? []))
+    }
+  }
 
-    const text = (response.content[0] as { type: string; text: string }).text.trim()
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-      return NextResponse.json({ error: 'Respuesta IA sin JSON', raw: text }, { status: 500 })
+  return { asignacion: asignacionFinal, cambios: cambiosValidos, tokens: response.usage, engine: 'claude-haiku' }
+}
+
+// ─── Handler principal ────────────────────────────────────────────────────────
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { pedidos, camiones, ya_asignados, sugerencia, sucursal } = body as {
+      pedidos: PedidoInput[]
+      camiones: CamionInput[]
+      ya_asignados: PedidoInput[]
+      sugerencia: Record<string, string | null>
+      sucursal: string
     }
 
-    const result = JSON.parse(jsonMatch[0])
+    // Elegir motor según env vars
+    const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
 
-    // Validar que los cambios no desborden capacidad
-    const asignacionFinal: Record<string, string | null> = { ...sugerencia }
-    const cambiosValidos: typeof result.cambios = []
+    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string }
 
-    if (result.asignacion && typeof result.asignacion === 'object') {
-      // Recalcular carga con la propuesta de la IA
-      const kgProp: Record<string, number> = {}
-      const posProp: Record<string, number> = {}
-      camiones.forEach(c => {
-        kgProp[c.codigo] = ya_asignados
-          .filter(p => p.camion_id === c.codigo)
-          .reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
-        posProp[c.codigo] = ya_asignados
-          .filter(p => p.camion_id === c.codigo)
-          .reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
-      })
-
-      for (const [pedidoId, camCod] of Object.entries(result.asignacion as Record<string, string | null>)) {
-        const p = pedidos.find(x => x.id === pedidoId)
-        if (!p || !camCod) continue
-        const c = camiones.find(x => x.codigo === camCod)
-        if (!c) continue
-        kgProp[camCod] = (kgProp[camCod] ?? 0) + (p.peso_total_kg ?? 0)
-        posProp[camCod] = (posProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
+    if (useGoogleApi) {
+      try {
+        result = await sugerirConRouteOptimization(pedidos, camiones, ya_asignados, sugerencia, sucursal)
+      } catch (googleError: any) {
+        // Si Google falla, caer a Claude con la sugerencia que tengamos
+        // Si la sugerencia llegó vacía (Layer 1 fue salteado), Claude igual puede intentar
+        // con lo que tiene — los pedidos y camiones siguen disponibles
+        console.error('[sugerir-asignacion] Google API error, fallback to Claude:', googleError.message)
+        result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
+        result.engine = `claude-haiku-fallback (google-error: ${googleError.message.slice(0, 150)})`
       }
-
-      // Computar posiciones no-granel por camión para validar reglas especiales
-      const posNonGranelProp: Record<string, number> = {}
-      camiones.forEach(c => {
-        posNonGranelProp[c.codigo] = ya_asignados
-          .filter(p => p.camion_id === c.codigo && !p.requiere_volcador)
-          .reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
-      })
-      for (const [pedidoId, camCod] of Object.entries(result.asignacion as Record<string, string | null>)) {
-        const p = pedidos.find(x => x.id === pedidoId)
-        if (!p || !camCod || p.requiere_volcador) continue
-        posNonGranelProp[camCod] = (posNonGranelProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
-      }
-
-      let valido = true
-      for (const c of camiones) {
-        if ((kgProp[c.codigo] ?? 0) > c.tonelaje_max_kg || (posProp[c.codigo] ?? 0) > c.posiciones_total) {
-          valido = false; break
-        }
-        const palletMaxC = PALLET_MAX[c.codigo]
-        if (palletMaxC !== undefined && (posNonGranelProp[c.codigo] ?? 0) > palletMaxC) {
-          valido = false; break
-        }
-      }
-
-      if (valido) {
-        Object.assign(asignacionFinal, result.asignacion)
-        cambiosValidos.push(...(result.cambios ?? []))
-      }
+    } else {
+      result = await sugerirConClaude(pedidos, camiones, ya_asignados, sugerencia, sucursal)
     }
 
-    return NextResponse.json({ asignacion: asignacionFinal, cambios: cambiosValidos, tokens: response.usage })
+    return NextResponse.json({
+      asignacion: result.asignacion,
+      cambios: result.cambios,
+      engine: result.engine,
+      ...(result.tokens ? { tokens: result.tokens } : {}),
+    })
   } catch (error: any) {
+    console.error('[sugerir-asignacion] error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

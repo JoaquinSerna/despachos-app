@@ -1218,7 +1218,6 @@ export default function RuteoPage() {
                       </button>
                     ) : (
                       <div className="space-y-3">
-                        <div className="grid grid-cols-3 gap-2 text-center">
                           {(() => {
                             const tvActiva = vueltaActiva ? vueltasTimings[vueltaActiva] : null
                             const inicioMostrar = tvActiva?.hora_inicio ?? horaInicio

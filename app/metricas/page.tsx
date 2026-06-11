@@ -25,8 +25,15 @@ function colorBarra(p: number) {
 }
 
 const VUELTAS_MAX_DEFAULT: Record<string, number> = {
-  'LP520': 4, 'Guernica': 4,
+  'LP520': 3, 'Guernica': 4,
   'LP139': 3, 'Cañuelas': 3, 'Pinamar': 3,
+}
+
+function maxVueltasPorDistancia(distKm: number): number {
+  if (distKm < 20) return 4
+  if (distKm < 50) return 3
+  if (distKm < 100) return 2
+  return 1
 }
 
 /** Velocidad promedio de traslado para estimación de fallback (cuando Valhalla no responde).
@@ -39,15 +46,12 @@ function getVelFallback(sucursal: string): number {
   return VEL_FALLBACK_KMH[sucursal] ?? VEL_FALLBACK_DEFAULT
 }
 
-/** Calcula vueltas_max efectivas considerando km por vuelta, límite diario y día de semana */
-function calcVueltasMaxEfectivas(sucursal: string, vueltasRealizadas: number, distanciaKmTotal: number, kmMaxDia: number, fecha?: string): number {
-  // Sábados: máximo 2 vueltas (trabajo hasta mediodía)
-  const esSabadoFecha = fecha ? new Date(fecha + 'T12:00:00').getDay() === 6 : false
-  const defaultMax = esSabadoFecha ? 2 : (VUELTAS_MAX_DEFAULT[sucursal] ?? 3)
-  if (vueltasRealizadas === 0 || distanciaKmTotal === 0) return defaultMax
-  const kmPorVuelta = distanciaKmTotal / vueltasRealizadas
-  const maxPorKm = Math.floor(kmMaxDia / kmPorVuelta)
-  return Math.max(1, Math.min(defaultMax, maxPorKm))
+/** Calcula vueltas_max efectivas según distancia máxima al pedido más lejano y día de semana */
+function calcVueltasMaxEfectivas(sucursal: string, maxDistKm: number, fecha?: string): number {
+  const esSabado = fecha ? new Date(fecha + 'T12:00:00').getDay() === 6 : false
+  const defaultMax = esSabado ? 2 : (VUELTAS_MAX_DEFAULT[sucursal] ?? 3)
+  if (maxDistKm === 0) return defaultMax
+  return Math.min(defaultMax, maxVueltasPorDistancia(maxDistKm))
 }
 
 /** Ocupación diaria estimada (0-100) */
@@ -212,7 +216,6 @@ interface DatosCamionDia {
   km_ruta: number | null
   vueltas: DatosVuelta[]
   distanciaTotalKm: number
-  km_max_dia: number         // desde camiones_flota
   vueltasMaxEfectivas: number
   ocupDiariaPctPos: number
   ocupDiariaPctKg: number
@@ -640,7 +643,7 @@ export default function MetricasPage() {
       supabase.from('pedidos')
         .select('id, nv, cliente, direccion, sucursal, estado, estado_pago, notas, tipo, camion_id, peso_total_kg, volumen_total_m3, vuelta, orden_entrega, latitud, longitud, barrio_cerrado, hora_entregado')
         .eq('fecha_entrega', fecha).neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
       supabase.from('vueltas_tiempos').select('camion_codigo, vuelta, hora_inicio, hora_fin').eq('fecha', fecha),
     ])
 
@@ -746,8 +749,11 @@ export default function MetricasPage() {
       const capacidadKgDia = camion.tonelaje_max_kg * numVueltas
       const capacidadPosDia = camion.posiciones_total * numVueltas
 
-      const kmMaxDia = camion.km_max_dia ?? 200
-      const vueltasMaxEfectivas = calcVueltasMaxEfectivas(camion.sucursal, vueltas.length, distanciaTotalKm, kmMaxDia, fecha)
+      const maxDistKm = pedidosCamion.reduce((max: number, p: any) => {
+        if (!p.latitud || !p.longitud) return max
+        return Math.max(max, distanciaKm(depot.lat, depot.lng, p.latitud, p.longitud))
+      }, 0)
+      const vueltasMaxEfectivas = calcVueltasMaxEfectivas(camion.sucursal, maxDistKm, fecha)
       const { pctPos: ocupDiariaPctPos, pctKg: ocupDiariaPctKg } = calcOcupDiaria(
         posicionesUsadas, kgUsados,
         camion.posiciones_total, camion.tonelaje_max_kg,
@@ -773,7 +779,6 @@ export default function MetricasPage() {
         km_ruta: f?.km_ruta ?? null,
         vueltas,
         distanciaTotalKm,
-        km_max_dia: kmMaxDia,
         vueltasMaxEfectivas,
         ocupDiariaPctPos,
         ocupDiariaPctKg,
@@ -868,7 +873,7 @@ export default function MetricasPage() {
     const [{ data: flotaMes }, { data: pedidosMes }, { data: camionesData }] = await Promise.all([
       supabase.from('flota_dia').select('fecha, camion_codigo, hora_inicio, hora_fin, km_ruta').gte('fecha', fechaInicio).lte('fecha', fechaFin).eq('activo', true),
       supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta').gte('fecha_entrega', fechaInicio).lte('fecha_entrega', fechaFin).neq('estado', 'cancelado').not('camion_id', 'is', null),
-      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
+      supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
     ])
 
     const camionMap: Record<string, any> = {}
@@ -896,9 +901,8 @@ export default function MetricasPage() {
         const kg = pedidosDia.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pedidosDia.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
         const numVueltasDia = new Set(pedidosDia.map((p: any) => p.vuelta).filter(Boolean)).size || 1
-        const vueltasMaxMes = calcVueltasMaxEfectivas(
-          camion.sucursal, numVueltasDia, f.km_ruta ?? 0, camion.km_max_dia ?? 200, f.fecha
-        )
+        const estMaxDistKm = numVueltasDia > 0 ? (f.km_ruta ?? 0) / (numVueltasDia * 2) : 0
+        const vueltasMaxMes = calcVueltasMaxEfectivas(camion.sucursal, estMaxDistKm, f.fecha)
         sumPctKg += pct(kg, camion.tonelaje_max_kg * vueltasMaxMes)
         sumPctPos += pct(pos, camion.posiciones_total * vueltasMaxMes)
         if (f.hora_inicio && f.hora_fin && f.km_ruta) {
@@ -943,7 +947,7 @@ export default function MetricasPage() {
           if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
           return q
         })(),
-        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, km_max_dia'),
+        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
         supabase.from('usuarios').select('id, nombre'),
       ])
 
@@ -995,12 +999,14 @@ export default function MetricasPage() {
           posUsadas: Math.round(pg.pos),
           pctKg: cam?.tonelaje_max_kg ? (() => {
             const numV = pg.vueltas.size || 1
-            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
+            const estDist = numV > 0 ? (f.km_ruta ?? 0) / (numV * 2) : 0
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, estDist, f.fecha)
             return pct(pg.kg, cam.tonelaje_max_kg * vMax)
           })() : 0,
           pctPos: cam?.posiciones_total ? (() => {
             const numV = pg.vueltas.size || 1
-            const vMax = calcVueltasMaxEfectivas(cam.sucursal, numV, f.km_ruta ?? 0, cam.km_max_dia ?? 200, f.fecha)
+            const estDist = numV > 0 ? (f.km_ruta ?? 0) / (numV * 2) : 0
+            const vMax = calcVueltasMaxEfectivas(cam.sucursal, estDist, f.fecha)
             return pct(pg.pos, cam.posiciones_total * vMax)
           })() : 0,
           kmReal: f.km_ruta ?? null,

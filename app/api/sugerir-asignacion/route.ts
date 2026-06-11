@@ -36,6 +36,9 @@ interface CamionInput {
   volcador: boolean
 }
 
+// Camiones con límite de posiciones para carga no-granel (además de la carga volcador)
+const PALLET_MAX: Record<string, number> = { 'CA-68': 1 }
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -161,6 +164,8 @@ REGLAS QUE NO PODÉS VIOLAR:
 - Nunca superes kg ni posiciones máximas de un camión
 - requiere grua → solo camiones con grua=SÍ
 - requiere volcador → solo camiones con volcador=SÍ
+- CA-68: puede llevar granel (volcador) + máximo 1 posición de carga NO granel. Si ya tiene granel, solo 1 pallet más.
+- Cuando no entran todos: priorizá siempre los pedidos con requiere_volcador=true antes de dejar afuera pallets
 - Los pedidos de cada GRUPO GEOGRÁFICO deben quedar en el MISMO camión (prioridad máxima)
 
 TU TAREA:
@@ -217,11 +222,27 @@ La "asignacion" debe incluir TODOS los ids de la lista.`
         posProp[camCod] = (posProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
       }
 
+      // Computar posiciones no-granel por camión para validar reglas especiales
+      const posNonGranelProp: Record<string, number> = {}
+      camiones.forEach(c => {
+        posNonGranelProp[c.codigo] = ya_asignados
+          .filter(p => p.camion_id === c.codigo && !p.requiere_volcador)
+          .reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
+      })
+      for (const [pedidoId, camCod] of Object.entries(result.asignacion as Record<string, string | null>)) {
+        const p = pedidos.find(x => x.id === pedidoId)
+        if (!p || !camCod || p.requiere_volcador) continue
+        posNonGranelProp[camCod] = (posNonGranelProp[camCod] ?? 0) + (p.volumen_total_m3 ?? 0)
+      }
+
       let valido = true
       for (const c of camiones) {
         if ((kgProp[c.codigo] ?? 0) > c.tonelaje_max_kg || (posProp[c.codigo] ?? 0) > c.posiciones_total) {
-          valido = false
-          break
+          valido = false; break
+        }
+        const palletMaxC = PALLET_MAX[c.codigo]
+        if (palletMaxC !== undefined && (posNonGranelProp[c.codigo] ?? 0) > palletMaxC) {
+          valido = false; break
         }
       }
 

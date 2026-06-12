@@ -399,8 +399,18 @@ export default function NuevoDespacho() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('')
 
+    // Re-consultar bloqueos al momento del submit para evitar estado desactualizado
+    const { data: vcmFresh } = await supabase
+      .from('vueltas_cerradas_manual')
+      .select('vuelta')
+      .eq('fecha', form.fecha_entrega)
+      .eq('sucursal', form.sucursal)
+    const cerradasManualFresh = (vcmFresh ?? []).map((r: any) => r.vuelta as number)
+    const fueraCerradaFresh = cerradasManualFresh.includes(0)
+    const cerradasFresh = cerradasManualFresh.filter(v => v !== 0)
+
     // Validar que "fuera de programación" no esté cerrada manualmente
-    if (form.vuelta === 'fuera_prog' && fueraProgramacionCerrada) {
+    if (form.vuelta === 'fuera_prog' && fueraCerradaFresh) {
       setError('La carga de pedidos fuera de programación está cerrada para esta fecha y sucursal.')
       setLoading(false)
       return
@@ -411,7 +421,7 @@ export default function NuevoDespacho() {
       const vueltaNum = parseInt(form.vuelta)
       const franja = FRANJAS.find(f => f.vuelta === vueltaNum)
       const cerradaPorHorario = franja && vultaCerrada(form.fecha_entrega, franja)
-      const cerradaManualmente = vueltasCerradas.includes(vueltaNum)
+      const cerradaManualmente = cerradasFresh.includes(vueltaNum)
       if (cerradaPorHorario || cerradaManualmente) {
         setError('Esta vuelta ya cerró. Seleccioná "Fuera de programación" para que el ruteador lo asigne a la franja disponible.')
         setLoading(false)

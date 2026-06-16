@@ -465,6 +465,15 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
 
     setGuardando(true)
     try {
+      const codigosActivos = camiones.map(c => c.codigo)
+
+      // Borrar registros huérfanos: camiones que quedaron en flota_dia pero ya no están en la flota activa
+      await supabase
+        .from('flota_dia')
+        .delete()
+        .eq('fecha', fecha)
+        .not('camion_codigo', 'in', `(${codigosActivos.map(c => `"${c}"`).join(',')})`)
+
       const resultados = await Promise.all(
         camiones.map(c =>
           supabase.from('flota_dia').upsert(

@@ -25,7 +25,7 @@ function colorBarra(p: number) {
 }
 
 const VUELTAS_MAX_DEFAULT: Record<string, number> = {
-  'LP520': 3, 'Guernica': 4,
+  'LP520': 4, 'Guernica': 4,
   'LP139': 3, 'Cañuelas': 3, 'Pinamar': 3,
 }
 

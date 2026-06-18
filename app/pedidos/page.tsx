@@ -420,6 +420,15 @@ export default function PedidosPage() {
         ...(sucursalCambio ? { camion_id: null, orden_entrega: null } : {}),
       } : p))
       showToast('Pedido actualizado')
+      // Si cambió la dirección/coordenadas y el pedido tiene camión asignado, recalcular orden de entrega
+      const pedidoConCamion = pedidos.find(p => p.id === editando.id)
+      if ((updates.latitud !== undefined || updates.direccion !== undefined) && pedidoConCamion?.camion_id && !sucursalCambio) {
+        fetch('/api/recalcular-orden', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pedido_id: editando.id }),
+        }).catch(() => {}) // silencioso — no es crítico
+      }
       // Audit: compute changed fields
       if (userId && pedidoOriginal) {
         const cambios: Record<string, { de: any; a: any }> = {}

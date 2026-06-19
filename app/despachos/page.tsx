@@ -393,7 +393,18 @@ export default function NuevoDespacho() {
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target
-    setForm(prev => ({ ...prev, [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value }))
+    const newValue = type === 'checkbox' ? (e.target as HTMLInputElement).checked : value
+    setForm(prev => {
+      const next = { ...prev, [name]: newValue }
+      // Si se activa barrio_cerrado y la vuelta seleccionada no es válida, limpiarla
+      if (name === 'barrio_cerrado' && newValue === true) {
+        const vueltaNum = parseInt(prev.vuelta)
+        if (prev.vuelta === 'fuera_prog' || (!isNaN(vueltaNum) && vueltaNum > 3)) {
+          next.vuelta = ''
+        }
+      }
+      return next
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -408,6 +419,16 @@ export default function NuevoDespacho() {
     const cerradasManualFresh = (vcmFresh ?? []).map((r: any) => r.vuelta as number)
     const fueraCerradaFresh = cerradasManualFresh.includes(0)
     const cerradasFresh = cerradasManualFresh.filter(v => v !== 0)
+
+    // Validar barrio cerrado: solo V1, V2, V3
+    if (form.barrio_cerrado) {
+      const vueltaNum = form.vuelta === 'fuera_prog' ? 0 : parseInt(form.vuelta)
+      if (form.vuelta === 'fuera_prog' || vueltaNum > 3) {
+        setError('Los pedidos de barrio cerrado solo se pueden cargar en V1, V2 o V3 (solo vamos hasta las 15hs).')
+        setLoading(false)
+        return
+      }
+    }
 
     // Validar que "fuera de programación" no esté cerrada manualmente
     if (form.vuelta === 'fuera_prog' && fueraCerradaFresh) {
@@ -1140,15 +1161,16 @@ export default function NuevoDespacho() {
                     {FRANJAS.map((franja) => {
                       const { vuelta, label, horario } = franja
                       const cerrada = vueltasCerradas.includes(vuelta)
+                      const bloqueadaBarrio = form.barrio_cerrado && vuelta > 3
                       const tieneFlota = vueltasSinCupoConFlota.includes(vuelta)
                       const disponible = cuposDisponibles.includes(vuelta)
-                      if (cerrada) return <option key={vuelta} value={vuelta} disabled>{label} — ⛔ Fuera de horario</option>
+                      if (cerrada || bloqueadaBarrio) return <option key={vuelta} value={vuelta} disabled>{label} — {bloqueadaBarrio ? '🏘️ No disponible para barrio cerrado' : '⛔ Fuera de horario'}</option>
                       if (disponible) return <option key={vuelta} value={vuelta}>{label} — {horario}</option>
                       if (tieneFlota) return <option key={vuelta} value={vuelta}>{label} — ⚠️ Sin cupo (cargar igual)</option>
                       return <option key={vuelta} value={vuelta} disabled>{label} — Sin cupo</option>
                     })}
-                    <option value="fuera_prog" disabled={fueraProgramacionCerrada}>
-                      {fueraProgramacionCerrada ? 'Fuera de prog. — 🔒 Cerrado' : 'Pedido fuera de programación'}
+                    <option value="fuera_prog" disabled={fueraProgramacionCerrada || form.barrio_cerrado}>
+                      {fueraProgramacionCerrada ? 'Fuera de prog. — 🔒 Cerrado' : form.barrio_cerrado ? 'Fuera de prog. — 🏘️ No disponible para barrio cerrado' : 'Pedido fuera de programación'}
                     </option>
                   </select>
 

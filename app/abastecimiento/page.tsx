@@ -413,8 +413,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
   const [decisions, setDecisions] = useState<DecisionsMap>({})
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
-  const [pedidosComercial, setPedidosComercial] = useState<any[]>([])
-  const [vendedoresMapComercial, setVendedoresMapComercial] = useState<Record<string, string>>({})
+  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
   const [stockFecha, setStockFecha] = useState<string | null>(null)
@@ -552,32 +551,22 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         }
       }
       setFechasDeadline(dl)
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'err')
-    }
-    setLoading(false)
-  }
 
-  async function cargarPedidosComercial() {
-    setLoading(true)
-    try {
-      let q = supabase.from('pedidos')
-        .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, vendedor_id, tipo')
-        .not('vendedor_id', 'is', null)
-        .order('fecha_entrega', { ascending: false })
-      if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
-      if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
-      if (filtrosSucursal.length > 0) q = q.in('sucursal', filtrosSucursal)
-      const { data } = await q
-      const peds = data ?? []
-      setPedidosComercial(peds)
-
-      const vendedorIds = [...new Set(peds.map((p: any) => p.vendedor_id).filter(Boolean))] as string[]
-      if (vendedorIds.length > 0) {
-        const { data: vends } = await supabase.from('usuarios').select('id, nombre').in('id', vendedorIds)
-        const vm: Record<string, string> = {}
-        for (const v of vends ?? []) vm[v.id] = v.nombre
-        setVendedoresMapComercial(vm)
+      // Para la vista "comercial": buscar los pedidos cargados en la app y mapear NV → sucursal
+      if (vistaSD === 'comercial') {
+        const nvs = solsConItems.map(s => String(s.id_venta)).filter(Boolean)
+        const pedMap: Record<string, string> = {}
+        const NV_BATCH = 500
+        for (let i = 0; i < nvs.length; i += NV_BATCH) {
+          const { data: peds } = await supabase.from('pedidos')
+            .select('nv, sucursal')
+            .in('nv', nvs.slice(i, i + NV_BATCH))
+            .not('vendedor_id', 'is', null)
+          for (const p of peds ?? []) pedMap[p.nv] = p.sucursal
+        }
+        setPedidosSucursalMap(pedMap)
+      } else {
+        setPedidosSucursalMap({})
       }
     } catch (e: any) {
       showToast(`Error: ${e.message}`, 'err')
@@ -644,8 +633,13 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
 
   // Aplicar filtros de sucursal y estado ANTES de buildSugerencias
-  // para que demanda y sol_ids reflejen solo el subconjunto seleccionado
+  // En vista "comercial": usar sucursal del pedido de la app (override), y excluir los sin pedido
   const solicitudesParaSugerencias = solicitudes
+    .filter(s => vistaSD !== 'comercial' || pedidosSucursalMap[String(s.id_venta)] !== undefined)
+    .map(s => vistaSD === 'comercial' && pedidosSucursalMap[String(s.id_venta)]
+      ? { ...s, sucursal: pedidosSucursalMap[String(s.id_venta)] }
+      : s
+    )
     .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
     .filter(s => filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
 
@@ -720,22 +714,25 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               </select>
             </div>
           )}
-          <button onClick={() => vistaSD === 'excel' ? cargarSolicitudes() : cargarPedidosComercial()} disabled={loading}
+          <button onClick={cargarSolicitudes} disabled={loading}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: '#254A96' }}>
             {loading ? '…' : '🔄 Actualizar'}
           </button>
-          {pedidosComercial.length > 0 && vistaSD === 'comercial' && (
-            <span className="text-xs" style={{ color: '#B9BBB7' }}>{pedidosComercial.length} pedidos</span>
-          )}
-          {solicitudes.length > 0 && vistaSD === 'excel' && (
+          {solicitudes.length > 0 && (
             <>
-              <span className="text-xs" style={{ color: '#B9BBB7' }}>{solicitudes.length} SDs cargadas</span>
-              <button onClick={confirmar} disabled={confirmando}
-                className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
-                style={{ background: '#10b981' }}>
-                {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
-              </button>
+              <span className="text-xs" style={{ color: '#B9BBB7' }}>
+                {vistaSD === 'comercial'
+                  ? `${Object.keys(pedidosSucursalMap).length} de ${solicitudes.length} SDs en la app`
+                  : `${solicitudes.length} SDs cargadas`}
+              </span>
+              {vistaSD === 'excel' && (
+                <button onClick={confirmar} disabled={confirmando}
+                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
+                  style={{ background: '#10b981' }}>
+                  {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -857,7 +854,14 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         </p>
       )}
 
-      {vistaSD === 'excel' && <>
+      {/* Nota informativa vista comercial */}
+      {vistaSD === 'comercial' && solicitudes.length > 0 && (
+        <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
+          👤 Sucursales según el pedido cargado en la app (puede diferir del Excel)
+        </p>
+      )}
+
+      {<>
 
         {/* ── Stats ────────────────────────────────────────────────────────── */}
         {solicitudes.length > 0 && (
@@ -874,7 +878,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           </div>
         )}
 
-        {/* ── Lista Excel ──────────────────────────────────────────────────── */}
+        {/* ── Lista ────────────────────────────────────────────────────────── */}
         {loading ? (
           <div className="flex justify-center py-24">
             <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
@@ -898,70 +902,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
                   })}
                   showToast={showToast}
                   userEmail={userEmail}
-                  solicitudes={solicitudes}
+                  solicitudes={solicitudesParaSugerencias}
                 />
               ))}
-          </div>
-        )}
-
-      </>}
-
-      {vistaSD === 'comercial' && <>
-
-        {/* ── Lista Comercial ──────────────────────────────────────────────── */}
-        {loading ? (
-          <div className="flex justify-center py-24">
-            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
-          </div>
-        ) : pedidosComercial.length === 0 ? (
-          <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
-            <div className="text-5xl mb-4">👤</div>
-            <p className="font-medium">No hay pedidos cargados por comercial</p>
-            <p className="text-xs mt-1">Ingresá el rango de fechas y hacé click en Actualizar</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0' }}>
-            <table className="w-full text-sm">
-              <thead>
-                <tr style={{ background: '#fafbff', borderBottom: '1px solid #f0f0f0' }}>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>NV</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Cliente</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Dirección</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Sucursal</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Fecha</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Vuelta</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Estado</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Kg</th>
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Vendedor</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y" style={{ borderColor: '#f0f0f0' }}>
-                {pedidosComercial.map((p: any) => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-3 py-2 font-mono text-xs font-semibold" style={{ color: '#254A96' }}>{p.nv}</td>
-                    <td className="px-3 py-2 text-xs">{p.cliente}</td>
-                    <td className="px-3 py-2 text-xs" style={{ color: '#666', maxWidth: 200 }}>
-                      <span className="block truncate" title={p.direccion}>{p.direccion}</span>
-                    </td>
-                    <td className="px-3 py-2 text-xs">{p.sucursal}</td>
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">{fmtFecha(p.fecha_entrega)}</td>
-                    <td className="px-3 py-2 text-xs text-center">{p.vuelta ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs">
-                      <span className="px-1.5 py-0.5 rounded text-xs"
-                        style={{
-                          background: p.estado === 'entregado' ? '#d1fae5' : p.estado === 'pendiente' ? '#fef3c7' : '#f0f4ff',
-                          color: p.estado === 'entregado' ? '#065f46' : p.estado === 'pendiente' ? '#b45309' : '#254A96',
-                        }}>
-                        {p.estado}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-right">{p.peso_total_kg ? Number(p.peso_total_kg).toFixed(1) : '—'}</td>
-                    <td className="px-3 py-2 text-xs" style={{ color: '#666' }}>{vendedoresMapComercial[p.vendedor_id] ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         )}
 

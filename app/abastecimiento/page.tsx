@@ -396,6 +396,7 @@ export default function AbastecimientoPage() {
 function TabVerificacion({ rol, userEmail, showToast }: {
   rol: string; userEmail: string; showToast: (msg: string, tipo?: 'ok' | 'err') => void
 }) {
+  const [vistaSD, setVistaSD] = useState<'excel' | 'comercial'>('excel')
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
   const [filtrosSucursal, setFiltrosSucursal] = useState<string[]>([])
@@ -412,6 +413,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
   const [decisions, setDecisions] = useState<DecisionsMap>({})
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
+  const [pedidosComercial, setPedidosComercial] = useState<any[]>([])
+  const [vendedoresMapComercial, setVendedoresMapComercial] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
   const [stockFecha, setStockFecha] = useState<string | null>(null)
@@ -555,6 +558,33 @@ function TabVerificacion({ rol, userEmail, showToast }: {
     setLoading(false)
   }
 
+  async function cargarPedidosComercial() {
+    setLoading(true)
+    try {
+      let q = supabase.from('pedidos')
+        .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, estado_pago, peso_total_kg, vendedor_id, tipo')
+        .not('vendedor_id', 'is', null)
+        .order('fecha_entrega', { ascending: false })
+      if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
+      if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
+      if (filtrosSucursal.length > 0) q = q.in('sucursal', filtrosSucursal)
+      const { data } = await q
+      const peds = data ?? []
+      setPedidosComercial(peds)
+
+      const vendedorIds = [...new Set(peds.map((p: any) => p.vendedor_id).filter(Boolean))] as string[]
+      if (vendedorIds.length > 0) {
+        const { data: vends } = await supabase.from('usuarios').select('id, nombre').in('id', vendedorIds)
+        const vm: Record<string, string> = {}
+        for (const v of vends ?? []) vm[v.id] = v.nombre
+        setVendedoresMapComercial(vm)
+      }
+    } catch (e: any) {
+      showToast(`Error: ${e.message}`, 'err')
+    }
+    setLoading(false)
+  }
+
   async function confirmar() {
     setConfirmando(true)
     try {
@@ -651,6 +681,22 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       {/* ── Barra de filtros ─────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4 space-y-3" style={{ borderColor: '#f0f0f0' }}>
 
+        {/* Fila 0: Toggle de Vista */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold" style={{ color: '#B9BBB7' }}>VISTA</label>
+          {(['excel', 'comercial'] as const).map(v => (
+            <button key={v} onClick={() => setVistaSD(v)}
+              className="text-xs px-3 py-1.5 rounded-full font-semibold transition-colors"
+              style={{
+                background: vistaSD === v ? '#254A96' : '#f0f4ff',
+                color: vistaSD === v ? '#fff' : '#254A96',
+                border: `1px solid ${vistaSD === v ? '#254A96' : '#d0daf5'}`,
+              }}>
+              {v === 'excel' ? '📥 Importados de Excel' : '👤 Cargados por comercial'}
+            </button>
+          ))}
+        </div>
+
         {/* Fila 1: Fechas + botones */}
         <div className="flex items-end gap-3 flex-wrap">
           <div>
@@ -663,7 +709,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
               className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
           </div>
-          {Object.keys(catalogo).length > 0 && (
+          {vistaSD === 'excel' && Object.keys(catalogo).length > 0 && (
             <div>
               <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Producto</label>
               <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
@@ -674,12 +720,15 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               </select>
             </div>
           )}
-          <button onClick={cargarSolicitudes} disabled={loading}
+          <button onClick={() => vistaSD === 'excel' ? cargarSolicitudes() : cargarPedidosComercial()} disabled={loading}
             className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
             style={{ background: '#254A96' }}>
             {loading ? '…' : '🔄 Actualizar'}
           </button>
-          {solicitudes.length > 0 && (
+          {pedidosComercial.length > 0 && vistaSD === 'comercial' && (
+            <span className="text-xs" style={{ color: '#B9BBB7' }}>{pedidosComercial.length} pedidos</span>
+          )}
+          {solicitudes.length > 0 && vistaSD === 'excel' && (
             <>
               <span className="text-xs" style={{ color: '#B9BBB7' }}>{solicitudes.length} SDs cargadas</span>
               <button onClick={confirmar} disabled={confirmando}
@@ -713,6 +762,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               )}
             </div>
           </div>
+
+          {/* Filas 3-5: solo vista Excel */}
+          {vistaSD === 'excel' && <>
 
           {/* Fila 3: Cobertura chips */}
           <div>
@@ -793,60 +845,127 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               </div>
             </div>
           )}
+
+          </>}
         </>)}
       </div>
 
-      {/* Stock fecha */}
-      {stockFecha && (
+      {/* Stock fecha — solo Excel */}
+      {vistaSD === 'excel' && stockFecha && (
         <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
           ⏱ Stock evaluado al: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(stockFecha)}</strong>
         </p>
       )}
 
-      {/* ── Stats ────────────────────────────────────────────────────────── */}
-      {solicitudes.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-          {STAT_CARDS.map(stat => (
-            <button key={stat.label}
-              onClick={() => stat.key && setFiltrosCoberturas(prev => togFiltro(prev, stat.key))}
-              className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
-              style={{ borderColor: filtrosCoberturas.includes(stat.key) ? stat.color : '#f0f0f0', borderWidth: filtrosCoberturas.includes(stat.key) ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
-              <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
-              <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
-            </button>
-          ))}
-        </div>
-      )}
+      {vistaSD === 'excel' && <>
 
-      {/* ── Lista ────────────────────────────────────────────────────────── */}
-      {loading ? (
-        <div className="flex justify-center py-24">
-          <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
-            style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
-        </div>
-      ) : sugerenciasFiltradas.length === 0 ? (
-        <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
-          <div className="text-5xl mb-4">📋</div>
-          <p className="font-medium">{solicitudes.length === 0 ? 'No hay solicitudes cargadas' : 'Sin resultados para los filtros'}</p>
-          {solicitudes.length === 0 && <p className="text-xs mt-1">Importá el Excel de SDs e ingresá hacé click en Actualizar</p>}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {Object.entries(bySucursal)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([suc, rows]) => (
-              <SucursalGroup key={suc} sucursal={suc} rows={rows}
-                expanded={expandedBranches.has(suc)}
-                onToggle={() => setExpandedBranches(prev => {
-                  const s = new Set(prev); s.has(suc) ? s.delete(suc) : s.add(suc); return s
-                })}
-                showToast={showToast}
-                userEmail={userEmail}
-                solicitudes={solicitudes}
-              />
+        {/* ── Stats ────────────────────────────────────────────────────────── */}
+        {solicitudes.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {STAT_CARDS.map(stat => (
+              <button key={stat.label}
+                onClick={() => stat.key && setFiltrosCoberturas(prev => togFiltro(prev, stat.key))}
+                className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
+                style={{ borderColor: filtrosCoberturas.includes(stat.key) ? stat.color : '#f0f0f0', borderWidth: filtrosCoberturas.includes(stat.key) ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
+                <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
+                <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
+              </button>
             ))}
-        </div>
-      )}
+          </div>
+        )}
+
+        {/* ── Lista Excel ──────────────────────────────────────────────────── */}
+        {loading ? (
+          <div className="flex justify-center py-24">
+            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
+          </div>
+        ) : sugerenciasFiltradas.length === 0 ? (
+          <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
+            <div className="text-5xl mb-4">📋</div>
+            <p className="font-medium">{solicitudes.length === 0 ? 'No hay solicitudes cargadas' : 'Sin resultados para los filtros'}</p>
+            {solicitudes.length === 0 && <p className="text-xs mt-1">Importá el Excel de SDs e ingresá hacé click en Actualizar</p>}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {Object.entries(bySucursal)
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([suc, rows]) => (
+                <SucursalGroup key={suc} sucursal={suc} rows={rows}
+                  expanded={expandedBranches.has(suc)}
+                  onToggle={() => setExpandedBranches(prev => {
+                    const s = new Set(prev); s.has(suc) ? s.delete(suc) : s.add(suc); return s
+                  })}
+                  showToast={showToast}
+                  userEmail={userEmail}
+                  solicitudes={solicitudes}
+                />
+              ))}
+          </div>
+        )}
+
+      </>}
+
+      {vistaSD === 'comercial' && <>
+
+        {/* ── Lista Comercial ──────────────────────────────────────────────── */}
+        {loading ? (
+          <div className="flex justify-center py-24">
+            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
+          </div>
+        ) : pedidosComercial.length === 0 ? (
+          <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
+            <div className="text-5xl mb-4">👤</div>
+            <p className="font-medium">No hay pedidos cargados por comercial</p>
+            <p className="text-xs mt-1">Ingresá el rango de fechas y hacé click en Actualizar</p>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0' }}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: '#fafbff', borderBottom: '1px solid #f0f0f0' }}>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>NV</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Cliente</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Dirección</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Sucursal</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Fecha</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Vuelta</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Estado</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Kg</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold" style={{ color: '#254A96' }}>Vendedor</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y" style={{ borderColor: '#f0f0f0' }}>
+                {pedidosComercial.map((p: any) => (
+                  <tr key={p.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-3 py-2 font-mono text-xs font-semibold" style={{ color: '#254A96' }}>{p.nv}</td>
+                    <td className="px-3 py-2 text-xs">{p.cliente}</td>
+                    <td className="px-3 py-2 text-xs" style={{ color: '#666', maxWidth: 200 }}>
+                      <span className="block truncate" title={p.direccion}>{p.direccion}</span>
+                    </td>
+                    <td className="px-3 py-2 text-xs">{p.sucursal}</td>
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">{fmtFecha(p.fecha_entrega)}</td>
+                    <td className="px-3 py-2 text-xs text-center">{p.vuelta ?? '—'}</td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="px-1.5 py-0.5 rounded text-xs"
+                        style={{
+                          background: p.estado === 'entregado' ? '#d1fae5' : p.estado === 'pendiente' ? '#fef3c7' : '#f0f4ff',
+                          color: p.estado === 'entregado' ? '#065f46' : p.estado === 'pendiente' ? '#b45309' : '#254A96',
+                        }}>
+                        {p.estado}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-right">{p.peso_total_kg ? Number(p.peso_total_kg).toFixed(1) : '—'}</td>
+                    <td className="px-3 py-2 text-xs" style={{ color: '#666' }}>{vendedoresMapComercial[p.vendedor_id] ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+      </>}
     </div>
   )
 }

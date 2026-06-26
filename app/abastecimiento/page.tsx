@@ -413,7 +413,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
   const [decisions, setDecisions] = useState<DecisionsMap>({})
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
-  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, string>>({})
+  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, { sucursal: string; estado: string }>>({})
+  const [filtrosEstadoComercial, setFiltrosEstadoComercial] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
   const [stockFecha, setStockFecha] = useState<string | null>(null)
@@ -555,14 +556,14 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       // Para la vista "comercial": buscar los pedidos cargados en la app y mapear NV → sucursal
       if (vistaSD === 'comercial') {
         const nvs = solsConItems.map(s => String(s.id_venta)).filter(Boolean)
-        const pedMap: Record<string, string> = {}
+        const pedMap: Record<string, { sucursal: string; estado: string }> = {}
         const NV_BATCH = 500
         for (let i = 0; i < nvs.length; i += NV_BATCH) {
           const { data: peds } = await supabase.from('pedidos')
-            .select('nv, sucursal')
+            .select('nv, sucursal, estado')
             .in('nv', nvs.slice(i, i + NV_BATCH))
             .not('vendedor_id', 'is', null)
-          for (const p of peds ?? []) pedMap[p.nv] = p.sucursal
+          for (const p of peds ?? []) pedMap[p.nv] = { sucursal: p.sucursal, estado: p.estado }
         }
         setPedidosSucursalMap(pedMap)
       } else {
@@ -636,12 +637,13 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   // En vista "comercial": usar sucursal del pedido de la app (override), y excluir los sin pedido
   const solicitudesParaSugerencias = solicitudes
     .filter(s => vistaSD !== 'comercial' || pedidosSucursalMap[String(s.id_venta)] !== undefined)
+    .filter(s => vistaSD !== 'comercial' || filtrosEstadoComercial.length === 0 || filtrosEstadoComercial.includes(pedidosSucursalMap[String(s.id_venta)]?.estado ?? ''))
     .map(s => vistaSD === 'comercial' && pedidosSucursalMap[String(s.id_venta)]
-      ? { ...s, sucursal: pedidosSucursalMap[String(s.id_venta)] }
+      ? { ...s, sucursal: pedidosSucursalMap[String(s.id_venta)].sucursal }
       : s
     )
     .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
-    .filter(s => filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
+    .filter(s => vistaSD === 'comercial' || filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
 
   const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
@@ -679,7 +681,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         <div className="flex items-center gap-2">
           <label className="text-xs font-semibold" style={{ color: '#B9BBB7' }}>VISTA</label>
           {(['excel', 'comercial'] as const).map(v => (
-            <button key={v} onClick={() => setVistaSD(v)}
+            <button key={v} onClick={() => { setVistaSD(v); setFiltrosEstadoComercial([]) }}
               className="text-xs px-3 py-1.5 rounded-full font-semibold transition-colors"
               style={{
                 background: vistaSD === v ? '#254A96' : '#f0f4ff',
@@ -759,6 +761,37 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               )}
             </div>
           </div>
+
+          {/* Estado de pedido — solo vista Comercial */}
+          {vistaSD === 'comercial' && Object.keys(pedidosSucursalMap).length > 0 && (() => {
+            const estadosComercial = [...new Set(Object.values(pedidosSucursalMap).map(v => v.estado).filter(Boolean))].sort()
+            return estadosComercial.length > 0 ? (
+              <div>
+                <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>ESTADO DEL PEDIDO</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {estadosComercial.map(e => {
+                    const on = filtrosEstadoComercial.includes(e)
+                    const cnt = Object.values(pedidosSucursalMap).filter(v => v.estado === e).length
+                    return (
+                      <button key={e} onClick={() => setFiltrosEstadoComercial(prev => togFiltro(prev, e))}
+                        className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
+                        style={{
+                          background: on ? '#254A96' : '#f4f4f3',
+                          color: on ? '#fff' : '#444',
+                          border: `1px solid ${on ? '#254A96' : '#e0e0e0'}`,
+                        }}>
+                        {e} <span style={{ opacity: 0.7 }}>({cnt})</span>
+                      </button>
+                    )
+                  })}
+                  {filtrosEstadoComercial.length > 0 && (
+                    <button onClick={() => setFiltrosEstadoComercial([])} className="text-xs px-2 py-1 rounded-full"
+                      style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
+                  )}
+                </div>
+              </div>
+            ) : null
+          })()}
 
           {/* Filas 3-5: solo vista Excel */}
           {vistaSD === 'excel' && <>

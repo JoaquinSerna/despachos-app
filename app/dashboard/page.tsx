@@ -58,6 +58,9 @@ export default function Dashboard() {
   const [toastPass, setToastPass] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [vistaActiva, setVistaActiva] = useState<'reciente' | 'misPedidos'>('reciente')
   const [misPedidosPropio, setMisPedidosPropio] = useState<PedidoReciente[]>([])
+  const [misPedidosFiltroTexto, setMisPedidosFiltroTexto] = useState('')
+  const [misPedidosFiltroFecha, setMisPedidosFiltroFecha] = useState('')
+  const [misPedidosCargando, setMisPedidosCargando] = useState(false)
   const [pedidoReprogDash, setPedidoReprogDash] = useState<PedidoReciente | null>(null)
   const [reprogFechaDash, setReprogFechaDash] = useState('')
   const [reprogVueltaDash, setReprogVueltaDash] = useState(1)
@@ -119,13 +122,18 @@ export default function Dashboard() {
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [])
 
-  const cargarMisPedidosPropio = async (uid: string) => {
-    const { data } = await supabase.from('pedidos')
+  const cargarMisPedidosPropio = async (uid: string, texto?: string, fecha?: string) => {
+    setMisPedidosCargando(true)
+    let q = supabase.from('pedidos')
       .select('id,nv,id_despacho,cliente,sucursal,estado,fecha_entrega,vuelta')
       .eq('vendedor_id', uid)
-      .order('created_at', { ascending: false })
-      .limit(50)
+      .order('fecha_entrega', { ascending: false })
+    if (fecha) q = q.eq('fecha_entrega', fecha)
+    if (texto) q = q.or(`cliente.ilike.%${texto}%,nv.ilike.%${texto}%`)
+    if (!fecha && !texto) q = q.limit(100)
+    const { data } = await q
     setMisPedidosPropio(data ?? [])
+    setMisPedidosCargando(false)
   }
 
   const handleReprogramarDashboard = async (p: PedidoReciente, fecha: string, vuelta: number, motivo: string) => {
@@ -491,10 +499,48 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-                {misPedidosPropio.length === 0 ? (
+                {/* Filtros */}
+                <div className="px-4 py-3 flex gap-2 flex-wrap" style={{ borderBottom: '1px solid #f0f0f0', background: '#fafbff' }}>
+                  <input
+                    type="text"
+                    placeholder="Buscar por NV o cliente…"
+                    value={misPedidosFiltroTexto}
+                    onChange={e => setMisPedidosFiltroTexto(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') cargarMisPedidosPropio(usuario?.id, misPedidosFiltroTexto, misPedidosFiltroFecha) }}
+                    className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none flex-1 min-w-[160px]"
+                    style={{ borderColor: '#e8edf8' }}
+                  />
+                  <input
+                    type="date"
+                    value={misPedidosFiltroFecha}
+                    onChange={e => setMisPedidosFiltroFecha(e.target.value)}
+                    className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}
+                  />
+                  <button
+                    onClick={() => cargarMisPedidosPropio(usuario?.id, misPedidosFiltroTexto, misPedidosFiltroFecha)}
+                    disabled={misPedidosCargando}
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                    style={{ background: '#254A96' }}>
+                    {misPedidosCargando ? '…' : '🔍'}
+                  </button>
+                  {(misPedidosFiltroTexto || misPedidosFiltroFecha) && (
+                    <button
+                      onClick={() => { setMisPedidosFiltroTexto(''); setMisPedidosFiltroFecha(''); cargarMisPedidosPropio(usuario?.id) }}
+                      className="px-2.5 py-1.5 rounded-lg text-xs"
+                      style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>
+                      ✕ limpiar
+                    </button>
+                  )}
+                </div>
+                {misPedidosCargando ? (
+                  <div className="flex justify-center py-12">
+                    <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
+                  </div>
+                ) : misPedidosPropio.length === 0 ? (
                   <div className="p-12 text-center">
                     <div className="text-4xl mb-3">📭</div>
-                    <p className="text-sm" style={{ color: '#B9BBB7' }}>No cargaste pedidos todavía</p>
+                    <p className="text-sm" style={{ color: '#B9BBB7' }}>No se encontraron pedidos</p>
                   </div>
                 ) : (
                   <div className="divide-y" style={{ borderColor: '#f9f9f9' }}>

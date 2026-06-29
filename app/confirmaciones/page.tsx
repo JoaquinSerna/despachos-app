@@ -124,24 +124,26 @@ function buildWAMessages(tipo: WATipo, pedidos: Pedido[], itemsMap: Record<strin
 
   if (!multi) {
     const p = pedidos[0]; const its = itemsStr(p); const c = cuando(p)
+    const dir = p.direccion ? `\n📍 Dirección de entrega: *${p.direccion}*` : ''
     switch (tipo) {
-      case 'aviso': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}\nestá programado para ${c} 🚛\n¿Confirmás que vas a poder recibirlo?${pagoEnObra}`
-      case 'confirmado': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}\nestá confirmado para ${c} ✅\nAnte cualquier consulta estamos a disposición.${pagoEnObra}`
-      case 'ya_salio': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}\nya está en camino y llegará ${c} 🚛\nPor favor asegurate de tener alguien disponible para recibirlo.${pagoEnObra}`
-      case 'reprog_cliente': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}\nfue reprogramado para el *${fechaReprogLabel}* según lo solicitado 📅\nLuego nos volveremos a comunicar para reconfirmar el horario.${pagoEnObra}`
-      case 'reprog_nuestro': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}\nfue reprogramado para el *${fechaReprogLabel}* 📅\nDisculpá las molestias. Luego nos volveremos a comunicar para reconfirmar el horario.${pagoEnObra}`
-      case 'no_contesto': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo para confirmar la entrega de tu pedido NV ${p.nv}, que incluye:\n${its}\nPor favor respondé este mensaje para confirmar. En caso de no recibir respuesta, el pedido quedará reprogramado para el día siguiente.\n¡Gracias!`
+      case 'aviso': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nestá programado para ${c} 🚛\n¿Confirmás que vas a poder recibirlo?${pagoEnObra}`
+      case 'confirmado': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nestá confirmado para ${c} ✅\nAnte cualquier consulta estamos a disposición.${pagoEnObra}`
+      case 'ya_salio': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nya está en camino y llegará ${c} 🚛\nPor favor asegurate de tener alguien disponible para recibirlo.${pagoEnObra}`
+      case 'reprog_cliente': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nfue reprogramado para el *${fechaReprogLabel}* según lo solicitado 📅\nLuego nos volveremos a comunicar para reconfirmar el horario.${pagoEnObra}`
+      case 'reprog_nuestro': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo.\nTu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nfue reprogramado para el *${fechaReprogLabel}* 📅\nDisculpá las molestias. Luego nos volveremos a comunicar para reconfirmar el horario.${pagoEnObra}`
+      case 'no_contesto': return `Hola ${nombre}! 👋 Nos comunicamos de Construyo al Costo para confirmar la entrega de tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nPor favor respondé este mensaje para confirmar. En caso de no recibir respuesta, el pedido quedará reprogramado para el día siguiente.\n¡Gracias!`
     }
   }
   const bloques = pedidos.map(p => {
     const its = itemsStr(p); const c = cuando(p)
+    const dir = p.direccion ? `\n📍 Dirección: *${p.direccion}*` : ''
     switch (tipo) {
-      case 'aviso': return `Tu pedido NV ${p.nv}, que incluye:\n${its}\nestá programado para ${c} 🚛`
-      case 'confirmado': return `Tu pedido NV ${p.nv}, que incluye:\n${its}\nestá confirmado para ${c} ✅`
-      case 'ya_salio': return `Tu pedido NV ${p.nv}, que incluye:\n${its}\nya está en camino y llegará ${c} 🚛`
-      case 'reprog_cliente': return `Tu pedido NV ${p.nv}, que incluye:\n${its}\nfue reprogramado para el *${fechaReprogLabel}* según lo solicitado 📅`
-      case 'reprog_nuestro': return `Tu pedido NV ${p.nv}, que incluye:\n${its}\nfue reprogramado para el *${fechaReprogLabel}* 📅\nDisculpá las molestias.`
-      case 'no_contesto': return `Tu pedido NV ${p.nv}, que incluye:\n${its}`
+      case 'aviso': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nestá programado para ${c} 🚛`
+      case 'confirmado': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nestá confirmado para ${c} ✅`
+      case 'ya_salio': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nya está en camino y llegará ${c} 🚛`
+      case 'reprog_cliente': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nfue reprogramado para el *${fechaReprogLabel}* según lo solicitado 📅`
+      case 'reprog_nuestro': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}\nfue reprogramado para el *${fechaReprogLabel}* 📅\nDisculpá las molestias.`
+      case 'no_contesto': return `Tu pedido NV ${p.nv}, que incluye:\n${its}${dir}`
     }
   })
   const footer = { aviso: '\n¿Confirmás que vas a poder recibirlos?', confirmado: '\nAnte cualquier consulta estamos a disposición.', ya_salio: '\nPor favor asegurate de tener alguien disponible para recibirlos.', reprog_cliente: '\nLuego nos volveremos a comunicar para reconfirmar los horarios.', reprog_nuestro: '\nLuego nos volveremos a comunicar para reconfirmar los horarios.', no_contesto: '\nPor favor respondé este mensaje para confirmar. En caso de no recibir respuesta, los pedidos quedarán reprogramados para el día siguiente.\n¡Gracias!' }[tipo]

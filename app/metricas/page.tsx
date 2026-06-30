@@ -333,22 +333,61 @@ export default function MetricasPage() {
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
 
-      // Queries paralelas: pedidos + flota + camiones + materiales para el intervalo
-      let pedQ = supabase.from('pedidos')
-        .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud, barrio_cerrado, orden_entrega, hora_entregado')
-        .gte('fecha_entrega', fechaExportDesde).lte('fecha_entrega', fechaExportHasta)
-        .neq('estado', 'cancelado').order('fecha_entrega').order('sucursal').order('cliente')
-      let flotQ = supabase.from('flota_dia')
-        .select('fecha, camion_codigo, sucursal, km_ruta, hora_inicio, hora_fin')
-        .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta).eq('activo', true)
-      if (exportSucursales.length > 0) { pedQ = pedQ.in('sucursal', exportSucursales); flotQ = flotQ.in('sucursal', exportSucursales) }
+      // Queries paginadas para evitar truncado de PostgREST (max 1000 filas por request)
+      const EX_PAGE = 1000
+      const paginatePedidosEx = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('pedidos')
+            .select('id, nv, id_despacho, cliente, direccion, sucursal, fecha_entrega, vuelta, camion_id, estado, estado_pago, peso_total_kg, volumen_total_m3, notas, tipo, latitud, longitud, barrio_cerrado, orden_entrega, hora_entregado')
+            .gte('fecha_entrega', fechaExportDesde).lte('fecha_entrega', fechaExportHasta)
+            .neq('estado', 'cancelado').order('fecha_entrega').order('sucursal').order('cliente')
+            .range(from, from + EX_PAGE - 1)
+          if (exportSucursales.length > 0) q = q.in('sucursal', exportSucursales)
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < EX_PAGE) break
+          from += EX_PAGE
+        }
+        return all
+      }
+      const paginateFlotaEx = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('flota_dia')
+            .select('fecha, camion_codigo, sucursal, km_ruta, hora_inicio, hora_fin')
+            .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta).eq('activo', true)
+            .order('fecha').range(from, from + EX_PAGE - 1)
+          if (exportSucursales.length > 0) q = q.in('sucursal', exportSucursales)
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < EX_PAGE) break
+          from += EX_PAGE
+        }
+        return all
+      }
+      const paginateVueltasTiemposEx = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          const { data } = await supabase.from('vueltas_tiempos')
+            .select('camion_codigo, fecha, vuelta, hora_inicio, hora_fin')
+            .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta)
+            .order('fecha').range(from, from + EX_PAGE - 1)
+          if (!data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < EX_PAGE) break
+          from += EX_PAGE
+        }
+        return all
+      }
 
-      const [{ data: pedidosData }, { data: flotaData }, { data: camionesData }, { data: matsExport }, { data: vueltasTiemposExport }] = await Promise.all([
-        pedQ, flotQ,
+      const [pedidosData, flotaData, { data: camionesData }, { data: matsExport }, vueltasTiemposExport] = await Promise.all([
+        paginatePedidosEx(), paginateFlotaEx(),
         supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
         supabase.from('materiales').select('nombre, tipo_carga'),
-        supabase.from('vueltas_tiempos').select('camion_codigo, fecha, vuelta, hora_inicio, hora_fin')
-          .gte('fecha', fechaExportDesde).lte('fecha', fechaExportHasta),
+        paginateVueltasTiemposEx(),
       ])
 
       // Mapa: "camion|fecha|vuelta" → { hora_inicio, hora_fin }

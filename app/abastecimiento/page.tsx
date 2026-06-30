@@ -1202,10 +1202,11 @@ const TIPO_ENTREGA_LABEL: Record<string, string> = {
 }
 
 // ─── Fila expandible de requerimiento ─────────────────────────────────────────
-function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated }: {
+function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionCodigos }: {
   req: Requerimiento; rol: string
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   userEmail: string; onUpdated: () => void
+  camionCodigos: string[]
 }) {
   const [req, setReq] = useState(initialReq)
   const [expanded, setExpanded] = useState(false)
@@ -1353,8 +1354,12 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated }: {
                 </div>
                 <div>
                   <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Vehículo</label>
-                  <input value={editVehiculo} onChange={e => setEditVehiculo(e.target.value)} placeholder="ej: LP142"
+                  <input value={editVehiculo} onChange={e => setEditVehiculo(e.target.value)}
+                    list="camion-codigos-list" placeholder="Código o texto libre"
                     className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                  <datalist id="camion-codigos-list">
+                    {camionCodigos.map(c => <option key={c} value={c} />)}
+                  </datalist>
                 </div>
               </div>
               {(req.estado === 'en_transito' || req.estado === 'entregado') && (
@@ -1569,6 +1574,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
 }) {
   const [reqs, setReqs] = useState<Requerimiento[]>([])
   const [cargando, setCargando] = useState(false)
+  const [camionCodigos, setCamionCodigos] = useState<string[]>([])
   const [filtroOrigen, setFiltroOrigen] = useState('')
   const [filtroDestino, setFiltroDestino] = useState('')
   // Filtros de búsqueda
@@ -1582,6 +1588,10 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
 
   const tabKey = filtroEstados.join(',')
   useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
+  useEffect(() => {
+    supabase.from('camiones_flota').select('codigo').order('codigo')
+      .then(({ data }) => setCamionCodigos((data ?? []).map((c: any) => c.codigo)))
+  }, [])
 
   async function cargarReqs() {
     setCargando(true)
@@ -1786,7 +1796,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
       ) : (
         <div className="space-y-2">
           {reqsFiltrados.map(req => (
-            <ReqRow key={req.id} req={req} rol={rol} showToast={showToast} userEmail={userEmail} onUpdated={cargarReqs} />
+            <ReqRow key={req.id} req={req} rol={rol} showToast={showToast} userEmail={userEmail} onUpdated={cargarReqs} camionCodigos={camionCodigos} />
           ))}
         </div>
       )}

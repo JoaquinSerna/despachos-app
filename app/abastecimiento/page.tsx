@@ -130,6 +130,7 @@ interface Requerimiento {
   n_viaje: string | null
   cod_vehiculo: string | null
   notas: string | null
+  solicitado_por: string | null
   created_at: string
   requerimiento_items: ReqItem[]
 }
@@ -1290,6 +1291,9 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated }: {
           <div className="flex gap-4 text-xs flex-wrap">
             <span style={{ color: '#B9BBB7' }}>Solicitado: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(req.fecha_req)}</strong></span>
             <span style={{ color: '#B9BBB7' }}>Necesario: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(req.fecha_solicitada)}</strong></span>
+            {req.solicitado_por && (
+              <span style={{ color: '#B9BBB7' }}>Por: <strong style={{ color: '#1a1a1a' }}>{req.solicitado_por}</strong></span>
+            )}
             {deadline && (
               <span className="px-2 py-0.5 rounded font-medium" style={{ background: '#fef3c7', color: '#b45309' }}>
                 ⏰ Despachar desde {req.sucursal_origen} antes del: {deadline.label}

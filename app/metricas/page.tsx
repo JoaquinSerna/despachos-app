@@ -930,38 +930,54 @@ export default function MetricasPage() {
     setDatosRango([])
 
     try {
-      let flotaQ = supabase.from('flota_dia')
-        .select('fecha, camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta, sucursal')
-        .gte('fecha', rangoDesde).lte('fecha', rangoHasta).eq('activo', true)
-        .limit(5000)
-      if (filtroSucursal) flotaQ = flotaQ.eq('sucursal', filtroSucursal)
+      // Paginar flota_dia y pedidos para evitar el límite de 1000 filas de PostgREST
+      const PAGE = 1000
 
-      const [flotaRes, pedidosRes, camionesRes, chofRes] = await Promise.all([
-        flotaQ,
-        // Filtrar por sucursal si está seleccionada para evitar corte por límite en rangos largos
-        (() => {
-          let q = supabase.from('pedidos').select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta')
+      const paginateFlota = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('flota_dia')
+            .select('fecha, camion_codigo, chofer_id, hora_inicio, hora_fin, km_ruta, sucursal')
+            .gte('fecha', rangoDesde).lte('fecha', rangoHasta).eq('activo', true)
+            .order('fecha').range(from, from + PAGE - 1)
+          if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < PAGE) break
+          from += PAGE
+        }
+        return all
+      }
+
+      const paginatePedidos = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('pedidos')
+            .select('camion_id, fecha_entrega, peso_total_kg, volumen_total_m3, vuelta')
             .gte('fecha_entrega', rangoDesde).lte('fecha_entrega', rangoHasta)
             .neq('estado', 'cancelado').not('camion_id', 'is', null)
-            .limit(50000)
+            .order('fecha_entrega').range(from, from + PAGE - 1)
           if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
-          return q
-        })(),
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data)
+          if (data.length < PAGE) break
+          from += PAGE
+        }
+        return all
+      }
+
+      const [flotaData, pedidosData, camionesRes, chofRes] = await Promise.all([
+        paginateFlota(),
+        paginatePedidos(),
         supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
         supabase.from('usuarios').select('id, nombre'),
       ])
 
-      if (flotaRes.error) {
-        console.error('flota_dia error:', flotaRes.error)
-        showToast(`Error cargando flota: ${flotaRes.error.message}`)
-        return
-      }
-      if (pedidosRes.error) console.error('pedidos rango error:', pedidosRes.error)
       if (camionesRes.error) console.error('camiones error:', camionesRes.error)
       if (chofRes.error) console.error('choferes error:', chofRes.error)
 
-      const flotaData = flotaRes.data ?? []
-      const pedidosData = pedidosRes.data ?? []
       const camionesData = camionesRes.data ?? []
       const chofData = chofRes.data ?? []
 

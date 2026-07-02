@@ -41,11 +41,17 @@ export async function GET(request: NextRequest) {
     if (batch) allItems = allItems.concat(batch)
   }
 
-  // Agregar por producto
+  // Agregar por producto — strip prefijo numérico tipo "1." o "2.CEMENTO..." que agrega la IA al leer PDFs
+  function stripPrefix(nombre: string): string {
+    return nombre.replace(/^\d+\./, '').trim()
+  }
+
   const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
   for (const item of allItems) {
-    const key = `${item.nombre}|||${item.unidad ?? 'u'}`
-    if (!totales[key]) totales[key] = { nombre: item.nombre ?? '', cantidad: 0, unidad: item.unidad ?? 'u' }
+    const nombre = stripPrefix(item.nombre ?? '')
+    if (!nombre) continue
+    const key = `${nombre}|||${item.unidad ?? 'u'}`
+    if (!totales[key]) totales[key] = { nombre, cantidad: 0, unidad: item.unidad ?? 'u' }
     totales[key].cantidad += Number(item.cantidad) || 0
   }
 

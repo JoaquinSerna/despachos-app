@@ -419,7 +419,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
   const [decisions, setDecisions] = useState<DecisionsMap>({})
   const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
-  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, { sucursal: string; estado: string }>>({})
+  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, { sucursal: string; estado: string; fecha_entrega?: string | null }>>({})
   const [filtrosEstadoComercial, setFiltrosEstadoComercial] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
@@ -441,37 +441,42 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       let sols: any[] = []
 
       if (vistaSD === 'comercial') {
-        // En modo comercial: filtrar por fecha_entrega del PEDIDO (no por fecha_despacho del Excel)
-        // Paso 1: buscar pedidos con vendedor_id filtrados por fecha_entrega
-        const pedMap: Record<string, { sucursal: string; estado: string }> = {}
-        let fromPeds = 0
+        // En modo comercial:
+        // Paso 1: cargar TODAS las solicitudes (sin filtro de fecha — la fecha que importa es la del pedido)
+        let fromSols = 0
         while (true) {
-          let q = supabase.from('pedidos')
-            .select('nv, sucursal, estado')
+          const { data: solsPage } = await supabase.from('solicitudes_importadas')
+            .select('*').order('id').range(fromSols, fromSols + PAGE - 1)
+          if (!solsPage || solsPage.length === 0) break
+          sols = sols.concat(solsPage)
+          if (solsPage.length < PAGE) break
+          fromSols += PAGE
+        }
+
+        // Paso 2: buscar pedidos por NV para cada solicitud, filtrar por fecha_entrega en JS
+        const nvsComercial = [...new Set(sols.map((s: any) => s.id_venta).filter(Boolean))]
+        const pedMap: Record<string, { sucursal: string; estado: string; fecha_entrega: string | null }> = {}
+        const PED_BATCH = 200
+        for (let i = 0; i < nvsComercial.length; i += PED_BATCH) {
+          const { data: pedsPage } = await supabase.from('pedidos')
+            .select('nv, sucursal, estado, fecha_entrega')
+            .in('nv', nvsComercial.slice(i, i + PED_BATCH))
             .not('vendedor_id', 'is', null)
             .neq('estado', 'cancelado')
-            .order('fecha_entrega')
-            .range(fromPeds, fromPeds + PAGE - 1)
-          if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
-          if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
-          const { data: pedsPage } = await q
-          if (!pedsPage || pedsPage.length === 0) break
-          for (const p of pedsPage) pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado }
-          if (pedsPage.length < PAGE) break
-          fromPeds += PAGE
+          for (const p of (pedsPage ?? [])) {
+            pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado, fecha_entrega: p.fecha_entrega }
+          }
         }
         setPedidosSucursalMap(pedMap)
 
-        if (Object.keys(pedMap).length === 0) { setSolicitudes([]); setLoading(false); return }
-
-        // Paso 2: buscar solicitudes para esos NVs
-        const nvsComercial = Object.keys(pedMap).map(nv => Number(nv)).filter(n => !isNaN(n) && n > 0)
-        const SOL_BATCH = 200
-        for (let i = 0; i < nvsComercial.length; i += SOL_BATCH) {
-          const { data: solsBatch } = await supabase.from('solicitudes_importadas')
-            .select('*').in('id_venta', nvsComercial.slice(i, i + SOL_BATCH))
-          if (solsBatch) sols = sols.concat(solsBatch)
-        }
+        // Paso 3: descartar solicitudes sin pedido en la app y aplicar filtro de fecha_entrega
+        sols = sols.filter((s: any) => {
+          const ped = pedMap[String(s.id_venta)]
+          if (!ped) return false
+          if (fechaDesde && ped.fecha_entrega && ped.fecha_entrega < fechaDesde) return false
+          if (fechaHasta && ped.fecha_entrega && ped.fecha_entrega > fechaHasta) return false
+          return true
+        })
       } else {
         // Modo Excel: filtrar solicitudes por fecha_despacho (comportamiento original)
         let from = 0

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/app/supabase'
 import { tieneAcceso } from '@/app/lib/permisos'
+import type { jsPDF as JsPDFType } from 'jspdf'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -305,7 +306,7 @@ export default function AbastecimientoPage() {
   const router = useRouter()
   const [rol, setRol] = useState('')
   const [userEmail, setUserEmail] = useState('')
-  const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar'>('verificacion')
+  const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion'>('verificacion')
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
@@ -328,6 +329,7 @@ export default function AbastecimientoPage() {
     { key: 'transferencias', label: 'Transferencias' },
     { key: 'transito',       label: 'En tránsito' },
     { key: 'historial',      label: 'Historial' },
+    { key: 'preparacion',    label: '📦 Preparación' },
     { key: 'importar',       label: '⬆ Importar' },
   ]
 
@@ -382,6 +384,9 @@ export default function AbastecimientoPage() {
         )}
         {tab === 'historial' && (
           <TabRequerimientos filtroEstados={['entregado', 'rechazado']} rol={rol} showToast={showToast} userEmail={userEmail} />
+        )}
+        {tab === 'preparacion' && (
+          <TabPreparacion />
         )}
         {tab === 'importar' && (
           <TabImportar rol={rol} showToast={showToast} />
@@ -2474,6 +2479,231 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB: PREPARACIÓN — lista de productos a preparar por fecha/sucursal
+// ═══════════════════════════════════════════════════════════════════════════════
+function TabPreparacion() {
+  const [fecha, setFecha] = useState(hoy())
+  const [sucursal, setSucursal] = useState('')
+  const [productos, setProductos] = useState<{ nombre: string; cantidad: number; unidad: string }[]>([])
+  const [pedidosCount, setPedidosCount] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [cargado, setCargado] = useState(false)
+
+  async function buscar() {
+    if (!fecha) return
+    setLoading(true); setError(''); setCargado(false); setProductos([])
+    try {
+      const params = new URLSearchParams({ fecha })
+      if (sucursal) params.set('sucursal', sucursal)
+      const res = await fetch(`/api/picking-list?${params}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al cargar')
+      setProductos(json.productos ?? [])
+      setPedidosCount(json.pedidos_count ?? 0)
+      setCargado(true)
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function descargarPDF() {
+    if (!cargado || productos.length === 0) return
+    const { jsPDF } = await import('jspdf') as { jsPDF: typeof JsPDFType }
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const PW = 210; const PH = 297
+    const ML = 15; const MR = 15; const MT = 15
+
+    // Header azul
+    doc.setFillColor(37, 74, 150)
+    doc.rect(0, 0, PW, 32, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(16)
+    doc.text('Lista de Preparación', ML, 13)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    const [anio, mes, dia] = fecha.split('-')
+    const fechaLabel = `${dia}/${mes}/${anio}`
+    doc.text(`Fecha: ${fechaLabel}  |  Sucursal: ${sucursal || 'Todas'}  |  Pedidos: ${pedidosCount}`, ML, 22)
+    doc.text('Construyo al Costo', PW - MR, 22, { align: 'right' })
+
+    // Tabla
+    const colX = [ML, ML + 110, ML + 140]
+    const colW = [110, 30, 40]
+    const ROW_H = 8
+    let y = MT + 32 + 6
+
+    // Encabezado tabla
+    doc.setFillColor(232, 237, 248)
+    doc.rect(ML, y, PW - ML - MR, ROW_H, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor(37, 74, 150)
+    doc.text('Material', colX[0] + 2, y + 5.5)
+    doc.text('Cantidad', colX[1] + 2, y + 5.5)
+    doc.text('Unidad', colX[2] + 2, y + 5.5)
+    y += ROW_H
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.5)
+    productos.forEach((p, i) => {
+      if (y > PH - 30) {
+        doc.addPage()
+        y = MT
+        // mini-header en página adicional
+        doc.setFillColor(37, 74, 150)
+        doc.rect(0, 0, PW, 10, 'F')
+        doc.setTextColor(255, 255, 255)
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8)
+        doc.text(`Lista de Preparación — ${fechaLabel} — ${sucursal || 'Todas'} (cont.)`, ML, 7)
+        y = 14
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(8.5)
+      }
+      const bg = i % 2 === 0 ? [255, 255, 255] : [248, 249, 252]
+      doc.setFillColor(bg[0], bg[1], bg[2])
+      doc.rect(ML, y, PW - ML - MR, ROW_H, 'F')
+      doc.setTextColor(30, 30, 30)
+      doc.text(p.nombre, colX[0] + 2, y + 5.5)
+      doc.setFont('helvetica', 'bold')
+      doc.text(String(p.cantidad), colX[1] + 2, y + 5.5)
+      doc.setFont('helvetica', 'normal')
+      doc.text(p.unidad ?? 'u', colX[2] + 2, y + 5.5)
+      y += ROW_H
+    })
+
+    // Línea separadora + total productos
+    doc.setDrawColor(200, 200, 200)
+    doc.line(ML, y, PW - MR, y)
+    y += 6
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor(37, 74, 150)
+    doc.text(`Total líneas: ${productos.length}   |   Total pedidos: ${pedidosCount}`, ML, y)
+
+    // Footer
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7)
+    doc.setTextColor(150, 150, 150)
+    const now = new Date()
+    doc.text(
+      `Generado el ${now.toLocaleDateString('es-AR')} a las ${now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`,
+      PW / 2, PH - 8, { align: 'center' }
+    )
+
+    const nombreArchivo = `preparacion_${fecha}${sucursal ? '_' + sucursal : ''}.pdf`
+    doc.save(nombreArchivo)
+  }
+
+  const totalUnidades = productos.reduce((s, p) => s + p.cantidad, 0)
+
+  return (
+    <div className="p-4 md:p-6 max-w-3xl mx-auto">
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold mb-1" style={{ color: '#254A96' }}>Lista de preparación</h2>
+        <p className="text-sm" style={{ color: '#B9BBB7' }}>
+          Total de unidades a despachar por producto en una fecha dada.
+        </p>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-xl border p-4 mb-5 flex flex-wrap gap-3 items-end" style={{ borderColor: '#e8edf8' }}>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Fecha de entrega</label>
+          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm"
+            style={{ borderColor: '#e8edf8', color: '#254A96', fontWeight: 600 }} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Sucursal</label>
+          <select value={sucursal} onChange={e => setSucursal(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm"
+            style={{ borderColor: '#e8edf8', color: '#333' }}>
+            <option value="">Todas</option>
+            {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <button onClick={buscar} disabled={loading || !fecha}
+          className="px-5 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
+          style={{ background: '#254A96' }}>
+          {loading ? 'Buscando…' : 'Buscar'}
+        </button>
+        {cargado && productos.length > 0 && (
+          <button onClick={descargarPDF}
+            className="px-5 py-2 text-sm font-medium rounded-lg"
+            style={{ background: '#e8edf8', color: '#254A96' }}>
+            ⬇ Descargar PDF
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="rounded-lg px-4 py-3 mb-4 text-sm" style={{ background: '#fde8e8', color: '#E52322' }}>{error}</div>
+      )}
+
+      {cargado && (
+        <>
+          <div className="flex items-center gap-4 mb-3">
+            <span className="text-sm font-medium" style={{ color: '#254A96' }}>
+              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}
+            </span>
+            {totalUnidades > 0 && (
+              <span className="text-xs" style={{ color: '#B9BBB7' }}>{totalUnidades.toLocaleString('es-AR')} unidades totales</span>
+            )}
+          </div>
+
+          {productos.length === 0 ? (
+            <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
+              <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos con ítems para esa fecha.</p>
+            </div>
+          ) : (
+            <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr style={{ background: '#e8edf8' }}>
+                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Material</th>
+                    <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Cantidad</th>
+                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Unidad</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {productos.map((p, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafc', borderTop: '1px solid #f0f0f0' }}>
+                      <td className="px-4 py-2.5" style={{ color: '#1e1e1e' }}>{p.nombre}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: '#254A96' }}>
+                        {p.cantidad.toLocaleString('es-AR')}
+                      </td>
+                      <td className="px-4 py-2.5" style={{ color: '#666' }}>{p.unidad ?? 'u'}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: '#e8edf8', borderTop: '2px solid #d4dbef' }}>
+                    <td className="px-4 py-2.5 font-semibold text-xs" style={{ color: '#254A96' }}>TOTAL</td>
+                    <td className="px-4 py-2.5 text-right font-bold" style={{ color: '#254A96' }}>
+                      {totalUnidades.toLocaleString('es-AR')}
+                    </td>
+                    <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>unidades</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {!cargado && !loading && (
+        <div className="bg-white rounded-xl border p-10 text-center" style={{ borderColor: '#e8edf8' }}>
+          <p className="text-sm" style={{ color: '#B9BBB7' }}>Seleccioná una fecha y hacé clic en Buscar.</p>
+        </div>
+      )}
     </div>
   )
 }

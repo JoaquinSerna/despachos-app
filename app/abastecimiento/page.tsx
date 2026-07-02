@@ -2500,7 +2500,8 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 // TAB: PREPARACIÓN — lista de productos a preparar por fecha/sucursal
 // ═══════════════════════════════════════════════════════════════════════════════
 function TabPreparacion() {
-  const [fecha, setFecha] = useState(hoy())
+  const [fechaDesde, setFechaDesde] = useState(hoy())
+  const [fechaHasta, setFechaHasta] = useState(hoy())
   const [sucursal, setSucursal] = useState('')
   const [productos, setProductos] = useState<{ nombre: string; cantidad: number; unidad: string }[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
@@ -2508,11 +2509,15 @@ function TabPreparacion() {
   const [error, setError] = useState('')
   const [cargado, setCargado] = useState(false)
 
+  function fmtLabel(iso: string) {
+    const [y, m, d] = iso.split('-'); return `${d}/${m}/${y}`
+  }
+
   async function buscar() {
-    if (!fecha) return
+    if (!fechaDesde || !fechaHasta) return
     setLoading(true); setError(''); setCargado(false); setProductos([])
     try {
-      const params = new URLSearchParams({ fecha })
+      const params = new URLSearchParams({ fecha_desde: fechaDesde, fecha_hasta: fechaHasta })
       if (sucursal) params.set('sucursal', sucursal)
       const res = await fetch(`/api/picking-list?${params}`)
       const json = await res.json()
@@ -2534,6 +2539,10 @@ function TabPreparacion() {
     const PW = 210; const PH = 297
     const ML = 15; const MR = 15; const MT = 15
 
+    const fechaLabel = fechaDesde === fechaHasta
+      ? fmtLabel(fechaDesde)
+      : `${fmtLabel(fechaDesde)} al ${fmtLabel(fechaHasta)}`
+
     // Header azul
     doc.setFillColor(37, 74, 150)
     doc.rect(0, 0, PW, 32, 'F')
@@ -2543,8 +2552,6 @@ function TabPreparacion() {
     doc.text('Lista de Preparación', ML, 13)
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    const [anio, mes, dia] = fecha.split('-')
-    const fechaLabel = `${dia}/${mes}/${anio}`
     doc.text(`Fecha: ${fechaLabel}  |  Sucursal: ${sucursal || 'Todas'}  |  Pedidos: ${pedidosCount}`, ML, 22)
     doc.text('Construyo al Costo', PW - MR, 22, { align: 'right' })
 
@@ -2577,7 +2584,7 @@ function TabPreparacion() {
         doc.setTextColor(255, 255, 255)
         doc.setFont('helvetica', 'bold')
         doc.setFontSize(8)
-        doc.text(`Lista de Preparación — ${fechaLabel} — ${sucursal || 'Todas'} (cont.)`, ML, 7)
+        doc.text(`Lista de Preparación — ${fechaLabel.replace(' al ', '→')} — ${sucursal || 'Todas'} (cont.)`, ML, 7)
         y = 14
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(8.5)
@@ -2613,7 +2620,9 @@ function TabPreparacion() {
       PW / 2, PH - 8, { align: 'center' }
     )
 
-    const nombreArchivo = `preparacion_${fecha}${sucursal ? '_' + sucursal : ''}.pdf`
+    const nombreArchivo = fechaDesde === fechaHasta
+      ? `preparacion_${fechaDesde}${sucursal ? '_' + sucursal : ''}.pdf`
+      : `preparacion_${fechaDesde}_${fechaHasta}${sucursal ? '_' + sucursal : ''}.pdf`
     doc.save(nombreArchivo)
   }
 
@@ -2631,8 +2640,14 @@ function TabPreparacion() {
       {/* Filtros */}
       <div className="bg-white rounded-xl border p-4 mb-5 flex flex-wrap gap-3 items-end" style={{ borderColor: '#e8edf8' }}>
         <div>
-          <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Fecha de entrega</label>
-          <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
+          <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Desde</label>
+          <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm"
+            style={{ borderColor: '#e8edf8', color: '#254A96', fontWeight: 600 }} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Hasta</label>
+          <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm"
             style={{ borderColor: '#e8edf8', color: '#254A96', fontWeight: 600 }} />
         </div>
@@ -2645,7 +2660,7 @@ function TabPreparacion() {
             {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-        <button onClick={buscar} disabled={loading || !fecha}
+        <button onClick={buscar} disabled={loading || !fechaDesde || !fechaHasta}
           className="px-5 py-2 text-sm font-medium rounded-lg text-white disabled:opacity-40"
           style={{ background: '#254A96' }}>
           {loading ? 'Buscando…' : 'Buscar'}
@@ -2676,7 +2691,7 @@ function TabPreparacion() {
 
           {productos.length === 0 ? (
             <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
-              <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos con ítems para esa fecha.</p>
+              <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos con ítems para ese período.</p>
             </div>
           ) : (
             <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>

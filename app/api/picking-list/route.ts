@@ -11,16 +11,18 @@ function getAdmin() {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
-  const fecha = searchParams.get('fecha')
+  const fechaDesde = searchParams.get('fecha_desde') ?? searchParams.get('fecha')
+  const fechaHasta = searchParams.get('fecha_hasta') ?? searchParams.get('fecha')
   const sucursal = searchParams.get('sucursal')
 
-  if (!fecha) return NextResponse.json({ error: 'Falta fecha' }, { status: 400 })
+  if (!fechaDesde || !fechaHasta) return NextResponse.json({ error: 'Falta fecha' }, { status: 400 })
 
   const admin = getAdmin()
 
   let q = admin.from('pedidos')
     .select('id, nv, cliente, estado, camion_id, vuelta, sucursal')
-    .eq('fecha_entrega', fecha)
+    .gte('fecha_entrega', fechaDesde)
+    .lte('fecha_entrega', fechaHasta)
     .neq('estado', 'cancelado')
     .neq('estado', 'rechazado')
   if (sucursal) q = q.eq('sucursal', sucursal)
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
   const { data: pedidos, error: pedErr } = await q
   if (pedErr) return NextResponse.json({ error: pedErr.message }, { status: 500 })
   if (!pedidos || pedidos.length === 0) {
-    return NextResponse.json({ productos: [], pedidos_count: 0, fecha, sucursal: sucursal ?? null })
+    return NextResponse.json({ productos: [], pedidos_count: 0, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null })
   }
 
   const pedidoIds = pedidos.map(p => p.id)
@@ -59,5 +61,5 @@ export async function GET(request: NextRequest) {
     .filter(p => p.nombre)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
-  return NextResponse.json({ productos, pedidos_count: pedidos.length, fecha, sucursal: sucursal ?? null })
+  return NextResponse.json({ productos, pedidos_count: pedidos.length, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null })
 }

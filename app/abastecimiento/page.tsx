@@ -432,22 +432,56 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   async function cargarSolicitudes() {
     setLoading(true)
     try {
-      // PostgREST caps at max-rows (default 1000) even if .limit() says more.
-      // Paginate in chunks of 1000 until all rows are fetched.
       const PAGE = 1000
-      let allSols: any[] = []
-      let from = 0
-      while (true) {
-        let q = supabase.from('solicitudes_importadas').select('*').order('id').range(from, from + PAGE - 1)
-        if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
-        if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
-        const { data: page } = await q
-        if (!page || page.length === 0) break
-        allSols = allSols.concat(page)
-        if (page.length < PAGE) break   // last page
-        from += PAGE
+      let sols: any[] = []
+
+      if (vistaSD === 'comercial') {
+        // En modo comercial: filtrar por fecha_entrega del PEDIDO (no por fecha_despacho del Excel)
+        // Paso 1: buscar pedidos con vendedor_id filtrados por fecha_entrega
+        const pedMap: Record<string, { sucursal: string; estado: string }> = {}
+        let fromPeds = 0
+        while (true) {
+          let q = supabase.from('pedidos')
+            .select('nv, sucursal, estado')
+            .not('vendedor_id', 'is', null)
+            .neq('estado', 'cancelado')
+            .order('fecha_entrega')
+            .range(fromPeds, fromPeds + PAGE - 1)
+          if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
+          if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
+          const { data: pedsPage } = await q
+          if (!pedsPage || pedsPage.length === 0) break
+          for (const p of pedsPage) pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado }
+          if (pedsPage.length < PAGE) break
+          fromPeds += PAGE
+        }
+        setPedidosSucursalMap(pedMap)
+
+        if (Object.keys(pedMap).length === 0) { setSolicitudes([]); setLoading(false); return }
+
+        // Paso 2: buscar solicitudes para esos NVs
+        const nvsComercial = Object.keys(pedMap).map(nv => Number(nv)).filter(n => !isNaN(n) && n > 0)
+        const SOL_BATCH = 200
+        for (let i = 0; i < nvsComercial.length; i += SOL_BATCH) {
+          const { data: solsBatch } = await supabase.from('solicitudes_importadas')
+            .select('*').in('id_venta', nvsComercial.slice(i, i + SOL_BATCH))
+          if (solsBatch) sols = sols.concat(solsBatch)
+        }
+      } else {
+        // Modo Excel: filtrar solicitudes por fecha_despacho (comportamiento original)
+        let from = 0
+        while (true) {
+          let q = supabase.from('solicitudes_importadas').select('*').order('id').range(from, from + PAGE - 1)
+          if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
+          if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
+          const { data: page } = await q
+          if (!page || page.length === 0) break
+          sols = sols.concat(page)
+          if (page.length < PAGE) break
+          from += PAGE
+        }
+        setPedidosSucursalMap({})
       }
-      const sols = allSols
 
       if (!sols.length) { setSolicitudes([]); setLoading(false); return }
 
@@ -554,22 +588,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       }
       setFechasDeadline(dl)
 
-      // Para la vista "comercial": buscar los pedidos cargados en la app y mapear NV → sucursal
-      if (vistaSD === 'comercial') {
-        const nvs = solsConItems.map(s => String(s.id_venta)).filter(Boolean)
-        const pedMap: Record<string, { sucursal: string; estado: string }> = {}
-        const NV_BATCH = 500
-        for (let i = 0; i < nvs.length; i += NV_BATCH) {
-          const { data: peds } = await supabase.from('pedidos')
-            .select('nv, sucursal, estado')
-            .in('nv', nvs.slice(i, i + NV_BATCH))
-            .not('vendedor_id', 'is', null)
-          for (const p of peds ?? []) pedMap[p.nv] = { sucursal: p.sucursal, estado: p.estado }
-        }
-        setPedidosSucursalMap(pedMap)
-      } else {
-        setPedidosSucursalMap({})
-      }
+      // pedidosSucursalMap ya fue construido al inicio según el modo de vista
     } catch (e: any) {
       showToast(`Error: ${e.message}`, 'err')
     }

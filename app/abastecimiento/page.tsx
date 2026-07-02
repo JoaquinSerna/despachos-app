@@ -1243,6 +1243,13 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   const [errorFoto, setErrorFoto] = useState('')
   const [subiendoFoto, setSubiendoFoto] = useState(false)
   const fileRefReq = useRef<HTMLInputElement>(null)
+  const [showParcialModal, setShowParcialModal] = useState(false)
+  const [cantRecibidas, setCantRecibidas] = useState<Record<string, number>>({})
+  const [notaParcialReq, setNotaParcialReq] = useState('')
+  const [fotosParcial, setFotosParcial] = useState<{ file: File; preview: string; label: string }[]>([])
+  const [confirmandoParcial, setConfirmandoParcial] = useState(false)
+  const [errorParcial, setErrorParcial] = useState('')
+  const fileRefParcial = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setReq(initialReq)
@@ -1262,6 +1269,68 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
       reader.readAsDataURL(file)
     })
     if (fileRefReq.current) fileRefReq.current.value = ''
+  }
+
+  const handleFotoParcialReq = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    files.forEach(file => {
+      const reader = new FileReader()
+      reader.onload = () => setFotosParcial(prev => [...prev, { file, preview: reader.result as string, label: 'Material en puerta' }])
+      reader.readAsDataURL(file)
+    })
+    if (fileRefParcial.current) fileRefParcial.current.value = ''
+  }
+
+  function abrirParcialModal() {
+    const init: Record<string, number> = {}
+    for (const item of req.requerimiento_items ?? []) {
+      init[item.id] = item.cantidad_aprobada ?? item.cantidad_solicitada ?? 0
+    }
+    setCantRecibidas(init)
+    setNotaParcialReq('')
+    setFotosParcial([])
+    setErrorParcial('')
+    setShowParcialModal(true)
+  }
+
+  async function confirmarEntregadoParcial() {
+    if (fotosParcial.length === 0) { setErrorParcial('Necesitás agregar al menos una foto.'); return }
+    if (!notaParcialReq.trim()) { setErrorParcial('Ingresá el motivo de la entrega parcial.'); return }
+    setErrorParcial('')
+    setConfirmandoParcial(true)
+    try {
+      const items = req.requerimiento_items ?? []
+      const breakdown = items.map(item => {
+        const total = item.cantidad_aprobada ?? item.cantidad_solicitada ?? 0
+        const recibido = cantRecibidas[item.id] ?? total
+        return `${item.nombre_producto}: ${recibido}/${total}`
+      }).join(', ')
+      const notaFinal = `📦 Entrega parcial — ${breakdown}. Motivo: ${notaParcialReq.trim()}`
+      const formData = new FormData()
+      formData.append('requerimiento_id', req.id)
+      formData.append('fecha_recepcion', editFechaRec || hoy())
+      formData.append('tipo_entrega', 'parcial')
+      formData.append('notas', notaFinal)
+      if (editNViaje) formData.append('n_viaje', editNViaje)
+      if (editVehiculo) formData.append('cod_vehiculo', editVehiculo)
+      for (let i = 0; i < fotosParcial.length; i++) {
+        const blob = await comprimirFotoReq(fotosParcial[i].file)
+        formData.append(`foto_${i}`, blob, `foto_${i}.jpg`)
+        formData.append(`label_${i}`, fotosParcial[i].label)
+      }
+      const res = await fetch('/api/confirmar-requerimiento', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!data.success) { setErrorParcial(`Error: ${data.error}`); setConfirmandoParcial(false); return }
+      showToast('Entrega parcial registrada')
+      setShowParcialModal(false)
+      setFotosParcial([])
+      setExpanded(false)
+      onUpdated()
+    } catch (e: any) {
+      setErrorParcial(`Error: ${e.message}`)
+    }
+    setConfirmandoParcial(false)
   }
 
   async function confirmarEntregadoConFoto() {
@@ -1461,16 +1530,144 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
           {/* Botones de avance */}
           {siguientes.length > 0 && (
             <div className="flex gap-2 flex-wrap pt-1">
-              {siguientes.map(sig => (
-                <button key={sig} disabled={guardando}
-                  onClick={() => sig === 'entregado' ? setShowFotoModal(true) : cambiarEstado(sig)}
-                  className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
-                  style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
-                  {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
-                </button>
-              ))}
+              {siguientes.flatMap(sig => {
+                const btn = (
+                  <button key={sig} disabled={guardando}
+                    onClick={() => sig === 'entregado' ? setShowFotoModal(true) : cambiarEstado(sig)}
+                    className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                    style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
+                    {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
+                  </button>
+                )
+                if (sig === 'entregado') return [btn, (
+                  <button key="parcial" disabled={guardando}
+                    onClick={abrirParcialModal}
+                    className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+                    style={{ background: '#f59e0b' }}>
+                    📦 Parcial
+                  </button>
+                )]
+                return [btn]
+              })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal entrega parcial */}
+      {showParcialModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#b45309' }}>📦 Entrega parcial</h3>
+                <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{req.sucursal_origen} → {req.sucursal_destino}</p>
+              </div>
+              <button onClick={() => setShowParcialModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+
+            {/* Cantidades por item */}
+            <div>
+              <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>¿Cuánto llegó?</p>
+              {(req.requerimiento_items ?? []).length === 0 ? (
+                <div className="rounded-xl p-3 border text-xs" style={{ borderColor: '#e8edf8', color: '#B9BBB7', background: '#f9f9f9' }}>
+                  Esta transferencia no tiene items registrados. Indicá el motivo y adjuntá foto.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {(req.requerimiento_items ?? []).map(item => {
+                    const total = item.cantidad_aprobada ?? item.cantidad_solicitada ?? 0
+                    const recibido = cantRecibidas[item.id] ?? total
+                    const pendiente = total - recibido
+                    return (
+                      <div key={item.id} className="rounded-xl p-3 border"
+                        style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
+                        <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre_producto}</p>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setCantRecibidas(prev => ({ ...prev, [item.id]: Math.max(0, (prev[item.id] ?? total) - 1) }))}
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
+                            style={{ background: '#f4f4f3', color: '#666' }}>−</button>
+                          <div className="flex items-center gap-1 flex-1 justify-center">
+                            <input type="text" inputMode="numeric" value={recibido}
+                              onChange={e => {
+                                const raw = e.target.value.replace(/[^\d]/g, '')
+                                const n = raw === '' ? 0 : Math.min(total, Math.max(0, parseInt(raw)))
+                                setCantRecibidas(prev => ({ ...prev, [item.id]: n }))
+                              }}
+                              onFocus={e => e.target.select()}
+                              className="w-12 text-sm font-bold text-center rounded-lg border focus:outline-none"
+                              style={{ color: '#254A96', borderColor: '#e8edf8', padding: '4px' }} />
+                            <span className="text-xs" style={{ color: '#B9BBB7' }}>/ {total}</span>
+                          </div>
+                          <button onClick={() => setCantRecibidas(prev => ({ ...prev, [item.id]: Math.min(total, (prev[item.id] ?? total) + 1) }))}
+                            className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
+                            style={{ background: '#f4f4f3', color: '#666' }}>+</button>
+                          {pendiente > 0 && <span className="text-xs shrink-0" style={{ color: '#b45309' }}>Saldo: {pendiente}</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Motivo obligatorio */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#b45309' }}>
+                Motivo <span style={{ color: '#E52322' }}>*</span>
+              </label>
+              <textarea value={notaParcialReq} onChange={e => setNotaParcialReq(e.target.value)} rows={2}
+                className="w-full border rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                style={{ borderColor: '#fbbf24' }}
+                placeholder="Ej: Faltaba stock, no había espacio, parte rechazada en destino..." />
+            </div>
+
+            {/* Foto obligatoria */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                Foto <span style={{ color: '#E52322' }}>*</span>
+              </label>
+              {fotosParcial.length > 0 && (
+                <div className="space-y-2 mb-2">
+                  {fotosParcial.map((f, idx) => (
+                    <div key={idx} className="flex gap-2 items-center rounded-xl p-2"
+                      style={{ background: '#f8faff', border: '1px solid #e8edf8' }}>
+                      <img src={f.preview} alt="" className="w-14 h-14 object-cover rounded-lg flex-shrink-0" />
+                      <p className="text-xs flex-1 truncate" style={{ color: '#B9BBB7' }}>{f.file.name}</p>
+                      <button onClick={() => setFotosParcial(prev => prev.filter((_, j) => j !== idx))}
+                        className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs"
+                        style={{ background: '#E52322' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => fileRefParcial.current?.click()}
+                className="w-full border-2 border-dashed rounded-xl py-4 text-center"
+                style={{ borderColor: fotosParcial.length === 0 ? '#fca5a5' : '#e8edf8' }}>
+                <p className="text-xl mb-0.5">📷</p>
+                <p className="text-xs" style={{ color: fotosParcial.length === 0 ? '#E52322' : '#B9BBB7' }}>
+                  {fotosParcial.length === 0 ? 'Foto requerida' : '+ Agregar otra'}
+                </p>
+              </button>
+              <input ref={fileRefParcial} type="file" accept="image/*" capture="environment"
+                multiple onChange={handleFotoParcialReq} className="hidden" />
+            </div>
+
+            {errorParcial && (
+              <div className="rounded-xl px-4 py-3 text-sm font-medium"
+                style={{ background: '#fde8e8', color: '#E52322', border: '1px solid #fca5a5' }}>
+                ⚠️ {errorParcial}
+              </div>
+            )}
+
+            <button onClick={confirmarEntregadoParcial}
+              disabled={confirmandoParcial || fotosParcial.length === 0 || !notaParcialReq.trim()}
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+              style={{ background: '#f59e0b' }}>
+              {confirmandoParcial ? 'Guardando...' : '📦 Guardar entrega parcial'}
+            </button>
+          </div>
         </div>
       )}
 

@@ -496,17 +496,25 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       if (!sols.length) { setSolicitudes([]); setLoading(false); return }
 
       const solIds = sols.map((s: any) => s.id)
-      // Batch the IN query to avoid URL length limits (Supabase/PostgREST
-      // sends IDs as a comma-separated URL param; 2000+ IDs can exceed limits)
+      // Paginar items para evitar truncado por max_rows=1000 de PostgREST
+      // IN_BATCH pequeño + range pagination para garantizar que no se pierden items
       let allItemsRaw: any[] = []
-      const IN_BATCH = 500
+      const IN_BATCH = 100
+      const ITEMS_PAGE = 1000
       for (let i = 0; i < solIds.length; i += IN_BATCH) {
-        const { data: batchData } = await supabase
-          .from('solicitudes_importadas_items')
-          .select('*')
-          .in('id_solicitud', solIds.slice(i, i + IN_BATCH))
-          .limit(10000)
-        if (batchData) allItemsRaw = allItemsRaw.concat(batchData)
+        let fromItems = 0
+        while (true) {
+          const { data: batchData } = await supabase
+            .from('solicitudes_importadas_items')
+            .select('*')
+            .in('id_solicitud', solIds.slice(i, i + IN_BATCH))
+            .order('id')
+            .range(fromItems, fromItems + ITEMS_PAGE - 1)
+          if (!batchData || batchData.length === 0) break
+          allItemsRaw = allItemsRaw.concat(batchData)
+          if (batchData.length < ITEMS_PAGE) break
+          fromItems += ITEMS_PAGE
+        }
       }
       const itemsRaw = allItemsRaw
 

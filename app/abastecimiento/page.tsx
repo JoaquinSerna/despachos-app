@@ -1202,6 +1202,27 @@ const TIPO_ENTREGA_LABEL: Record<string, string> = {
 }
 
 // ─── Fila expandible de requerimiento ─────────────────────────────────────────
+const LABELS_FOTO_REQ = ['Remito', 'Material en puerta', 'Daño / Roto', 'Otro']
+
+function comprimirFotoReq(file: File): Promise<Blob> {
+  return new Promise(resolve => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const MAX = 1200
+      const ratio = Math.min(MAX / img.width, MAX / img.height, 1)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.width * ratio)
+      canvas.height = Math.round(img.height * ratio)
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      canvas.toBlob(blob => resolve(blob ?? file), 'image/jpeg', 0.82)
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+    img.src = url
+  })
+}
+
 function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionCodigos }: {
   req: Requerimiento; rol: string
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
@@ -1217,6 +1238,11 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   const [editVehiculo, setEditVehiculo] = useState(req.cod_vehiculo ?? '')
   const [editFechaRec, setEditFechaRec] = useState(req.fecha_recepcion ?? '')
   const [editTipoEntrega, setEditTipoEntrega] = useState(req.tipo_entrega ?? '')
+  const [fotos, setFotos] = useState<{ file: File; preview: string; label: string }[]>([])
+  const [showFotoModal, setShowFotoModal] = useState(false)
+  const [errorFoto, setErrorFoto] = useState('')
+  const [subiendoFoto, setSubiendoFoto] = useState(false)
+  const fileRefReq = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setReq(initialReq)
@@ -1226,6 +1252,48 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
     setEditFechaRec(initialReq.fecha_recepcion ?? '')
     setEditTipoEntrega(initialReq.tipo_entrega ?? '')
   }, [initialReq])
+
+  const handleFotoReq = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    files.forEach(file => {
+      const reader = new FileReader()
+      reader.onload = () => setFotos(prev => [...prev, { file, preview: reader.result as string, label: 'Remito' }])
+      reader.readAsDataURL(file)
+    })
+    if (fileRefReq.current) fileRefReq.current.value = ''
+  }
+
+  async function confirmarEntregadoConFoto() {
+    if (fotos.length === 0) { setErrorFoto('Necesitás agregar al menos una foto antes de continuar.'); return }
+    setErrorFoto('')
+    setSubiendoFoto(true)
+    try {
+      const formData = new FormData()
+      formData.append('requerimiento_id', req.id)
+      formData.append('fecha_recepcion', editFechaRec || hoy())
+      formData.append('tipo_entrega', editTipoEntrega || 'completa')
+      if (editNotas) formData.append('notas', editNotas)
+      if (editNViaje) formData.append('n_viaje', editNViaje)
+      if (editVehiculo) formData.append('cod_vehiculo', editVehiculo)
+      for (let i = 0; i < fotos.length; i++) {
+        const blob = await comprimirFotoReq(fotos[i].file)
+        formData.append(`foto_${i}`, blob, `foto_${i}.jpg`)
+        formData.append(`label_${i}`, fotos[i].label)
+      }
+      const res = await fetch('/api/confirmar-requerimiento', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!data.success) { setErrorFoto(`Error: ${data.error}`); setSubiendoFoto(false); return }
+      showToast('Transferencia marcada como entregada')
+      setShowFotoModal(false)
+      setFotos([])
+      setExpanded(false)
+      onUpdated()
+    } catch (e: any) {
+      setErrorFoto(`Error: ${e.message}`)
+    }
+    setSubiendoFoto(false)
+  }
 
   const puedeEditar = rol === 'deposito' || rol === 'gerencia'
   const puedeEditarCantidad = puedeEditar && req.estado === 'pendiente'
@@ -1394,7 +1462,8 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
           {siguientes.length > 0 && (
             <div className="flex gap-2 flex-wrap pt-1">
               {siguientes.map(sig => (
-                <button key={sig} disabled={guardando} onClick={() => cambiarEstado(sig)}
+                <button key={sig} disabled={guardando}
+                  onClick={() => sig === 'entregado' ? setShowFotoModal(true) : cambiarEstado(sig)}
                   className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                   style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
                   {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
@@ -1402,6 +1471,86 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal foto comprobante — se activa al marcar como Entregado */}
+      {showFotoModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#10b981' }}>Registrar entrega</h3>
+                <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{req.sucursal_origen} → {req.sucursal_destino}</p>
+              </div>
+              <button onClick={() => { setShowFotoModal(false); setFotos([]); setErrorFoto('') }}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+
+            {/* Fotos — obligatorias */}
+            <div>
+              <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
+                Foto del comprobante <span style={{ color: '#E52322' }}>*</span>
+                <span className="font-normal ml-1" style={{ color: '#B9BBB7' }}>(obligatoria)</span>
+              </label>
+              {fotos.length > 0 && (
+                <div className="space-y-2 mb-2">
+                  {fotos.map((f, idx) => (
+                    <div key={idx} className="flex gap-2 items-start rounded-xl p-2"
+                      style={{ background: '#f8faff', border: '1px solid #e8edf8' }}>
+                      <img src={f.preview} alt="" className="w-16 h-16 object-cover rounded-lg flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <select value={f.label}
+                          onChange={e => setFotos(prev => prev.map((ft, i) => i === idx ? { ...ft, label: e.target.value } : ft))}
+                          className="w-full border rounded-lg px-2 py-1.5 text-xs focus:outline-none mb-1"
+                          style={{ borderColor: '#e8edf8' }}>
+                          {LABELS_FOTO_REQ.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                        <p className="text-xs truncate" style={{ color: '#B9BBB7' }}>{f.file.name}</p>
+                      </div>
+                      <button onClick={() => setFotos(prev => prev.filter((_, i) => i !== idx))}
+                        className="w-6 h-6 flex-shrink-0 rounded-full flex items-center justify-center text-white text-xs mt-1"
+                        style={{ background: '#E52322' }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={() => fileRefReq.current?.click()}
+                className="w-full border-2 border-dashed rounded-xl py-4 text-center"
+                style={{ borderColor: fotos.length === 0 ? '#fca5a5' : '#e8edf8' }}>
+                <p className="text-xl mb-0.5">📷</p>
+                <p className="text-xs" style={{ color: fotos.length === 0 ? '#E52322' : '#B9BBB7' }}>
+                  {fotos.length === 0 ? 'Tocar para sacar foto (requerido)' : '+ Agregar otra foto'}
+                </p>
+              </button>
+              <input ref={fileRefReq} type="file" accept="image/*" capture="environment"
+                multiple onChange={handleFotoReq} className="hidden" />
+            </div>
+
+            {/* Error inline */}
+            {errorFoto && (
+              <div className="rounded-xl px-4 py-3 text-sm font-medium flex items-center gap-2"
+                style={{ background: '#fde8e8', color: '#E52322', border: '1px solid #fca5a5' }}>
+                ⚠️ {errorFoto}
+              </div>
+            )}
+
+            {/* Botones */}
+            <div className="flex gap-2">
+              <button onClick={confirmarEntregadoConFoto} disabled={subiendoFoto}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                style={{ background: '#10b981' }}>
+                {subiendoFoto ? 'Guardando...' : '✓ Confirmar entrega'}
+              </button>
+              <button onClick={() => { setShowFotoModal(false); setFotos([]); setErrorFoto('') }}
+                disabled={subiendoFoto}
+                className="flex-1 py-3 rounded-xl text-sm font-semibold disabled:opacity-50"
+                style={{ background: '#f4f4f3', color: '#B9BBB7' }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

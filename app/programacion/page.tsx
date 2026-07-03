@@ -944,9 +944,10 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
         width: w, minWidth: w,
-        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : '#f0f0f0'}`,
-        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : '#f9f9f9',
+        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#e0e0e0' : '#f0f0f0'}`,
+        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#f0f0f0' : '#f9f9f9',
         boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : bloqueado ? '0 0 0 2px rgba(245,158,11,0.15)' : 'none',
+        opacity: (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? 0.65 : 1,
       }}>
       <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
@@ -974,6 +975,12 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                   <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#f5f3ff', color: '#7c3aed' }}
                     title={`Viene de ${(camion as any)._desde_sucursal}, disponible desde V${(camion as any)._disponible_desde_vuelta ?? 2}`}>
                     🔀 {(camion as any)._desde_sucursal} V{(camion as any)._disponible_desde_vuelta ?? 2}+
+                  </span>
+                )}
+                {(camion as any)._sale_a_sucursal && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#fde8e8', color: '#E52322' }}
+                    title={`Va a ${(camion as any)._sale_a_sucursal} desde V${(camion as any)._sale_desde_vuelta ?? 2}`}>
+                    🔀 → {(camion as any)._sale_a_sucursal} V{(camion as any)._sale_desde_vuelta ?? 2}+
                   </span>
                 )}
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
@@ -2310,10 +2317,17 @@ function ProgramacionInner() {
     // Enriquecer con metadata de sucursal extra y ordenar por código
     const cams = (cd ?? [])
       .map((c: any) => {
-        const extra = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
-        return extra
-          ? { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
-          : c
+        const extra  = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
+        const propio = fd.find((f: any) => f.camion_codigo === c.codigo)
+        if (extra) {
+          // Camión que viene de otra sucursal: disponible desde vuelta X
+          return { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
+        }
+        if (propio?.sucursal_extra) {
+          // Camión local que se va a otra sucursal desde vuelta X
+          return { ...c, _sale_a_sucursal: propio.sucursal_extra, _sale_desde_vuelta: propio.sucursal_extra_desde_vuelta ?? 2 }
+        }
+        return c
       })
       .sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
     setFlotaSinRevisar(flotaSinRevisar)
@@ -3383,13 +3397,20 @@ function ProgramacionInner() {
             {/* Camiones — scroll horizontal */}
             <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
               <div className="flex gap-2 h-full pr-2">
-                {columnas.map(col => (
+                {columnas.map(col => {
+                  const camEx: any = col.camion
+                  // Truck that leaves to another sucursal from vuelta X: block when vueltaActiva >= X
+                  // Truck that comes from another sucursal from vuelta X: block when vueltaActiva < X
+                  const noDisponible =
+                    (camEx._sale_desde_vuelta != null && vueltaActiva >= camEx._sale_desde_vuelta) ||
+                    (camEx._disponible_desde_vuelta != null && vueltaActiva < camEx._disponible_desde_vuelta)
+                  return (
                   <ColumnaCamion key={col.camion.codigo} columna={col}
-                    onDrop={handleDrop}
-                    onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
+                    onDrop={noDisponible ? (e) => e.preventDefault() : handleDrop}
+                    onDragOver={noDisponible ? (e) => e.preventDefault() : (e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
                     onDragLeave={() => setDragOver(null)}
                     onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
-                    isDragOver={dragOver === col.camion.codigo}
+                    isDragOver={!noDisponible && dragOver === col.camion.codigo}
                     onCancelar={handleCancelar}
                     onCambiarVuelta={handleCambiarVuelta}
                     onReprogramar={handleReprogramar}
@@ -3401,15 +3422,16 @@ function ProgramacionInner() {
                     onIncidenciaStock={handleIncidenciaStock}
                     onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                     deposito={DEPOSITOS[sucursal]}
-                    soloVer={!puedeEditarProg}
-                    bloqueado={camionesBlockeados.has(col.camion.codigo)}
-                    onToggleLock={puedeEditarProg ? () => setCamionesBlockeados(prev => {
+                    soloVer={noDisponible || !puedeEditarProg}
+                    bloqueado={!noDisponible && camionesBlockeados.has(col.camion.codigo)}
+                    onToggleLock={!noDisponible && puedeEditarProg ? () => setCamionesBlockeados(prev => {
                       const s = new Set(prev)
                       s.has(col.camion.codigo) ? s.delete(col.camion.codigo) : s.add(col.camion.codigo)
                       try { localStorage.setItem('camionesBlockeados', JSON.stringify([...s])) } catch {}
                       return s
                     }) : undefined} />
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>

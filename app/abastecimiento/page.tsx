@@ -514,10 +514,19 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           for (const m of allMats ?? []) matByLower[m.nombre.toLowerCase()] = m.id
           const aliasByLower: Record<string, number> = {}
           for (const a of allAliases ?? []) if (a.material_id) aliasByLower[a.descripcion_pdf.toLowerCase()] = a.material_id
+          // Intentos en orden: exact-CI → exact-CI+coma→punto → sin-prefijo-CI → sin-prefijo+coma→punto
+          const stripPrefix = (s: string) => s.replace(/^[\d.\/]+\s*/, '').trim()
+          const normDec = (s: string) => s.replace(/,/g, '.')
           for (const name of unresolvedNames) {
             const low = name.toLowerCase()
-            if (matByLower[low]) nameToId[name] = matByLower[low]
-            else if (aliasByLower[low]) nameToId[name] = aliasByLower[low]
+            const stripped = stripPrefix(name).toLowerCase()
+            const lowNorm = normDec(low)
+            const strippedNorm = normDec(stripped)
+            const id = matByLower[low] ?? aliasByLower[low]
+              ?? matByLower[lowNorm] ?? aliasByLower[lowNorm]
+              ?? matByLower[stripped] ?? aliasByLower[stripped]
+              ?? matByLower[strippedNorm] ?? aliasByLower[strippedNorm]
+            if (id) nameToId[name] = id
           }
         }
 

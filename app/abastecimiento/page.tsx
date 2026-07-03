@@ -1073,9 +1073,10 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
   sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
   showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string; solicitudes: SdSolicitud[]
 }) {
-  const sinStock = rows.filter(r => r.cobertura === 'sin_stock').length
-  const parcial  = rows.filter(r => r.cobertura === 'parcial').length
-  const cubierto = rows.filter(r => r.cobertura === 'cubierto').length
+  const sinStock    = rows.filter(r => r.cobertura === 'sin_stock' && r.id_producto > 0).length
+  const parcial     = rows.filter(r => r.cobertura === 'parcial').length
+  const cubierto    = rows.filter(r => r.cobertura === 'cubierto').length
+  const sinIdentif  = rows.filter(r => !(r.id_producto > 0)).length
 
   return (
     <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0' }}>
@@ -1095,6 +1096,10 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
             <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
               style={{ background: '#d1fae5', color: '#065f46' }}>✓ {cubierto} cubierto</span>
           )}
+          {sinIdentif > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
+              style={{ background: '#f3f0ff', color: '#7c3aed' }}>? {sinIdentif} sin identificar</span>
+          )}
         </div>
         <span className="ml-auto text-xs" style={{ color: '#B9BBB7' }}>{expanded ? '▲' : '▼'}</span>
       </div>
@@ -1106,7 +1111,7 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
               const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
               return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
             })
-            .map(row => <ProductoRow key={row.id_producto} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} />)
+            .map(row => <ProductoRow key={row.id_producto > 0 ? String(row.id_producto) : `name:${row.nombre_producto}`} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} />)
           }
         </div>
       )}
@@ -1172,11 +1177,14 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
                        fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
               {row.nombre_producto}
             </span>
-            {row.id_producto > 0 && (
+            {row.id_producto > 0 ? (
               <span className="text-xs font-mono px-1.5 py-0.5 rounded"
                 style={{ background: '#f4f4f3', color: '#888', border: '1px solid #e8e8e8' }}>
                 #{row.id_producto}
               </span>
+            ) : (
+              <span className="text-xs px-1.5 py-0.5 rounded font-bold"
+                style={{ background: '#f3f0ff', color: '#7c3aed' }}>? sin identificar</span>
             )}
             {row.categoria && (
               <span className="text-xs px-1.5 py-0.5 rounded font-medium"

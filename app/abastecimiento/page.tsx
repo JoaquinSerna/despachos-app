@@ -441,42 +441,81 @@ function TabVerificacion({ rol, userEmail, showToast }: {
       let sols: any[] = []
 
       if (vistaSD === 'comercial') {
-        // En modo comercial:
-        // Paso 1: cargar TODAS las solicitudes (sin filtro de fecha — la fecha que importa es la del pedido)
-        let fromSols = 0
+        // Modo comercial: ir directo a pedidos (vendedor_id IS NOT NULL), filtrar por fecha_entrega.
+        // No depende de solicitudes_importadas — aparecen TODOS los pedidos de comercial.
+        let peds: any[] = []
+        const PAGE_PEDS = 1000
+        let fromPeds = 0
         while (true) {
-          const { data: solsPage } = await supabase.from('solicitudes_importadas')
-            .select('*').order('id').range(fromSols, fromSols + PAGE - 1)
-          if (!solsPage || solsPage.length === 0) break
-          sols = sols.concat(solsPage)
-          if (solsPage.length < PAGE) break
-          fromSols += PAGE
-        }
-
-        // Paso 2: buscar pedidos por NV para cada solicitud, filtrar por fecha_entrega en JS
-        const nvsComercial = [...new Set(sols.map((s: any) => s.id_venta).filter(Boolean))]
-        const pedMap: Record<string, { sucursal: string; estado: string; fecha_entrega: string | null }> = {}
-        const PED_BATCH = 200
-        for (let i = 0; i < nvsComercial.length; i += PED_BATCH) {
-          const { data: pedsPage } = await supabase.from('pedidos')
-            .select('nv, sucursal, estado, fecha_entrega')
-            .in('nv', nvsComercial.slice(i, i + PED_BATCH))
+          let q = supabase.from('pedidos')
+            .select('id, nv, cliente, destino, direccion, sucursal, estado, fecha_entrega')
             .not('vendedor_id', 'is', null)
             .neq('estado', 'cancelado')
-          for (const p of (pedsPage ?? [])) {
-            pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado, fecha_entrega: p.fecha_entrega }
-          }
+            .neq('estado', 'rechazado')
+            .order('fecha_entrega', { ascending: true })
+            .order('nv', { ascending: true })
+            .range(fromPeds, fromPeds + PAGE_PEDS - 1)
+          if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
+          if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
+          const { data: pedsPage } = await q
+          if (!pedsPage || pedsPage.length === 0) break
+          peds = peds.concat(pedsPage)
+          if (pedsPage.length < PAGE_PEDS) break
+          fromPeds += PAGE_PEDS
+        }
+
+        // pedidosSucursalMap keyed by NV (primero por NV gana)
+        const pedMap: Record<string, { sucursal: string; estado: string; fecha_entrega: string | null }> = {}
+        for (const p of peds) {
+          if (!pedMap[String(p.nv)]) pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado, fecha_entrega: p.fecha_entrega }
         }
         setPedidosSucursalMap(pedMap)
 
-        // Paso 3: descartar solicitudes sin pedido en la app y aplicar filtro de fecha_entrega
-        sols = sols.filter((s: any) => {
-          const ped = pedMap[String(s.id_venta)]
-          if (!ped) return false
-          if (fechaDesde && ped.fecha_entrega && ped.fecha_entrega < fechaDesde) return false
-          if (fechaHasta && ped.fecha_entrega && ped.fecha_entrega > fechaHasta) return false
-          return true
-        })
+        if (!peds.length) { setSolicitudes([]); setStock({}); setCatalogo({}); setDecisions({}); setFechasDeadline({}); setLoading(false); return }
+
+        // Cargar pedido_items para todos los pedidos
+        const pedIds = peds.map(p => p.id)
+        let allPedItems: any[] = []
+        const PED_BATCH = 200
+        for (let i = 0; i < pedIds.length; i += PED_BATCH) {
+          const { data: batch } = await supabase.from('pedido_items')
+            .select('pedido_id, nombre, cantidad, unidad')
+            .in('pedido_id', pedIds.slice(i, i + PED_BATCH))
+          if (batch) allPedItems = allPedItems.concat(batch)
+        }
+        const itemsByPedido: Record<string, any[]> = {}
+        for (const it of allPedItems) {
+          if (!itemsByPedido[it.pedido_id]) itemsByPedido[it.pedido_id] = []
+          itemsByPedido[it.pedido_id].push(it)
+        }
+
+        // Mapear pedidos a SdSolicitud — items sin id_producto usan clave por nombre en buildSugerencias
+        const solsConItems: SdSolicitud[] = peds.map((p: any, idx: number) => ({
+          id: idx + 1,
+          fecha_despacho: p.fecha_entrega ?? null,
+          horario: '', prioridad: '',
+          estado: p.estado ?? '',
+          id_venta: isNaN(Number(p.nv)) ? null : Number(p.nv),
+          cliente: p.cliente ?? '',
+          destino: p.destino ?? '',
+          direccion: p.direccion ?? '',
+          sucursal: p.sucursal ?? '',
+          items: (itemsByPedido[p.id] ?? []).map((it: any) => ({
+            id_producto: 0,
+            nombre_producto: it.nombre ?? '',
+            categoria: '', subcategoria: '',
+            cantidad_solicitada: Number(it.cantidad) || 0,
+            cantidad_entregada: 0,
+            hojas_de_ruta: '',
+          })),
+        }))
+        setSolicitudes(solsConItems)
+        setStock({})
+        setCatalogo({})
+        setDecisions({})
+        setFechasDeadline({})
+        setLoading(false)
+        return
       } else {
         // Modo Excel: filtrar solicitudes por fecha_despacho (comportamiento original)
         let from = 0
@@ -672,14 +711,9 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
 
   // Aplicar filtros de sucursal y estado ANTES de buildSugerencias
-  // En vista "comercial": usar sucursal del pedido de la app (override), y excluir los sin pedido
+  // En vista "comercial": solicitudes ya tienen sucursal/estado del pedido directamente
   const solicitudesParaSugerencias = solicitudes
-    .filter(s => vistaSD !== 'comercial' || pedidosSucursalMap[String(s.id_venta)] !== undefined)
-    .filter(s => vistaSD !== 'comercial' || filtrosEstadoComercial.length === 0 || filtrosEstadoComercial.includes(pedidosSucursalMap[String(s.id_venta)]?.estado ?? ''))
-    .map(s => vistaSD === 'comercial' && pedidosSucursalMap[String(s.id_venta)]
-      ? { ...s, sucursal: pedidosSucursalMap[String(s.id_venta)].sucursal }
-      : s
-    )
+    .filter(s => vistaSD !== 'comercial' || filtrosEstadoComercial.length === 0 || filtrosEstadoComercial.includes(s.estado))
     .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
     .filter(s => vistaSD === 'comercial' || filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
 
@@ -763,7 +797,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             <>
               <span className="text-xs" style={{ color: '#B9BBB7' }}>
                 {vistaSD === 'comercial'
-                  ? `${Object.keys(pedidosSucursalMap).length} de ${solicitudes.length} SDs en la app`
+                  ? `${solicitudes.length} pedido${solicitudes.length !== 1 ? 's' : ''} de comercial`
                   : `${solicitudes.length} SDs cargadas`}
               </span>
               {vistaSD === 'excel' && (

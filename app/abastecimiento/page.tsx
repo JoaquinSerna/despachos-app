@@ -490,8 +490,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Resolver nombre → id_producto via materiales (exact) luego material_aliases (exact)
-        // Los nombres que no resuelvan aparecen con badge "sin identificar" — agregar alias en DB para resolverlos
+        // Resolver nombre → id_producto: exact match primero, luego case-insensitive con catálogo completo
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
         const nameToId: Record<string, number> = {}
         const NAME_BATCH = 200
@@ -503,6 +502,23 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           ])
           for (const m of mats ?? []) nameToId[m.nombre] = m.id
           for (const a of aliases ?? []) if (a.material_id && !nameToId[a.descripcion_pdf]) nameToId[a.descripcion_pdf] = a.material_id
+        }
+        // Fallback case-insensitive: bajar catálogo completo y matchear los que quedaron sin resolver
+        const unresolvedNames = uniqueNames.filter(n => !nameToId[n])
+        if (unresolvedNames.length > 0) {
+          const [{ data: allMats }, { data: allAliases }] = await Promise.all([
+            supabase.from('materiales').select('id, nombre'),
+            supabase.from('material_aliases').select('descripcion_pdf, material_id'),
+          ])
+          const matByLower: Record<string, number> = {}
+          for (const m of allMats ?? []) matByLower[m.nombre.toLowerCase()] = m.id
+          const aliasByLower: Record<string, number> = {}
+          for (const a of allAliases ?? []) if (a.material_id) aliasByLower[a.descripcion_pdf.toLowerCase()] = a.material_id
+          for (const name of unresolvedNames) {
+            const low = name.toLowerCase()
+            if (matByLower[low]) nameToId[name] = matByLower[low]
+            else if (aliasByLower[low]) nameToId[name] = aliasByLower[low]
+          }
         }
 
         // Mapear pedidos a SdSolicitud con id_producto resuelto

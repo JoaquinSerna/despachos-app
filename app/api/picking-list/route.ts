@@ -9,6 +9,10 @@ function getAdmin() {
   )
 }
 
+function stripPrefix(nombre: string): string {
+  return nombre.replace(/^\d+\./, '').trim()
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const fechaDesde = searchParams.get('fecha_desde') ?? searchParams.get('fecha')
@@ -19,47 +23,77 @@ export async function GET(request: NextRequest) {
 
   const admin = getAdmin()
 
-  let q = admin.from('pedidos')
-    .select('id, nv, cliente, estado, camion_id, vuelta, sucursal')
+  // Traer pedidos normales (tipo != 'retiro') y retiros por separado
+  let qBase = admin.from('pedidos')
+    .select('id, nv, cliente, direccion, estado, camion_id, vuelta, sucursal, tipo, fecha_entrega')
     .gte('fecha_entrega', fechaDesde)
     .lte('fecha_entrega', fechaHasta)
     .neq('estado', 'cancelado')
     .neq('estado', 'rechazado')
-  if (sucursal) q = q.eq('sucursal', sucursal)
+  if (sucursal) qBase = qBase.eq('sucursal', sucursal)
 
-  const { data: pedidos, error: pedErr } = await q
+  const { data: todos, error: pedErr } = await qBase
   if (pedErr) return NextResponse.json({ error: pedErr.message }, { status: 500 })
-  if (!pedidos || pedidos.length === 0) {
-    return NextResponse.json({ productos: [], pedidos_count: 0, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null })
+  if (!todos || todos.length === 0) {
+    return NextResponse.json({
+      productos: [], pedidos_count: 0, retiros: [],
+      fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null,
+    })
   }
 
-  const pedidoIds = pedidos.map(p => p.id)
+  const pedidosNormales = todos.filter(p => p.tipo !== 'retiro')
+  const pedidosRetiro  = todos.filter(p => p.tipo === 'retiro')
+
+  // Items de todos los pedidos
+  const allIds = todos.map(p => p.id)
   let allItems: any[] = []
   const BATCH = 500
-  for (let i = 0; i < pedidoIds.length; i += BATCH) {
+  for (let i = 0; i < allIds.length; i += BATCH) {
     const { data: batch } = await admin.from('pedido_items')
       .select('pedido_id, nombre, cantidad, unidad')
-      .in('pedido_id', pedidoIds.slice(i, i + BATCH))
+      .in('pedido_id', allIds.slice(i, i + BATCH))
     if (batch) allItems = allItems.concat(batch)
   }
 
-  // Agregar por producto — strip prefijo numérico tipo "1." o "2.CEMENTO..." que agrega la IA al leer PDFs
-  function stripPrefix(nombre: string): string {
-    return nombre.replace(/^\d+\./, '').trim()
+  // Indexar items por pedido
+  const itemsByPedido: Record<string, { nombre: string; cantidad: number; unidad: string }[]> = {}
+  for (const item of allItems) {
+    if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
+    const nombre = stripPrefix(item.nombre ?? '')
+    if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u' })
   }
 
+  // Agregar productos normales
   const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
-  for (const item of allItems) {
-    const nombre = stripPrefix(item.nombre ?? '')
-    if (!nombre) continue
-    const key = `${nombre}|||${item.unidad ?? 'u'}`
-    if (!totales[key]) totales[key] = { nombre, cantidad: 0, unidad: item.unidad ?? 'u' }
-    totales[key].cantidad += Number(item.cantidad) || 0
+  for (const ped of pedidosNormales) {
+    for (const item of itemsByPedido[ped.id] ?? []) {
+      const key = `${item.nombre}|||${item.unidad}`
+      if (!totales[key]) totales[key] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
+      totales[key].cantidad += item.cantidad
+    }
   }
 
   const productos = Object.values(totales)
     .filter(p => p.nombre)
     .sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
 
-  return NextResponse.json({ productos, pedidos_count: pedidos.length, fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null })
+  // Retiros: cada pedido con sus items
+  const retiros = pedidosRetiro.map(ped => ({
+    id: ped.id,
+    nv: ped.nv,
+    cliente: ped.cliente ?? '',
+    direccion: ped.direccion ?? '',
+    sucursal: ped.sucursal ?? '',
+    fecha_entrega: ped.fecha_entrega ?? '',
+    items: itemsByPedido[ped.id] ?? [],
+  }))
+
+  return NextResponse.json({
+    productos,
+    pedidos_count: pedidosNormales.length,
+    retiros,
+    fecha_desde: fechaDesde,
+    fecha_hasta: fechaHasta,
+    sucursal: sucursal ?? null,
+  })
 }

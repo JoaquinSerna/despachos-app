@@ -2504,6 +2504,7 @@ function TabPreparacion() {
   const [fechaHasta, setFechaHasta] = useState(hoy())
   const [sucursal, setSucursal] = useState('')
   const [productos, setProductos] = useState<{ nombre: string; cantidad: number; unidad: string }[]>([])
+  const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: { nombre: string; cantidad: number; unidad: string }[] }[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -2515,7 +2516,7 @@ function TabPreparacion() {
 
   async function buscar() {
     if (!fechaDesde || !fechaHasta) return
-    setLoading(true); setError(''); setCargado(false); setProductos([])
+    setLoading(true); setError(''); setCargado(false); setProductos([]); setRetiros([])
     try {
       const params = new URLSearchParams({ fecha_desde: fechaDesde, fecha_hasta: fechaHasta })
       if (sucursal) params.set('sucursal', sucursal)
@@ -2523,6 +2524,7 @@ function TabPreparacion() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Error al cargar')
       setProductos(json.productos ?? [])
+      setRetiros(json.retiros ?? [])
       setPedidosCount(json.pedidos_count ?? 0)
       setCargado(true)
     } catch (e: any) {
@@ -2609,6 +2611,56 @@ function TabPreparacion() {
     doc.setFontSize(9)
     doc.setTextColor(37, 74, 150)
     doc.text(`Total líneas: ${productos.length}   |   Total pedidos: ${pedidosCount}`, ML, y)
+    y += 10
+
+    // Sección retiros
+    if (retiros.length > 0) {
+      if (y > PH - 60) { doc.addPage(); y = MT }
+      // Título sección
+      doc.setFillColor(229, 35, 34)
+      doc.rect(ML, y, PW - ML - MR, 8, 'F')
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(9)
+      doc.setTextColor(255, 255, 255)
+      doc.text(`🔴  RETIRAR DE CLIENTES — ${retiros.length} pedido${retiros.length !== 1 ? 's' : ''}`, ML + 2, y + 5.5)
+      y += 10
+
+      retiros.forEach((ret, ri) => {
+        if (y > PH - 40) {
+          doc.addPage(); y = MT
+          doc.setFillColor(37, 74, 150)
+          doc.rect(0, 0, PW, 10, 'F')
+          doc.setTextColor(255, 255, 255)
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(8)
+          doc.text(`Retiros — ${fechaLabel} (cont.)`, ML, 7)
+          y = 14
+        }
+        const bgRet = ri % 2 === 0 ? [255, 245, 245] : [255, 255, 255]
+        const retH = 7 + Math.min(ret.items.length, 5) * 5.5
+        doc.setFillColor(bgRet[0], bgRet[1], bgRet[2])
+        doc.rect(ML, y, PW - ML - MR, retH, 'F')
+        doc.setFont('helvetica', 'bold')
+        doc.setFontSize(8.5)
+        doc.setTextColor(180, 20, 20)
+        doc.text(`NV ${ret.nv}  ${ret.cliente}`, ML + 2, y + 5)
+        doc.setFont('helvetica', 'normal')
+        doc.setFontSize(7.5)
+        doc.setTextColor(80, 80, 80)
+        doc.text(ret.direccion || 'Sin dirección', ML + 2, y + 10)
+        let iy = y + 15
+        ret.items.slice(0, 5).forEach(item => {
+          doc.setTextColor(40, 40, 40)
+          doc.text(`• ${item.nombre}  ${item.cantidad} ${item.unidad}`, ML + 4, iy)
+          iy += 5.5
+        })
+        if (ret.items.length > 5) {
+          doc.setTextColor(150, 150, 150)
+          doc.text(`  …y ${ret.items.length - 5} más`, ML + 4, iy)
+        }
+        y += retH + 3
+      })
+    }
 
     // Footer
     doc.setFont('helvetica', 'normal')
@@ -2665,7 +2717,7 @@ function TabPreparacion() {
           style={{ background: '#254A96' }}>
           {loading ? 'Buscando…' : 'Buscar'}
         </button>
-        {cargado && productos.length > 0 && (
+        {cargado && (productos.length > 0 || retiros.length > 0) && (
           <button onClick={descargarPDF}
             className="px-5 py-2 text-sm font-medium rounded-lg"
             style={{ background: '#e8edf8', color: '#254A96' }}>
@@ -2722,6 +2774,53 @@ function TabPreparacion() {
                   </tr>
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Sección retiros */}
+          {retiros.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-px flex-1" style={{ background: '#fca5a5' }} />
+                <span className="text-xs font-bold px-3 py-1 rounded-full" style={{ background: '#fde8e8', color: '#E52322' }}>
+                  🔴 RETIRAR DE CLIENTES — {retiros.length} pedido{retiros.length !== 1 ? 's' : ''}
+                </span>
+                <div className="h-px flex-1" style={{ background: '#fca5a5' }} />
+              </div>
+              <div className="space-y-2">
+                {retiros.map((ret, i) => (
+                  <div key={ret.id} className="bg-white rounded-xl border overflow-hidden"
+                    style={{ borderColor: '#fca5a5', borderLeftWidth: 4, borderLeftColor: '#E52322' }}>
+                    <div className="px-4 py-2.5 flex items-start justify-between gap-2" style={{ background: '#fff5f5' }}>
+                      <div>
+                        <span className="font-semibold text-sm" style={{ color: '#E52322' }}>NV {ret.nv}</span>
+                        <span className="ml-2 text-sm font-medium" style={{ color: '#1e1e1e' }}>{ret.cliente}</span>
+                        {ret.sucursal && <span className="ml-2 text-xs" style={{ color: '#B9BBB7' }}>{ret.sucursal}</span>}
+                      </div>
+                      {ret.fecha_entrega && (
+                        <span className="text-xs shrink-0" style={{ color: '#B9BBB7' }}>{fmtLabel(ret.fecha_entrega)}</span>
+                      )}
+                    </div>
+                    {ret.direccion && (
+                      <div className="px-4 py-1.5 text-xs" style={{ color: '#666', borderTop: '1px solid #fee2e2' }}>
+                        📍 {ret.direccion}
+                      </div>
+                    )}
+                    {ret.items.length > 0 && (
+                      <div className="px-4 py-2 border-t" style={{ borderColor: '#fee2e2' }}>
+                        {ret.items.map((item, j) => (
+                          <div key={j} className="flex items-center gap-2 py-0.5 text-sm">
+                            <span style={{ color: '#999' }}>•</span>
+                            <span className="flex-1" style={{ color: '#333' }}>{item.nombre}</span>
+                            <span className="font-semibold" style={{ color: '#E52322' }}>{item.cantidad}</span>
+                            <span className="text-xs" style={{ color: '#B9BBB7' }}>{item.unidad}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </>

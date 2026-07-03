@@ -489,7 +489,22 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Mapear pedidos a SdSolicitud — items sin id_producto usan clave por nombre en buildSugerencias
+        // Resolver nombre → id_producto via materiales + material_aliases
+        const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
+        const nameToId: Record<string, number> = {}
+        const NAME_BATCH = 200
+        for (let i = 0; i < uniqueNames.length; i += NAME_BATCH) {
+          const nameBatch = uniqueNames.slice(i, i + NAME_BATCH)
+          const { data: mats } = await supabase.from('materiales').select('id, nombre').in('nombre', nameBatch)
+          for (const m of mats ?? []) nameToId[m.nombre] = m.id
+          const stillMissing = nameBatch.filter(n => !nameToId[n])
+          if (stillMissing.length > 0) {
+            const { data: aliases } = await supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', stillMissing)
+            for (const a of aliases ?? []) if (a.material_id) nameToId[a.descripcion_pdf] = a.material_id
+          }
+        }
+
+        // Mapear pedidos a SdSolicitud con id_producto resuelto
         const solsConItems: SdSolicitud[] = peds.map((p: any, idx: number) => ({
           id: idx + 1,
           fecha_despacho: p.fecha_entrega ?? null,
@@ -501,7 +516,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           direccion: p.direccion ?? '',
           sucursal: p.sucursal ?? '',
           items: (itemsByPedido[p.id] ?? []).map((it: any) => ({
-            id_producto: 0,
+            id_producto: nameToId[it.nombre] ?? 0,
             nombre_producto: it.nombre ?? '',
             categoria: '', subcategoria: '',
             cantidad_solicitada: Number(it.cantidad) || 0,
@@ -509,9 +524,34 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             hojas_de_ruta: '',
           })),
         }))
+
+        // Cargar stock y catálogo para los productos resueltos
+        const prodIds = [...new Set(Object.values(nameToId))]
+        const stockMap: StockMap = {}
+        const STOCK_BATCH = 150
+        for (let i = 0; i < prodIds.length; i += STOCK_BATCH) {
+          const { data: stockBatch } = await supabase.from('stock_sucursal')
+            .select('id_producto, sucursal, cantidad')
+            .in('id_producto', prodIds.slice(i, i + STOCK_BATCH))
+          for (const s of stockBatch ?? []) {
+            const key = String(s.id_producto)
+            if (!stockMap[key]) stockMap[key] = {}
+            stockMap[key][s.sucursal] = Number(s.cantidad)
+          }
+        }
+        setStock(stockMap)
+
+        if (prodIds.length > 0) {
+          const CAT_BATCH = 300
+          const catMap: Record<number, CatalogoEntry> = {}
+          for (let i = 0; i < prodIds.length; i += CAT_BATCH) {
+            const res = await fetch(`/api/productos-catalogo?ids=${prodIds.slice(i, i + CAT_BATCH).join(',')}`)
+            if (res.ok) { const catRaw: CatalogoEntry[] = await res.json(); for (const c of catRaw) catMap[c.id] = c }
+          }
+          setCatalogo(catMap)
+        }
+
         setSolicitudes(solsConItems)
-        setStock({})
-        setCatalogo({})
         setDecisions({})
         setFechasDeadline({})
         setLoading(false)

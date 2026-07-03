@@ -448,7 +448,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         let fromPeds = 0
         while (true) {
           let q = supabase.from('pedidos')
-            .select('id, nv, cliente, destino, direccion, sucursal, estado, fecha_entrega')
+            .select('id, nv, cliente, direccion, sucursal, estado, fecha_entrega')
             .not('vendedor_id', 'is', null)
             .neq('estado', 'cancelado')
             .neq('estado', 'rechazado')
@@ -512,7 +512,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           estado: p.estado ?? '',
           id_venta: isNaN(Number(p.nv)) ? null : Number(p.nv),
           cliente: p.cliente ?? '',
-          destino: p.destino ?? '',
+          destino: p.direccion ?? '',
           direccion: p.direccion ?? '',
           sucursal: p.sucursal ?? '',
           items: (itemsByPedido[p.id] ?? []).map((it: any) => ({

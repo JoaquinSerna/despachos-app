@@ -490,9 +490,10 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Diagnóstico temporal: ver si codigo_material está poblado
+        // Diagnóstico temporal: ver qué formato tiene codigo_material
         const conCodigo = allPedItems.filter((it: any) => it.codigo_material).length
-        showToast(`Diagnóstico: ${conCodigo}/${allPedItems.length} items tienen codigo_material`, 'ok')
+        const ejemplos = [...new Set(allPedItems.filter((it: any) => it.codigo_material).map((it: any) => it.codigo_material))].slice(0, 5)
+        showToast(`Diagnóstico: ${conCodigo}/${allPedItems.length} con codigo. Ejemplos: ${ejemplos.join(' | ')}`, 'ok')
 
         // Resolver nombre → id_producto: exact match primero, luego case-insensitive con catálogo completo
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]

@@ -457,7 +457,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
             .range(fromPeds, fromPeds + PAGE_PEDS - 1)
           if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
           if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
-          const { data: pedsPage } = await q
+          const { data: pedsPage, error: pedsErr } = await q
+          if (pedsErr) { showToast(`Error pedidos: ${pedsErr.message}`, 'err'); break }
           if (!pedsPage || pedsPage.length === 0) break
           peds = peds.concat(pedsPage)
           if (pedsPage.length < PAGE_PEDS) break

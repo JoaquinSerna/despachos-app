@@ -1023,6 +1023,26 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         </p>
       )}
 
+      {/* Nombres sin identificar — solo vista comercial, para diagnóstico */}
+      {vistaSD === 'comercial' && solicitudes.length > 0 && (() => {
+        const sinId = [...new Set(
+          solicitudes.flatMap(s => s.items)
+            .filter(i => !i.id_producto || i.id_producto === 0)
+            .map(i => i.nombre_producto)
+        )].sort()
+        if (sinId.length === 0) return null
+        return (
+          <details className="mb-3 text-xs rounded-lg border p-3" style={{ borderColor: '#e0c4ff', background: '#faf5ff' }}>
+            <summary className="cursor-pointer font-semibold" style={{ color: '#7c3aed' }}>
+              ⚠ {sinId.length} nombre{sinId.length !== 1 ? 's' : ''} sin identificar (click para ver)
+            </summary>
+            <ul className="mt-2 space-y-0.5 font-mono" style={{ color: '#4b5563' }}>
+              {sinId.map(n => <li key={n}>• {n}</li>)}
+            </ul>
+          </details>
+        )
+      })()}
+
       {<>
 
         {/* ── Stats ────────────────────────────────────────────────────────── */}

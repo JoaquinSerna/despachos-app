@@ -94,7 +94,7 @@ interface SdSolicitud {
   horario: string
   prioridad: string
   estado: string
-  id_venta: number
+  id_venta: number | null
   cliente: string
   destino: string
   direccion: string

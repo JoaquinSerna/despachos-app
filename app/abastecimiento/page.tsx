@@ -489,18 +489,28 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Resolver nombre → id_producto via materiales + material_aliases
+        // Resolver nombre → id_producto via materiales + material_aliases (exact), luego ilike como fallback
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
         const nameToId: Record<string, number> = {}
         const NAME_BATCH = 200
         for (let i = 0; i < uniqueNames.length; i += NAME_BATCH) {
           const nameBatch = uniqueNames.slice(i, i + NAME_BATCH)
+          // 1) Exact match en materiales
           const { data: mats } = await supabase.from('materiales').select('id, nombre').in('nombre', nameBatch)
           for (const m of mats ?? []) nameToId[m.nombre] = m.id
-          const stillMissing = nameBatch.filter(n => !nameToId[n])
-          if (stillMissing.length > 0) {
-            const { data: aliases } = await supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', stillMissing)
+          // 2) Exact match en material_aliases
+          const stillMissing1 = nameBatch.filter(n => !nameToId[n])
+          if (stillMissing1.length > 0) {
+            const { data: aliases } = await supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', stillMissing1)
             for (const a of aliases ?? []) if (a.material_id) nameToId[a.descripcion_pdf] = a.material_id
+          }
+          // 3) Fallback ilike: buscar uno por uno los que aún no resolvieron
+          const stillMissing2 = nameBatch.filter(n => !nameToId[n])
+          for (const name of stillMissing2) {
+            const { data: fuzzy } = await supabase.from('materiales').select('id, nombre').ilike('nombre', name).limit(1)
+            if (fuzzy?.[0]) { nameToId[name] = fuzzy[0].id; continue }
+            const { data: fuzzyAlias } = await supabase.from('material_aliases').select('material_id, descripcion_pdf').ilike('descripcion_pdf', name).limit(1)
+            if (fuzzyAlias?.[0]?.material_id) nameToId[name] = fuzzyAlias[0].material_id
           }
         }
 

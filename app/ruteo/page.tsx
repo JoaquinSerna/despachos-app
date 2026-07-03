@@ -762,6 +762,9 @@ export default function RuteoPage() {
     const margenIzq = 14
     const ancho = 182
 
+    const pedidosEntrega = pedidosVuelta.filter(p => p.tipo !== 'retiro')
+    const pedidosRetiroPDF = pedidosVuelta.filter(p => p.tipo === 'retiro')
+
     // ── Encabezado ──
     doc.setFillColor(...azul)
     doc.rect(margenIzq, y, ancho, 14, 'F')
@@ -773,7 +776,10 @@ export default function RuteoPage() {
     doc.setTextColor(...gris)
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    doc.text(`${fechaStr} · ${pedidosVuelta.length} entregas`, margenIzq, y)
+    const subtitulo = pedidosRetiroPDF.length > 0
+      ? `${fechaStr} · ${pedidosEntrega.length} entregas · ${pedidosRetiroPDF.length} retiro${pedidosRetiroPDF.length !== 1 ? 's' : ''}`
+      : `${fechaStr} · ${pedidosEntrega.length} entregas`
+    doc.text(subtitulo, margenIzq, y)
     y += 8
 
     // ── Detalle por entrega ──
@@ -785,7 +791,7 @@ export default function RuteoPage() {
     doc.line(margenIzq, y + 1.5, margenIzq + ancho, y + 1.5)
     y += 6
 
-    pedidosVuelta.forEach((p, idx) => {
+    pedidosEntrega.forEach((p, idx) => {
       const items = p.items ?? []
       const filas = items.length === 0 ? [['Sin items', '', '']] : items.map(i => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
       const numEntrega = p.orden_entrega ?? idx + 1
@@ -826,9 +832,9 @@ export default function RuteoPage() {
       y += 3
     })
 
-    // ── Totales generales ──
+    // ── Totales generales (solo entregas, no retiros) ──
     const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
-    pedidosVuelta.forEach(p => {
+    pedidosEntrega.forEach(p => {
       ;(p.items ?? []).forEach(item => {
         if (!totales[item.nombre]) totales[item.nombre] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
         totales[item.nombre].cantidad += item.cantidad
@@ -870,6 +876,57 @@ export default function RuteoPage() {
         doc.setTextColor(...gris)
         doc.text(t.unidad, margenIzq + ancho - 2, y + 4.2, { align: 'right' })
         y += 6
+      })
+    }
+
+    // ── Retiros de clientes ──
+    if (pedidosRetiroPDF.length > 0) {
+      if (y + 20 > 270) { doc.addPage(); y = 15 }
+      y += 4
+      const rojo: [number, number, number] = [229, 35, 34]
+      doc.setFillColor(...rojo)
+      doc.rect(margenIzq, y, ancho, 8, 'F')
+      doc.setTextColor(...blanco)
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.text(`RETIRAR DE CLIENTES — ${pedidosRetiroPDF.length} parada${pedidosRetiroPDF.length !== 1 ? 's' : ''}`, margenIzq + 3, y + 5.5)
+      y += 10
+
+      pedidosRetiroPDF.forEach((p, idx) => {
+        const items = p.items ?? []
+        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
+        const alturaEstimada = 8 + filas.length * 6
+        if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
+
+        const bgRetiro: [number, number, number] = [255, 240, 240]
+        doc.setFillColor(...bgRetiro)
+        doc.rect(margenIzq, y, ancho, 8, 'F')
+        doc.setTextColor(...rojo)
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.text(`${idx + 1}. ${p.cliente}`, margenIzq + 2, y + 5.5)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(...gris)
+        doc.setFontSize(8)
+        doc.text(`NV ${p.nv} · ${p.direccion ?? ''}`, margenIzq + 60, y + 5.5)
+        y += 8
+
+        filas.forEach((fila: string[], i: number) => {
+          doc.setFillColor(i % 2 === 0 ? 255 : 252, i % 2 === 0 ? 248 : 248, i % 2 === 0 ? 248 : 248)
+          doc.rect(margenIzq, y, ancho, 6, 'F')
+          doc.setTextColor(30, 30, 30)
+          doc.setFontSize(8.5)
+          doc.setFont('helvetica', 'normal')
+          doc.text(fila[0], margenIzq + 4, y + 4.2)
+          doc.setFont('helvetica', 'bold')
+          doc.setTextColor(...rojo)
+          doc.text(fila[1], margenIzq + ancho - 20, y + 4.2, { align: 'right' })
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(...gris)
+          doc.text(fila[2], margenIzq + ancho - 2, y + 4.2, { align: 'right' })
+          y += 6
+        })
+        y += 3
       })
     }
 

@@ -506,15 +506,18 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         // Fallback case-insensitive: bajar catálogo completo y matchear los que quedaron sin resolver
         const unresolvedNames = uniqueNames.filter(n => !nameToId[n])
         if (unresolvedNames.length > 0) {
-          const [{ data: allMats }, { data: allAliases }] = await Promise.all([
+          const [{ data: allMats }, { data: allAliases }, { data: allCatProds }] = await Promise.all([
             supabase.from('materiales').select('id, nombre'),
             supabase.from('material_aliases').select('descripcion_pdf, material_id'),
+            supabase.from('productos_catalogo').select('id, nombre'),
           ])
           const matByLower: Record<string, number> = {}
           for (const m of allMats ?? []) matByLower[m.nombre.toLowerCase()] = m.id
           const aliasByLower: Record<string, number> = {}
           for (const a of allAliases ?? []) if (a.material_id) aliasByLower[a.descripcion_pdf.toLowerCase()] = a.material_id
-          // Intentos en orden: exact-CI → exact-CI+coma→punto → sin-prefijo-CI → sin-prefijo+coma→punto
+          const catByLower: Record<string, number> = {}
+          for (const p of allCatProds ?? []) catByLower[p.nombre.toLowerCase()] = p.id
+          // Intentos en orden: materiales/aliases → productos_catalogo, con strip de prefijo numérico y normalización coma→punto
           const stripPrefix = (s: string) => s.replace(/^[\d.\/]+\s*/, '').trim()
           const normDec = (s: string) => s.replace(/,/g, '.')
           for (const name of unresolvedNames) {
@@ -526,6 +529,8 @@ function TabVerificacion({ rol, userEmail, showToast }: {
               ?? matByLower[lowNorm] ?? aliasByLower[lowNorm]
               ?? matByLower[stripped] ?? aliasByLower[stripped]
               ?? matByLower[strippedNorm] ?? aliasByLower[strippedNorm]
+              ?? catByLower[low] ?? catByLower[lowNorm]
+              ?? catByLower[stripped] ?? catByLower[strippedNorm]
             if (id) nameToId[name] = id
           }
         }

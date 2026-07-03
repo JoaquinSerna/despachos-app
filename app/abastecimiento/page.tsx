@@ -480,7 +480,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         const PED_BATCH = 200
         for (let i = 0; i < pedIds.length; i += PED_BATCH) {
           const { data: batch } = await supabase.from('pedido_items')
-            .select('pedido_id, nombre, cantidad, unidad')
+            .select('pedido_id, codigo_material, nombre, cantidad, unidad')
             .in('pedido_id', pedIds.slice(i, i + PED_BATCH))
           if (batch) allPedItems = allPedItems.concat(batch)
         }
@@ -547,7 +547,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           direccion: p.direccion ?? '',
           sucursal: p.sucursal ?? '',
           items: (itemsByPedido[p.id] ?? []).map((it: any) => ({
-            id_producto: nameToId[it.nombre] ?? 0,
+            id_producto: (it.codigo_material && !isNaN(Number(it.codigo_material)) ? Number(it.codigo_material) : null) ?? nameToId[it.nombre] ?? 0,
             nombre_producto: it.nombre ?? '',
             categoria: '', subcategoria: '',
             cantidad_solicitada: Number(it.cantidad) || 0,

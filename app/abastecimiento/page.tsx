@@ -489,29 +489,19 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Resolver nombre → id_producto via materiales + material_aliases (exact), luego ilike como fallback
+        // Resolver nombre → id_producto via materiales (exact) luego material_aliases (exact)
+        // Los nombres que no resuelvan aparecen con badge "sin identificar" — agregar alias en DB para resolverlos
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
         const nameToId: Record<string, number> = {}
         const NAME_BATCH = 200
         for (let i = 0; i < uniqueNames.length; i += NAME_BATCH) {
           const nameBatch = uniqueNames.slice(i, i + NAME_BATCH)
-          // 1) Exact match en materiales
-          const { data: mats } = await supabase.from('materiales').select('id, nombre').in('nombre', nameBatch)
+          const [{ data: mats }, { data: aliases }] = await Promise.all([
+            supabase.from('materiales').select('id, nombre').in('nombre', nameBatch),
+            supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', nameBatch),
+          ])
           for (const m of mats ?? []) nameToId[m.nombre] = m.id
-          // 2) Exact match en material_aliases
-          const stillMissing1 = nameBatch.filter(n => !nameToId[n])
-          if (stillMissing1.length > 0) {
-            const { data: aliases } = await supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', stillMissing1)
-            for (const a of aliases ?? []) if (a.material_id) nameToId[a.descripcion_pdf] = a.material_id
-          }
-          // 3) Fallback ilike: buscar uno por uno los que aún no resolvieron
-          const stillMissing2 = nameBatch.filter(n => !nameToId[n])
-          for (const name of stillMissing2) {
-            const { data: fuzzy } = await supabase.from('materiales').select('id, nombre').ilike('nombre', name).limit(1)
-            if (fuzzy?.[0]) { nameToId[name] = fuzzy[0].id; continue }
-            const { data: fuzzyAlias } = await supabase.from('material_aliases').select('material_id, descripcion_pdf').ilike('descripcion_pdf', name).limit(1)
-            if (fuzzyAlias?.[0]?.material_id) nameToId[name] = fuzzyAlias[0].material_id
-          }
+          for (const a of aliases ?? []) if (a.material_id && !nameToId[a.descripcion_pdf]) nameToId[a.descripcion_pdf] = a.material_id
         }
 
         // Mapear pedidos a SdSolicitud con id_producto resuelto

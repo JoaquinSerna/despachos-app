@@ -490,6 +490,10 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
+        // Diagnóstico temporal: ver si codigo_material está poblado
+        const conCodigo = allPedItems.filter((it: any) => it.codigo_material).length
+        showToast(`Diagnóstico: ${conCodigo}/${allPedItems.length} items tienen codigo_material`, 'ok')
+
         // Resolver nombre → id_producto: exact match primero, luego case-insensitive con catálogo completo
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
         const nameToId: Record<string, number> = {}

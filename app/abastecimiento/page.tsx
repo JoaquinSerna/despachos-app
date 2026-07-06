@@ -1470,7 +1470,6 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   }
 
   async function confirmarEntregadoParcial() {
-    if (fotosParcial.length === 0) { setErrorParcial('Necesitás agregar al menos una foto.'); return }
     if (!notaParcialReq.trim()) { setErrorParcial('Ingresá el motivo de la entrega parcial.'); return }
     setErrorParcial('')
     setConfirmandoParcial(true)
@@ -1509,7 +1508,6 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   }
 
   async function confirmarEntregadoConFoto() {
-    if (fotos.length === 0) { setErrorFoto('Necesitás agregar al menos una foto antes de continuar.'); return }
     setErrorFoto('')
     setSubiendoFoto(true)
     try {
@@ -1798,10 +1796,10 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
                 placeholder="Ej: Faltaba stock, no había espacio, parte rechazada en destino..." />
             </div>
 
-            {/* Foto obligatoria */}
+            {/* Foto opcional */}
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
-                Foto <span style={{ color: '#E52322' }}>*</span>
+                Foto <span className="font-normal" style={{ color: '#B9BBB7' }}>(opcional)</span>
               </label>
               {fotosParcial.length > 0 && (
                 <div className="space-y-2 mb-2">
@@ -1819,10 +1817,10 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               )}
               <button onClick={() => fileRefParcial.current?.click()}
                 className="w-full border-2 border-dashed rounded-xl py-4 text-center"
-                style={{ borderColor: fotosParcial.length === 0 ? '#fca5a5' : '#e8edf8' }}>
+                style={{ borderColor: '#e8edf8' }}>
                 <p className="text-xl mb-0.5">📷</p>
-                <p className="text-xs" style={{ color: fotosParcial.length === 0 ? '#E52322' : '#B9BBB7' }}>
-                  {fotosParcial.length === 0 ? 'Foto requerida' : '+ Agregar otra'}
+                <p className="text-xs" style={{ color: '#B9BBB7' }}>
+                  {fotosParcial.length === 0 ? 'Agregar foto (opcional)' : '+ Agregar otra'}
                 </p>
               </button>
               <input ref={fileRefParcial} type="file" accept="image/*" capture="environment"
@@ -1837,7 +1835,7 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
             )}
 
             <button onClick={confirmarEntregadoParcial}
-              disabled={confirmandoParcial || fotosParcial.length === 0 || !notaParcialReq.trim()}
+              disabled={confirmandoParcial || !notaParcialReq.trim()}
               className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
               style={{ background: '#f59e0b' }}>
               {confirmandoParcial ? 'Guardando...' : '📦 Guardar entrega parcial'}
@@ -1860,11 +1858,10 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
                 className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
             </div>
 
-            {/* Fotos — obligatorias */}
+            {/* Fotos — opcionales */}
             <div>
               <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>
-                Foto del comprobante <span style={{ color: '#E52322' }}>*</span>
-                <span className="font-normal ml-1" style={{ color: '#B9BBB7' }}>(obligatoria)</span>
+                Foto del comprobante <span className="font-normal" style={{ color: '#B9BBB7' }}>(opcional)</span>
               </label>
               {fotos.length > 0 && (
                 <div className="space-y-2 mb-2">
@@ -1890,10 +1887,10 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               )}
               <button onClick={() => fileRefReq.current?.click()}
                 className="w-full border-2 border-dashed rounded-xl py-4 text-center"
-                style={{ borderColor: fotos.length === 0 ? '#fca5a5' : '#e8edf8' }}>
+                style={{ borderColor: '#e8edf8' }}>
                 <p className="text-xl mb-0.5">📷</p>
-                <p className="text-xs" style={{ color: fotos.length === 0 ? '#E52322' : '#B9BBB7' }}>
-                  {fotos.length === 0 ? 'Tocar para sacar foto (requerido)' : '+ Agregar otra foto'}
+                <p className="text-xs" style={{ color: '#B9BBB7' }}>
+                  {fotos.length === 0 ? 'Agregar foto (opcional)' : '+ Agregar otra foto'}
                 </p>
               </button>
               <input ref={fileRefReq} type="file" accept="image/*" capture="environment"

@@ -935,7 +935,13 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   const maxDistKm = !sinAsignar && deposito
     ? Math.max(0, ...pedidos.filter(p => p.latitud && p.longitud).map(p => distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!)))
     : 0
-  const maxVueltas = maxDistKm > 0 ? maxVueltasPorDistancia(maxDistKm) : null
+  const esGrua = !sinAsignar && !!(camion as any).grua_hidraulica
+  const maxVueltas = maxDistKm > 0
+    ? Math.min(
+        maxVueltasPorDistancia(maxDistKm),
+        maxVueltasPorTiempo(maxDistKm, posTotal, pedidos.length, esGrua)
+      )
+    : null
   const w = isExpanded ? 360 : 220
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
@@ -1062,6 +1068,31 @@ function maxVueltasPorDistancia(distKm: number): number {
   if (distKm < 50) return 3
   if (distKm < 100) return 2
   return 1
+}
+
+// Jornada laboral y demora de recarga en depósito (en horas)
+const JORNADA_H = 9
+const RECARGA_H = 40 / 60
+
+/**
+ * Cap de vueltas basado en el tiempo estimado de la vuelta.
+ * @param maxDistKm  distancia en línea recta al pedido más lejano (km)
+ * @param posTotal   m3 totales de la vuelta (volumen_total_m3 acumulado)
+ * @param numStops   cantidad de pedidos/paradas de la vuelta
+ * @param esGrua     el camión tiene grúa hidráulica (descarga más lenta por parada)
+ */
+function maxVueltasPorTiempo(maxDistKm: number, posTotal: number, numStops: number, esGrua: boolean): number {
+  const VEL_KMH = 25
+  const FACTOR_RUTA = 1.5          // factor crow-flies → distancia real de ruta
+  const MIN_POR_POS = esGrua ? 8 : 3   // min por m3 de pallet: grúa es más lenta
+  const MIN_POR_PARADA = 5
+
+  const trasladoMin = (maxDistKm * FACTOR_RUTA / VEL_KMH) * 60
+  const descargaMin = posTotal * MIN_POR_POS + numStops * MIN_POR_PARADA
+  const totalHoras = (trasladoMin + descargaMin) / 60
+
+  if (totalHoras <= 0) return 4
+  return Math.max(1, Math.floor((JORNADA_H + RECARGA_H) / (totalHoras + RECARGA_H)))
 }
 
 function calcularOrdenRuta(pedidos: Pedido[], sucursal: string, ordenGoogle?: Record<string, number>): Record<string, number> {

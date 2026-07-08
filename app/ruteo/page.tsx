@@ -800,8 +800,9 @@ export default function RuteoPage() {
         ? p.notas.split(' | ').filter(s => !s.trimStart().startsWith('⚡')).join(' | ').trim()
         : ''
 
-      // Estimar altura para page break
-      const alturaEstimada = 14 + (notaComercial ? 6 : 0) + filas.length * 6
+      // Estimar altura para page break (nota puede tener varias líneas)
+      const lineasNota = notaComercial ? Math.ceil(notaComercial.length / 80) : 0
+      const alturaEstimada = 14 + (lineasNota > 0 ? lineasNota * 5 + 3 : 0) + filas.length * 6
       if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
 
       // Fila de cabecera del pedido
@@ -820,15 +821,24 @@ export default function RuteoPage() {
       // Nota comercial (si existe)
       if (notaComercial) {
         const naranja: [number, number, number] = [180, 83, 9]
-        doc.setFillColor(255, 243, 199)
-        doc.rect(margenIzq, y, ancho, 6, 'F')
-        doc.setTextColor(...naranja)
+        const prefijo = 'NOTA: '
         doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.text('⚠ ', margenIzq + 2, y + 4.2)
         doc.setFont('helvetica', 'normal')
-        doc.text(notaComercial, margenIzq + 8, y + 4.2)
-        y += 6
+        const maxAncho = ancho - 6
+        const lineas = doc.splitTextToSize(`${prefijo}${notaComercial}`, maxAncho)
+        const altNota = lineas.length * 5 + 3
+        doc.setFillColor(255, 243, 199)
+        doc.rect(margenIzq, y, ancho, altNota, 'F')
+        doc.setTextColor(...naranja)
+        doc.setFont('helvetica', 'bold')
+        doc.text('NOTA: ', margenIzq + 2, y + 4.2)
+        doc.setFont('helvetica', 'normal')
+        const anchoNota = doc.getTextWidth('NOTA: ')
+        const lineasTexto = doc.splitTextToSize(notaComercial, maxAncho - anchoNota)
+        lineasTexto.forEach((linea: string, li: number) => {
+          doc.text(linea, margenIzq + 2 + (li === 0 ? anchoNota : 0), y + 4.2 + li * 5)
+        })
+        y += altNota
       }
 
       // Filas de items

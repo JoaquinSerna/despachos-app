@@ -795,9 +795,13 @@ export default function RuteoPage() {
       const items = p.items ?? []
       const filas = items.length === 0 ? [['Sin items', '', '']] : items.map(i => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
       const numEntrega = p.orden_entrega ?? idx + 1
+      // Solo notas cargadas por comercial (las automáticas empiezan con ⚡)
+      const notaComercial = p.notas
+        ? p.notas.split(' | ').filter(s => !s.trimStart().startsWith('⚡')).join(' | ').trim()
+        : ''
 
       // Estimar altura para page break
-      const alturaEstimada = 14 + filas.length * 6
+      const alturaEstimada = 14 + (notaComercial ? 6 : 0) + filas.length * 6
       if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
 
       // Fila de cabecera del pedido
@@ -812,6 +816,20 @@ export default function RuteoPage() {
       doc.setFontSize(8)
       doc.text(`NV ${p.nv} · ${p.direccion ?? ''}`, margenIzq + 60, y + 5.5)
       y += 8
+
+      // Nota comercial (si existe)
+      if (notaComercial) {
+        const naranja: [number, number, number] = [180, 83, 9]
+        doc.setFillColor(255, 243, 199)
+        doc.rect(margenIzq, y, ancho, 6, 'F')
+        doc.setTextColor(...naranja)
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'bold')
+        doc.text('⚠ ', margenIzq + 2, y + 4.2)
+        doc.setFont('helvetica', 'normal')
+        doc.text(notaComercial, margenIzq + 8, y + 4.2)
+        y += 6
+      }
 
       // Filas de items
       filas.forEach((fila, i) => {

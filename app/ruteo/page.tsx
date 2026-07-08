@@ -707,11 +707,24 @@ export default function RuteoPage() {
     const tablasPorPedido = pedidosVuelta.map((p, idx) => {
       const items = p.items ?? []
       const num = p.orden_entrega ?? idx + 1
-      const header = `<td rowspan="${Math.max(items.length,1)}" style="vertical-align:top;font-weight:bold;width:24px">${num}</td><td rowspan="${Math.max(items.length,1)}" style="vertical-align:top;width:38%"><strong>${p.cliente}</strong><br><small style="color:#666">NV ${p.nv}</small><br><small style="color:#888">${p.direccion}</small></td>`
-      const filas = items.length === 0
-        ? `<tr>${header}<td colspan="3" style="color:#999">Sin items</td></tr>`
-        : items.map((item, i) => `<tr>${i === 0 ? header : ''}<td>${item.nombre}</td><td style="text-align:right;font-weight:bold;color:#254A96">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
-      return `<table class="pedido"><thead><tr><th style="width:24px">#</th><th style="width:38%">Cliente / NV / Dirección</th><th>Material</th><th style="text-align:right">Cant.</th><th>U.</th></tr></thead><tbody>${filas}</tbody></table>`
+      const notaComercial = p.notas
+        ? p.notas.split(' | ').filter((s: string) => !s.trimStart().startsWith('⚡')).join(' | ').trim()
+        : ''
+      const totalFilas = Math.max(items.length, 1) + (notaComercial ? 1 : 0)
+      const headerCells = `<td rowspan="${totalFilas}" style="vertical-align:top;font-weight:bold;width:24px">${num}</td><td rowspan="${totalFilas}" style="vertical-align:top;width:38%"><strong>${p.cliente}</strong><br><small style="color:#666">NV ${p.nv}</small><br><small style="color:#888">${p.direccion}</small></td>`
+      const filaNote = notaComercial
+        ? `<tr><td colspan="3" style="background:#fef3c7;color:#b45309;padding:4px 7px"><strong>NOTA:</strong> ${notaComercial}</td></tr>`
+        : ''
+      const filaItems = items.length === 0
+        ? `<tr><td colspan="3" style="color:#999">Sin items</td></tr>`
+        : items.map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${item.nombre}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
+      const primeraFila = notaComercial
+        ? `<tr>${headerCells}${filaNote.replace('<tr>', '').replace('</tr>', '')}</tr>`
+        : `<tr>${headerCells}${items.length === 0 ? '<td colspan="3" style="color:#999">Sin items</td>' : `<td>${items[0].nombre}</td><td class="qty">${items[0].cantidad.toLocaleString('es-AR')}</td><td>${items[0].unidad}</td>`}</tr>`
+      const filasResto = notaComercial
+        ? filaItems
+        : items.slice(1).map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${item.nombre}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
+      return `<table class="pedido"><thead><tr><th style="width:24px">#</th><th style="width:38%">Cliente / NV / Dirección</th><th>Material</th><th class="qty" style="width:60px">Cant.</th><th style="width:36px">U.</th></tr></thead><tbody>${primeraFila}${filasResto}</tbody></table>`
     }).join('')
 
     win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
@@ -721,12 +734,12 @@ export default function RuteoPage() {
         h1{font-size:15px;margin:0 0 2px 0;color:#254A96}
         .meta{font-size:11px;color:#666;margin-bottom:14px}
         h2{font-size:12px;margin:14px 0 8px;color:#254A96;border-bottom:1px solid #ccc;padding-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
-        table.pedido{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:11px;page-break-inside:avoid}
+        table.pedido{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:11px;page-break-inside:avoid;table-layout:fixed}
         thead{display:table-header-group}
         th{background:#254A96;color:#fff;padding:5px 7px;text-align:left}
-        td{padding:4px 7px;border-bottom:1px solid #eee}
-        table.totales{width:100%;border-collapse:collapse;font-size:11px}
-        .qty{text-align:right;font-weight:bold;color:#254A96}
+        td{padding:4px 7px;border-bottom:1px solid #eee;overflow:hidden}
+        table.totales{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+        .qty{text-align:right;font-weight:bold;color:#254A96;white-space:nowrap}
         @media print{@page{margin:15mm}table.pedido{page-break-inside:avoid}}
       </style></head><body>
       <h1>🚛 ${camionSeleccionado} — Vuelta ${vueltaActiva} · ${VUELTA_LABEL[vueltaActiva!] ?? ''}</h1>

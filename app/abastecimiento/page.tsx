@@ -491,11 +491,6 @@ function TabVerificacion({ rol, userEmail, showToast }: {
           itemsByPedido[it.pedido_id].push(it)
         }
 
-        // Diagnóstico temporal: ver qué formato tiene codigo_material
-        const conCodigo = allPedItems.filter((it: any) => it.codigo_material).length
-        const ejemplos = [...new Set(allPedItems.filter((it: any) => it.codigo_material).map((it: any) => it.codigo_material))].slice(0, 5)
-        showToast(`Diagnóstico: ${conCodigo}/${allPedItems.length} con codigo. Ejemplos: ${ejemplos.join(' | ')}`, 'ok')
-
         // Resolver nombre → id_producto: exact match primero, luego case-insensitive con catálogo completo
         const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
         const nameToId: Record<string, number> = {}
@@ -910,7 +905,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
                 onChange={e => setFiltroTexto(e.target.value)}
                 placeholder="Buscar por NV, cliente, código o producto…"
                 className="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1"
-                style={{ borderColor: filtroTexto ? '#254A96' : '#e8edf8', focusRingColor: '#254A96' }}
+                style={{ borderColor: filtroTexto ? '#254A96' : '#e8edf8' }}
               />
             </div>
             {filtroTexto && (

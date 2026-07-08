@@ -410,6 +410,7 @@ function TabVerificacion({ rol, userEmail, showToast }: {
   const [filtrosCoberturas, setFiltrosCoberturas] = useState<string[]>([])
   const [filtrosEstado, setFiltrosEstado] = useState<string[]>([])
   const [filtroActivo, setFiltroActivo] = useState('')
+  const [filtroTexto, setFiltroTexto] = useState('')
 
   function togFiltro(arr: string[], val: string) {
     return arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]
@@ -792,6 +793,17 @@ function TabVerificacion({ rol, userEmail, showToast }: {
     .filter(s => vistaSD !== 'comercial' || filtrosEstadoComercial.length === 0 || filtrosEstadoComercial.includes(s.estado))
     .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
     .filter(s => vistaSD === 'comercial' || filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
+    .filter(s => {
+      if (!filtroTexto) return true
+      const q = filtroTexto.toLowerCase()
+      if (s.id_venta && String(s.id_venta).includes(q)) return true
+      if (String(s.id).includes(q)) return true
+      if (s.cliente?.toLowerCase().includes(q)) return true
+      if (s.destino?.toLowerCase().includes(q)) return true
+      if (s.items.some(it => it.nombre_producto?.toLowerCase().includes(q))) return true
+      if (s.items.some(it => String(it.id_producto).includes(q))) return true
+      return false
+    })
 
   const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
   const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
@@ -888,7 +900,34 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         </div>
 
         {solicitudes.length > 0 && (<>
-          {/* Fila 2: Sucursal chips */}
+          {/* Fila 2: Buscador de texto */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 max-w-md">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: '#B9BBB7' }}>🔍</span>
+              <input
+                type="text"
+                value={filtroTexto}
+                onChange={e => setFiltroTexto(e.target.value)}
+                placeholder="Buscar por NV, cliente, código o producto…"
+                className="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1"
+                style={{ borderColor: filtroTexto ? '#254A96' : '#e8edf8', focusRingColor: '#254A96' }}
+              />
+            </div>
+            {filtroTexto && (
+              <button onClick={() => setFiltroTexto('')}
+                className="text-xs px-2.5 py-1.5 rounded-lg"
+                style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>
+                ✕
+              </button>
+            )}
+            {filtroTexto && (
+              <span className="text-xs" style={{ color: '#254A96' }}>
+                {solicitudesParaSugerencias.length} de {solicitudes.length} solicitudes
+              </span>
+            )}
+          </div>
+
+          {/* Fila 3: Sucursal chips */}
           <div>
             <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>SUCURSAL</label>
             <div className="flex flex-wrap gap-1.5">

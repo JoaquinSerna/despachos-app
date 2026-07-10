@@ -16,7 +16,7 @@ Para cada solicitud extraé:
   "longitud": número o null,
   "horario": "Mañana" o "Tarde",
   "prioridad_texto": "Normal" o "Alta" o "Urgente",
-  "productos": [{"descripcion": "nombre exacto del producto", "cantidad": número}]
+  "productos": [{"descripcion": "nombre del producto sin prefijos numéricos (ej: si dice '1.Arena en bolson' devolvé 'Arena en bolson')", "cantidad": número}]
 }
 
 No incluyas en productos los que tengan "Transporte" en el nombre.

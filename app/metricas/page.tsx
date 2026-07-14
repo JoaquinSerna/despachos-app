@@ -458,6 +458,7 @@ export default function MetricasPage() {
             'Vuelta': p.vuelta === 0 ? 'Sin asignar' : `V${p.vuelta}`,
             'Camión': p.camion_id ?? '', 'Estado': p.estado, 'Pago': p.estado_pago ?? '',
             'Kg': p.peso_total_kg ?? 0, 'Posiciones': p.volumen_total_m3 ?? 0, 'Notas': p.notas ?? '',
+            'Barrio cerrado': (p as any).barrio_cerrado ? 'Sí' : 'No',
             'Lat pedido': latPed ?? '',
             'Lng pedido': lngPed ?? '',
             'Lat depósito asignado': depAsig?.lat ?? '',

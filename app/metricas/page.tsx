@@ -385,7 +385,7 @@ export default function MetricasPage() {
 
       const [pedidosData, flotaData, { data: camionesData }, { data: matsExport }, vueltasTiemposExport] = await Promise.all([
         paginatePedidosEx(), paginateFlotaEx(),
-        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg'),
+        supabase.from('camiones_flota').select('codigo, tipo_unidad, sucursal, posiciones_total, tonelaje_max_kg, grua_hidraulica'),
         supabase.from('materiales').select('nombre, tipo_carga'),
         paginateVueltasTiemposEx(),
       ])
@@ -635,14 +635,23 @@ export default function MetricasPage() {
             ? Math.round((new Date(flota.hora_fin).getTime() - new Date(flota.hora_inicio).getTime()) / 60000)
             : null
 
+          const barriosCerrados = g.peds.filter((p: any) => p.barrio_cerrado).length
+          const pedidosHierros = g.peds.filter((p: any) => pedidoEsHierrosEx[p.id]).length
+          const pedidosGranel = g.peds.filter((p: any) => pedidoEsGranelEx[p.id]).length
+          const esGruaEx = !!(cam?.grua_hidraulica)
+
           return {
             'Camión': g.camion,
             'Tipo': cam?.tipo_unidad ?? '',
+            'Grúa hidráulica': esGruaEx ? 'Sí' : 'No',
             'Sucursal': cam?.sucursal ?? '',
             'Fecha': g.fecha,
             'Día': new Date(g.fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long' }),
             'Vuelta': g.vuelta === 0 ? 'Fuera prog.' : `V${g.vuelta}`,
             'Pedidos': g.peds.length,
+            'Barrios cerrados': barriosCerrados,
+            'Pedidos hierros': pedidosHierros,
+            'Pedidos granel': pedidosGranel,
             'Kg': Math.round(kg),
             'Posiciones': Math.round(pos),
             'Km est. ruta': distKmEx || '',

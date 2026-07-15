@@ -1454,6 +1454,8 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   const fileRefReq = useRef<HTMLInputElement>(null)
   const [showParcialModal, setShowParcialModal] = useState(false)
   const [cantRecibidas, setCantRecibidas] = useState<Record<string, number>>({})
+  const [showConfStockModal, setShowConfStockModal] = useState(false)
+  const [modalCantStk, setModalCantStk] = useState<Record<string, number>>({})
   const [notaParcialReq, setNotaParcialReq] = useState('')
   const [fotosParcial, setFotosParcial] = useState<{ file: File; preview: string; label: string }[]>([])
   const [confirmandoParcial, setConfirmandoParcial] = useState(false)
@@ -1581,13 +1583,25 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   const resumen = (req.requerimiento_items ?? []).slice(0, 2).map(it => it.nombre_producto).join(', ')
     + (totalItems > 2 ? ` +${totalItems - 2} más` : '')
 
-  async function cambiarEstado(nuevoEstado: string) {
+  function abrirConfStockModal() {
+    const init: Record<string, number> = {}
+    for (const item of req.requerimiento_items ?? []) {
+      init[item.id] = item.cantidad_aprobada ?? item.cantidad_solicitada ?? 0
+    }
+    setModalCantStk(init)
+    setShowConfStockModal(true)
+  }
+
+  async function cambiarEstado(nuevoEstado: string, cantOverride?: Record<string, number>) {
     setGuardando(true)
     const updates: any = { estado: nuevoEstado }
     if (nuevoEstado === 'en_transito') { updates.n_viaje = editNViaje; updates.cod_vehiculo = editVehiculo }
     if (nuevoEstado === 'entregado') { updates.fecha_recepcion = editFechaRec || hoy(); updates.tipo_entrega = editTipoEntrega || 'completa' }
     if (editNotas) updates.notas = editNotas
-    const items_update = Object.entries(editItems).filter(([, v]) => v !== null).map(([id, cantidad_aprobada]) => ({ id, cantidad_aprobada }))
+    const source = cantOverride
+      ? Object.entries(cantOverride).map(([id, cantidad_aprobada]) => ({ id, cantidad_aprobada }))
+      : Object.entries(editItems).filter(([, v]) => v !== null).map(([id, cantidad_aprobada]) => ({ id, cantidad_aprobada }))
+    const items_update = source
     const res = await fetch('/api/requerimientos', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: req.id, ...updates, items_update }),
@@ -1740,7 +1754,7 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               {siguientes.flatMap(sig => {
                 const btn = (
                   <button key={sig} disabled={guardando}
-                    onClick={() => sig === 'entregado' ? setShowFotoModal(true) : cambiarEstado(sig)}
+                    onClick={() => sig === 'entregado' ? setShowFotoModal(true) : sig === 'conf_stock' ? abrirConfStockModal() : cambiarEstado(sig)}
                     className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                     style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
                     {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
@@ -1758,6 +1772,71 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal confirmar stock */}
+      {showConfStockModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>Confirmar stock disponible</h3>
+                <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{req.sucursal_origen} → {req.sucursal_destino}</p>
+              </div>
+              <button onClick={() => setShowConfStockModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium mb-2" style={{ color: '#254A96' }}>Cantidades a despachar</p>
+              <div className="space-y-2">
+                {(req.requerimiento_items ?? []).map(item => {
+                  const solicitado = item.cantidad_solicitada ?? 0
+                  const aprobado = modalCantStk[item.id] ?? solicitado
+                  const esMenos = aprobado < solicitado
+                  return (
+                    <div key={item.id} className="rounded-xl p-3 border"
+                      style={{ borderColor: esMenos ? '#fbbf24' : '#e8edf8', background: esMenos ? '#fffbeb' : '#f9fafb' }}>
+                      <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre_producto}</p>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setModalCantStk(prev => ({ ...prev, [item.id]: Math.max(0, (prev[item.id] ?? solicitado) - 1) }))}
+                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
+                          style={{ background: '#f4f4f3', color: '#666' }}>−</button>
+                        <div className="flex items-center gap-1 flex-1 justify-center">
+                          <input type="text" inputMode="numeric" value={aprobado}
+                            onChange={e => {
+                              const raw = e.target.value.replace(/[^\d]/g, '')
+                              const n = raw === '' ? 0 : Math.max(0, parseInt(raw))
+                              setModalCantStk(prev => ({ ...prev, [item.id]: n }))
+                            }}
+                            onFocus={e => e.target.select()}
+                            className="w-14 text-sm font-bold text-center rounded-lg border focus:outline-none"
+                            style={{ color: '#254A96', borderColor: '#e8edf8', padding: '4px' }} />
+                          <span className="text-xs" style={{ color: '#B9BBB7' }}>/ {solicitado} sol.</span>
+                        </div>
+                        <button onClick={() => setModalCantStk(prev => ({ ...prev, [item.id]: (prev[item.id] ?? solicitado) + 1 }))}
+                          className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
+                          style={{ background: '#f4f4f3', color: '#666' }}>+</button>
+                      </div>
+                      {esMenos && (
+                        <p className="text-xs mt-1.5 text-center" style={{ color: '#b45309' }}>
+                          Faltante: {solicitado - aprobado} unidades
+                        </p>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <button disabled={guardando}
+              onClick={async () => { await cambiarEstado('conf_stock', modalCantStk); setShowConfStockModal(false) }}
+              className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+              style={{ background: '#254A96' }}>
+              {guardando ? '…' : '→ Conf. Stock'}
+            </button>
+          </div>
         </div>
       )}
 

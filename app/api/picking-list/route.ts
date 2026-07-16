@@ -36,8 +36,19 @@ export async function GET(request: NextRequest) {
     .neq('estado', 'rechazado')
   if (sucursal) qBase = qBase.eq('sucursal', sucursal)
 
-  const { data: todos, error: pedErr } = await qBase
+  const [{ data: todos, error: pedErr }, { data: materialesData }] = await Promise.all([
+    qBase,
+    admin.from('materiales').select('id, nombre'),
+  ])
+
   if (pedErr) return NextResponse.json({ error: pedErr.message }, { status: 500 })
+
+  // Mapa nombre en mayúsculas → id para fallback cuando codigo_material es null/"undefined"
+  const matIdMap: Record<string, number> = {}
+  for (const m of materialesData ?? []) {
+    if (m.nombre && m.id) matIdMap[m.nombre.toUpperCase().trim()] = m.id
+  }
+
   if (!todos || todos.length === 0) {
     return NextResponse.json({
       productos: [], pedidos_count: 0, retiros: [],
@@ -63,8 +74,12 @@ export async function GET(request: NextRequest) {
   const itemsByPedido: Record<string, { nombre: string; cantidad: number; unidad: string; codigo_material: string | null }[]> = {}
   for (const item of allItems) {
     if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
-    const nombre = toTitleCase(stripPrefix(item.nombre ?? ''))
-    const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material)) ? item.codigo_material : null
+    const rawNombre = stripPrefix(item.nombre ?? '')
+    const nombre = toTitleCase(rawNombre)
+    // Usar codigo_material si es numérico, si no buscar por nombre en materiales
+    const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material))
+      ? item.codigo_material
+      : (matIdMap[rawNombre.toUpperCase()] ? String(matIdMap[rawNombre.toUpperCase()]) : null)
     if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u', codigo_material: codigoNum })
   }
 

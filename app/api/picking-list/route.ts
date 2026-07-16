@@ -54,25 +54,26 @@ export async function GET(request: NextRequest) {
   const BATCH = 500
   for (let i = 0; i < allIds.length; i += BATCH) {
     const { data: batch } = await admin.from('pedido_items')
-      .select('pedido_id, nombre, cantidad, unidad')
+      .select('pedido_id, nombre, cantidad, unidad, codigo_material')
       .in('pedido_id', allIds.slice(i, i + BATCH))
     if (batch) allItems = allItems.concat(batch)
   }
 
   // Indexar items por pedido
-  const itemsByPedido: Record<string, { nombre: string; cantidad: number; unidad: string }[]> = {}
+  const itemsByPedido: Record<string, { nombre: string; cantidad: number; unidad: string; codigo_material: string | null }[]> = {}
   for (const item of allItems) {
     if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
     const nombre = toTitleCase(stripPrefix(item.nombre ?? ''))
-    if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u' })
+    const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material)) ? item.codigo_material : null
+    if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u', codigo_material: codigoNum })
   }
 
   // Agregar productos normales
-  const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
+  const totales: Record<string, { nombre: string; cantidad: number; unidad: string; codigo_material: string | null }> = {}
   for (const ped of pedidosNormales) {
     for (const item of itemsByPedido[ped.id] ?? []) {
       const key = `${item.nombre}|||${item.unidad}`
-      if (!totales[key]) totales[key] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
+      if (!totales[key]) totales[key] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad, codigo_material: item.codigo_material ?? null }
       totales[key].cantidad += item.cantidad
     }
   }

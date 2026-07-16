@@ -2747,7 +2747,7 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: PREPARACIÓN — lista de productos a preparar por fecha/sucursal
 // ═══════════════════════════════════════════════════════════════════════════════
-type PickingItem = { nombre: string; cantidad: number; unidad: string }
+type PickingItem = { nombre: string; cantidad: number; unidad: string; codigo_material?: string | null }
 type PickingPedido = { nv: string | number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; camion_id: string; vuelta: number; items: PickingItem[] }
 
 function TabPreparacion() {
@@ -2799,7 +2799,7 @@ function TabPreparacion() {
 
       // Hoja 1: Totales
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
-        productos.map(p => ({ 'Producto': p.nombre, 'Cantidad': p.cantidad, 'Unidad': p.unidad }))
+        productos.map(p => ({ 'ID Producto': p.codigo_material ?? '', 'Producto': p.nombre, 'Cantidad': p.cantidad, 'Unidad': p.unidad }))
       ), 'Totales')
 
       // Hoja 2: Por pedido
@@ -2814,6 +2814,7 @@ function TabPreparacion() {
             'Fecha': ped.fecha_entrega,
             'Camión': ped.camion_id,
             'Vuelta': ped.vuelta === 0 ? 'Sin asignar' : `V${ped.vuelta}`,
+            'ID Producto': item.codigo_material ?? '',
             'Producto': item.nombre,
             'Cantidad': item.cantidad,
             'Unidad': item.unidad,

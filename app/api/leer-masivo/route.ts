@@ -68,6 +68,14 @@ export async function POST(request: NextRequest) {
     const limpio = texto.replace(/```json\n?|```\n?/g, '').trim()
     const solicitudes = JSON.parse(limpio)
 
+    if (Array.isArray(solicitudes)) {
+      for (const sol of solicitudes) {
+        if (Array.isArray(sol.productos)) {
+          sol.productos = sol.productos.map((p: any) => ({ ...p, descripcion: typeof p.descripcion === 'string' ? p.descripcion.toUpperCase() : p.descripcion }))
+        }
+      }
+    }
+
     return NextResponse.json({ success: true, solicitudes })
   } catch (error: any) {
     const esOverloaded = error?.status === 529 || error?.error?.type === 'overloaded_error' || error?.message?.includes('overloaded')

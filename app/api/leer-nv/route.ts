@@ -74,6 +74,10 @@ No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo 
       }, { status: 422 })
     }
 
+    if (Array.isArray(datos.productos)) {
+      datos.productos = datos.productos.map((p: any) => ({ ...p, descripcion: typeof p.descripcion === 'string' ? p.descripcion.toUpperCase() : p.descripcion }))
+    }
+
     return NextResponse.json({ success: true, datos })
   } catch (error: any) {
     console.error('Error:', error.message)

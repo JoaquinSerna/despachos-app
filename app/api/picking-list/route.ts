@@ -13,6 +13,10 @@ function stripPrefix(nombre: string): string {
   return nombre.replace(/^\d+\./, '').trim()
 }
 
+function toTitleCase(s: string): string {
+  return s.toLowerCase().replace(/(?:^|\s)\S/g, c => c.toUpperCase())
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const fechaDesde = searchParams.get('fecha_desde') ?? searchParams.get('fecha')
@@ -59,7 +63,7 @@ export async function GET(request: NextRequest) {
   const itemsByPedido: Record<string, { nombre: string; cantidad: number; unidad: string }[]> = {}
   for (const item of allItems) {
     if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
-    const nombre = stripPrefix(item.nombre ?? '')
+    const nombre = toTitleCase(stripPrefix(item.nombre ?? ''))
     if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u' })
   }
 

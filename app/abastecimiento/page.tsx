@@ -2747,14 +2747,19 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: PREPARACIÓN — lista de productos a preparar por fecha/sucursal
 // ═══════════════════════════════════════════════════════════════════════════════
+type PickingItem = { nombre: string; cantidad: number; unidad: string }
+type PickingPedido = { nv: string | number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; camion_id: string; vuelta: number; items: PickingItem[] }
+
 function TabPreparacion() {
   const [fechaDesde, setFechaDesde] = useState(hoy())
   const [fechaHasta, setFechaHasta] = useState(hoy())
   const [sucursal, setSucursal] = useState('')
-  const [productos, setProductos] = useState<{ nombre: string; cantidad: number; unidad: string }[]>([])
-  const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: { nombre: string; cantidad: number; unidad: string }[] }[]>([])
+  const [productos, setProductos] = useState<PickingItem[]>([])
+  const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: PickingItem[] }[]>([])
+  const [pedidosDetalle, setPedidosDetalle] = useState<PickingPedido[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [exportando, setExportando] = useState(false)
   const [error, setError] = useState('')
   const [cargado, setCargado] = useState(false)
 
@@ -2764,7 +2769,7 @@ function TabPreparacion() {
 
   async function buscar() {
     if (!fechaDesde || !fechaHasta) return
-    setLoading(true); setError(''); setCargado(false); setProductos([]); setRetiros([])
+    setLoading(true); setError(''); setCargado(false); setProductos([]); setRetiros([]); setPedidosDetalle([])
     try {
       const params = new URLSearchParams({ fecha_desde: fechaDesde, fecha_hasta: fechaHasta })
       if (sucursal) params.set('sucursal', sucursal)
@@ -2773,6 +2778,7 @@ function TabPreparacion() {
       if (!res.ok) throw new Error(json.error ?? 'Error al cargar')
       setProductos(json.productos ?? [])
       setRetiros(json.retiros ?? [])
+      setPedidosDetalle(json.pedidos_detalle ?? [])
       setPedidosCount(json.pedidos_count ?? 0)
       setCargado(true)
     } catch (e: any) {
@@ -2780,6 +2786,48 @@ function TabPreparacion() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function exportarExcel() {
+    if (!cargado || productos.length === 0) return
+    setExportando(true)
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+
+      const fechaLabel = fechaDesde === fechaHasta ? fechaDesde : `${fechaDesde}_${fechaHasta}`
+
+      // Hoja 1: Totales
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
+        productos.map(p => ({ 'Producto': p.nombre, 'Cantidad': p.cantidad, 'Unidad': p.unidad }))
+      ), 'Totales')
+
+      // Hoja 2: Por pedido
+      const filasPorPedido: Record<string, string | number>[] = []
+      for (const ped of pedidosDetalle) {
+        for (const item of ped.items) {
+          filasPorPedido.push({
+            'NV': ped.nv,
+            'Cliente': ped.cliente,
+            'Dirección': ped.direccion,
+            'Sucursal': ped.sucursal,
+            'Fecha': ped.fecha_entrega,
+            'Camión': ped.camion_id,
+            'Vuelta': ped.vuelta === 0 ? 'Sin asignar' : `V${ped.vuelta}`,
+            'Producto': item.nombre,
+            'Cantidad': item.cantidad,
+            'Unidad': item.unidad,
+          })
+        }
+      }
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filasPorPedido), 'Por pedido')
+
+      const suf = sucursal ? `-${sucursal}` : ''
+      XLSX.writeFile(wb, `preparacion-${fechaLabel}${suf}.xlsx`)
+    } catch (e: any) {
+      setError(`Error al exportar: ${e.message}`)
+    }
+    setExportando(false)
   }
 
   async function descargarPDF() {
@@ -2966,11 +3014,18 @@ function TabPreparacion() {
           {loading ? 'Buscando…' : 'Buscar'}
         </button>
         {cargado && (productos.length > 0 || retiros.length > 0) && (
-          <button onClick={descargarPDF}
-            className="px-5 py-2 text-sm font-medium rounded-lg"
-            style={{ background: '#e8edf8', color: '#254A96' }}>
-            ⬇ Descargar PDF
-          </button>
+          <>
+            <button onClick={descargarPDF}
+              className="px-5 py-2 text-sm font-medium rounded-lg"
+              style={{ background: '#e8edf8', color: '#254A96' }}>
+              ⬇ Descargar PDF
+            </button>
+            <button onClick={exportarExcel} disabled={exportando}
+              className="px-5 py-2 text-sm font-medium rounded-lg disabled:opacity-40"
+              style={{ background: '#d1fae5', color: '#065f46' }}>
+              {exportando ? 'Exportando…' : '⬇ Exportar Excel'}
+            </button>
+          </>
         )}
       </div>
 

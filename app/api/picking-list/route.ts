@@ -92,9 +92,24 @@ export async function GET(request: NextRequest) {
     items: itemsByPedido[ped.id] ?? [],
   }))
 
+  // Desglose por pedido (para Excel)
+  const pedidosDetalle = pedidosNormales
+    .filter(ped => (itemsByPedido[ped.id] ?? []).length > 0)
+    .map(ped => ({
+      nv: ped.nv ?? '',
+      cliente: ped.cliente ?? '',
+      direccion: ped.direccion ?? '',
+      sucursal: ped.sucursal ?? '',
+      fecha_entrega: ped.fecha_entrega ?? '',
+      camion_id: ped.camion_id ?? '',
+      vuelta: ped.vuelta ?? 0,
+      items: itemsByPedido[ped.id] ?? [],
+    }))
+
   return NextResponse.json({
     productos,
     pedidos_count: pedidosNormales.length,
+    pedidos_detalle: pedidosDetalle,
     retiros,
     fecha_desde: fechaDesde,
     fecha_hasta: fechaHasta,

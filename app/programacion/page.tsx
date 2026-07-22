@@ -2511,7 +2511,12 @@ function ProgramacionInner() {
           }
           const isGoogle = (data.engine ?? '').includes('google')
           const engineLabel = isGoogle ? '🗺️ Google Route Opt.' : '🤖 IA (Claude)'
-          if (data.cambios?.length) {
+          const sinAsignarCount = data.pedidosSinAsignar ? Object.keys(data.pedidosSinAsignar).length : 0
+          if (sinAsignarCount > 0) {
+            const motivos = Object.values(data.pedidosSinAsignar as Record<string, string>)
+            const motivoUnico = [...new Set(motivos)].join(' / ')
+            showToast(`${engineLabel} — ${sinAsignarCount} pedido${sinAsignarCount > 1 ? 's' : ''} sin asignar: ${motivoUnico}`, 'err')
+          } else if (data.cambios?.length) {
             showToast(`${engineLabel} — ${data.cambios.length} cambio${data.cambios.length > 1 ? 's' : ''}`)
           } else if (isGoogle) {
             const asignados = Object.values(data.asignacion as Record<string, string | null>).filter(Boolean).length

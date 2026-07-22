@@ -107,6 +107,23 @@ function requiereGrua(p: PedidoInput): boolean {
   return !esPuroHierro
 }
 
+function traducirMotivo(code: string, p?: PedidoInput): string {
+  const kg = p?.peso_total_kg ?? 0
+  const pos = p?.volumen_total_m3 ?? 0
+  switch (code) {
+    case 'DEMAND_EXCEEDS_VEHICLE_CAPACITY':
+      return `Supera capacidad de todos los camiones (${kg}kg / ${pos}pos)`
+    case 'INFEASIBLE_AFTER_FILTERING':
+      return 'Sin camión elegible (restricciones de volcador o grúa)'
+    case 'NO_VEHICLE_AVAILABLE':
+      return 'Sin camiones disponibles en esta vuelta'
+    case 'SKIPPED_SHIPMENT':
+      return 'Google decidió no asignarlo (costo de desvío demasiado alto)'
+    default:
+      return `Sin asignar (código: ${code}, ${kg}kg / ${pos}pos)`
+  }
+}
+
 // ─── Route Optimization API (Google) ─────────────────────────────────────────
 
 async function sugerirConRouteOptimization(
@@ -115,7 +132,7 @@ async function sugerirConRouteOptimization(
   ya_asignados: PedidoInput[],
   sugerencia: Record<string, string | null>,
   sucursal: string,
-): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string }> {
+): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string; pedidosSinAsignar: Record<string, string> }> {
 
   const projectId = process.env.GOOGLE_CLOUD_PROJECT!
   const bearerToken = await getGoogleBearerToken()
@@ -162,12 +179,18 @@ async function sugerirConRouteOptimization(
   for (let i = 0; i < conCoords.length; i++) {
     for (let j = i + 1; j < conCoords.length; j++) {
       const a = conCoords[i], b = conCoords[j]
-      if (normCliente(a.cliente) === normCliente(b.cliente)) {
-        if (distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) <= 2) unionG(a.id, b.id)
+      const mismoCli = normCliente(a.cliente) === normCliente(b.cliente)
+      const dist = distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!)
+      // Mismo cliente a menos de 2km → mismo camión (hard)
+      if (mismoCli && dist <= 2) unionG(a.id, b.id)
+      // Distinto cliente pero a menos de 1km → mismo camión (soft: solo si mismo tipo de carga)
+      else if (!mismoCli && dist <= 1) {
+        const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
+        if (tipoA === tipoB && tipoA !== 'granel') unionG(a.id, b.id)
       }
     }
   }
-  // Grupos con >1 pedido del mismo cliente
+  // Grupos con >1 pedido
   const gruposCliente = new Map<string, PedidoInput[]>()
   conCoords.forEach(p => {
     const root = findG(p.id)
@@ -188,10 +211,19 @@ async function sugerirConRouteOptimization(
         return libreKg >= totalKg && (c.posiciones_total === 0 || librePos >= totalPos)
       })
       .map(({ i }) => i)
+    // Si hay camiones que aguantan el grupo completo → forzar (restricción dura)
+    // Si ningún camión aguanta el grupo → al menos forzar que cada pedido vaya
+    // a alguno de los camiones con más capacidad libre (soft: top 3 por capacidad)
     if (eligibles.length > 0) {
       grupoPedidos.forEach(p => { allowedByPedido[p.id] = eligibles })
+    } else {
+      const top3 = camiones
+        .map((c, i) => ({ c, i, libre: c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0) }))
+        .sort((a, b) => b.libre - a.libre)
+        .slice(0, 3)
+        .map(({ i }) => i)
+      if (top3.length > 0) grupoPedidos.forEach(p => { allowedByPedido[p.id] = top3 })
     }
-    // Si no hay camión con capacidad suficiente para el grupo completo → no forzamos (Google decide)
   }
 
   // ── Construir shipments ordenados: grandes primero (FFD) ────────────────────
@@ -384,11 +416,17 @@ async function sugerirConRouteOptimization(
     }
   }
 
-  // Pedidos que la API no pudo asignar (skippedShipments)
+  // Pedidos que la API no pudo asignar (skippedShipments) — capturar motivo
+  const pedidosSinAsignar: Record<string, string> = {}
   if (result.skippedShipments) {
     for (const skipped of result.skippedShipments) {
       const pedidoId = skipped.label as string
-      if (pedidoId) asignacion[pedidoId] = null
+      if (pedidoId) {
+        asignacion[pedidoId] = null
+        const reason = skipped.reasons?.[0]?.code ?? 'UNKNOWN'
+        const p = conCoords.find(x => x.id === pedidoId)
+        pedidosSinAsignar[pedidoId] = traducirMotivo(reason, p)
+      }
     }
   }
 
@@ -431,7 +469,7 @@ async function sugerirConRouteOptimization(
     sin_coords: sinCoords.map(p => ({ id: p.id, nv: p.nv })),
   }
 
-  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization', payloadResumen }
+  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization', payloadResumen, pedidosSinAsignar }
 }
 
 // ─── Claude Haiku (motor original) ───────────────────────────────────────────
@@ -619,7 +657,7 @@ export async function POST(request: NextRequest) {
     // Elegir motor según env vars
     const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
 
-    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string; payloadResumen?: any }
+    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string; payloadResumen?: any; pedidosSinAsignar?: Record<string, string> }
 
     if (useGoogleApi) {
       try {
@@ -642,6 +680,7 @@ export async function POST(request: NextRequest) {
       engine: result.engine,
       ...(result.tokens ? { tokens: result.tokens } : {}),
       ...(result.payloadResumen ? { payloadResumen: result.payloadResumen } : {}),
+      ...(result.pedidosSinAsignar && Object.keys(result.pedidosSinAsignar).length > 0 ? { pedidosSinAsignar: result.pedidosSinAsignar } : {}),
     })
   } catch (error: any) {
     console.error('[sugerir-asignacion] error:', error)

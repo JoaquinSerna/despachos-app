@@ -1936,7 +1936,7 @@ function ProgramacionInner() {
   })
   const enrichGenRef = useRef(0)
   // Guarda la última sugerencia IA para comparar con la confirmación final
-  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string } | null>(null)
+  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string; engine: string } | null>(null)
   // Orden de visitas optimizado devuelto por Google Route Opt (pedido_id → posición en ruta)
   const ordenGoogleRef = useRef<Record<string, number>>({})
 
@@ -2491,6 +2491,7 @@ function ProgramacionInner() {
 
     // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)
+    let engineUsado = 'algorithm-only'
     try {
       const res = await fetch('/api/sugerir-asignacion', {
         method: 'POST',
@@ -2501,6 +2502,7 @@ function ProgramacionInner() {
         const data = await res.json()
         if (data.asignacion) {
           Object.assign(asigs, data.asignacion)
+          engineUsado = data.engine ?? 'unknown'
           // Guardar orden de visitas optimizado de Google para usarlo en Confirmar
           if (data.ordenEntrega && Object.keys(data.ordenEntrega).length > 0) {
             ordenGoogleRef.current = data.ordenEntrega
@@ -2524,7 +2526,7 @@ function ProgramacionInner() {
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
 
     // Guardar sugerencia para comparar con confirmación final
-    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString() }
+    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString(), engine: engineUsado }
 
     // Log de auditoría con detalle de la sugerencia
     if (userId) {
@@ -2532,6 +2534,7 @@ function ProgramacionInner() {
       const sinCamionIA = Object.entries(asigs).filter(([, c]) => c === null)
       logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
         fecha, sucursal, vuelta: vueltaActiva,
+        engine: engineUsado,
         total_sin_asignar_antes: sin.length,
         asignados_por_ia: asignados.length,
         sin_camion_ia: sinCamionIA.length,
@@ -2667,6 +2670,7 @@ function ProgramacionInner() {
             total_pedidos: pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').length,
             total_camiones: Object.keys(columnas.reduce((acc, col) => { if (col.pedidos.length > 0) acc[col.camion.codigo] = true; return acc }, {} as Record<string, boolean>)).length,
             uso_sugerencia_ia: !!ultimaSug,
+            engine: ultimaSug?.engine ?? null,
             sugerencia_timestamp: ultimaSug?.timestamp ?? null,
             movimientos_respecto_ia: movimientos.length,
             asignaciones_finales: asignados.map(p => ({

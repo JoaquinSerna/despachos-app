@@ -1936,7 +1936,7 @@ function ProgramacionInner() {
   })
   const enrichGenRef = useRef(0)
   // Guarda la última sugerencia IA para comparar con la confirmación final
-  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string; engine: string } | null>(null)
+  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string; engine: string; payloadResumen: any } | null>(null)
   // Orden de visitas optimizado devuelto por Google Route Opt (pedido_id → posición en ruta)
   const ordenGoogleRef = useRef<Record<string, number>>({})
 
@@ -2492,6 +2492,7 @@ function ProgramacionInner() {
     // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)
     let engineUsado = 'algorithm-only'
+    let payloadResumenGuardado: any = null
     try {
       const res = await fetch('/api/sugerir-asignacion', {
         method: 'POST',
@@ -2503,6 +2504,7 @@ function ProgramacionInner() {
         if (data.asignacion) {
           Object.assign(asigs, data.asignacion)
           engineUsado = data.engine ?? 'unknown'
+          payloadResumenGuardado = data.payloadResumen ?? null
           // Guardar orden de visitas optimizado de Google para usarlo en Confirmar
           if (data.ordenEntrega && Object.keys(data.ordenEntrega).length > 0) {
             ordenGoogleRef.current = data.ordenEntrega
@@ -2526,7 +2528,7 @@ function ProgramacionInner() {
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
 
     // Guardar sugerencia para comparar con confirmación final
-    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString(), engine: engineUsado }
+    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString(), engine: engineUsado, payloadResumen: payloadResumenGuardado }
 
     // Log de auditoría con detalle de la sugerencia
     if (userId) {
@@ -2535,6 +2537,7 @@ function ProgramacionInner() {
       logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
         fecha, sucursal, vuelta: vueltaActiva,
         engine: engineUsado,
+        payload_google: payloadResumenGuardado,
         total_sin_asignar_antes: sin.length,
         asignados_por_ia: asignados.length,
         sin_camion_ia: sinCamionIA.length,

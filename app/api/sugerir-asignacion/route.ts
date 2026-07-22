@@ -412,7 +412,26 @@ async function sugerirConRouteOptimization(
     }
   }
 
-  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization' }
+  const payloadResumen = {
+    vehicles: vehicles.map(v => ({
+      label: v.label,
+      max_kg: Number(v.loadLimits.weight_kg.maxLoad),
+      max_pos_x10: Number(v.loadLimits.positions_x10.maxLoad),
+      cost_per_km: v.costPerKilometer,
+      cost_per_hour: v.costPerHour,
+    })),
+    shipments: shipments.map(s => ({
+      label: s.label,
+      kg: Number(s.loadDemands.weight_kg.amount),
+      pos_x10: Number(s.loadDemands.positions_x10.amount),
+      tipo: s.shipmentType,
+      penalty: s.penaltyCost,
+      allowed_vehicles: s.allowedVehicleIndices ?? null,
+    })),
+    sin_coords: sinCoords.map(p => ({ id: p.id, nv: p.nv })),
+  }
+
+  return { asignacion, ordenEntrega, cambios, engine: 'google-route-optimization', payloadResumen }
 }
 
 // ─── Claude Haiku (motor original) ───────────────────────────────────────────
@@ -600,7 +619,7 @@ export async function POST(request: NextRequest) {
     // Elegir motor según env vars
     const useGoogleApi = !!(process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CLOUD_PROJECT)
 
-    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string }
+    let result: { asignacion: Record<string, string | null>; ordenEntrega?: Record<string, number>; cambios: any[]; tokens?: any; engine: string; payloadResumen?: any }
 
     if (useGoogleApi) {
       try {
@@ -622,6 +641,7 @@ export async function POST(request: NextRequest) {
       cambios: result.cambios,
       engine: result.engine,
       ...(result.tokens ? { tokens: result.tokens } : {}),
+      ...(result.payloadResumen ? { payloadResumen: result.payloadResumen } : {}),
     })
   } catch (error: any) {
     console.error('[sugerir-asignacion] error:', error)

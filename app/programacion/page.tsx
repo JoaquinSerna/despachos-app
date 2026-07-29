@@ -2994,6 +2994,17 @@ function ProgramacionInner() {
   const totalAsig = pedidos.filter(p => p.camion_id).length
   const totalSin = pedidos.length - totalAsig
 
+  const pesoAsig     = columnas.reduce((a, c) => a + c.pesoTotal, 0)
+  const posAsig      = columnas.reduce((a, c) => a + c.posTotal, 0)
+  const pesoSinAsig  = sinAsignar.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0)
+  const posSinAsig   = sinAsignar.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0)
+  const pesoTotalVuelta = pesoAsig + pesoSinAsig
+  const posTotalVuelta  = posAsig + posSinAsig
+  const maxPesoVuelta = columnas.reduce((a, c) => a + c.camion.tonelaje_max_kg, 0)
+  const maxPosVuelta  = columnas.reduce((a, c) => a + (c.camion.posiciones_total > 0 ? c.camion.posiciones_total : 0), 0)
+  const pesoDisp = Math.max(0, maxPesoVuelta - pesoAsig)
+  const posDisp  = Math.max(0, maxPosVuelta - posAsig)
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
       {toast && (
@@ -3138,10 +3149,34 @@ function ProgramacionInner() {
       {/* Barra acciones */}
       <div className="bg-white border-b shrink-0 px-4 md:px-6 py-2.5" style={{ borderColor: '#f0f0f0' }}>
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-5 text-sm" style={{ color: '#B9BBB7' }}>
-            <span>Total: <strong style={{ color: '#254A96' }}>{pedidos.length}</strong></span>
-            <span>Asignados: <strong style={{ color: '#10b981' }}>{totalAsig}</strong></span>
-            <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
+          <div className="flex items-start gap-5 text-sm" style={{ color: '#B9BBB7' }}>
+            <div className="flex flex-col gap-0.5">
+              <span>Total: <strong style={{ color: '#254A96' }}>{pedidos.length}</strong></span>
+              {maxPesoVuelta > 0 && (
+                <span className="text-xs" style={{ color: '#aaa' }}>
+                  {Math.round(pesoTotalVuelta)} / {maxPesoVuelta} kg ({pct(pesoTotalVuelta, maxPesoVuelta)}%)
+                  {maxPosVuelta > 0 && <> · {Math.round(posTotalVuelta)} / {maxPosVuelta} pos ({pct(posTotalVuelta, maxPosVuelta)}%)</>}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span>Asignados: <strong style={{ color: '#10b981' }}>{totalAsig}</strong></span>
+              {maxPesoVuelta > 0 && (
+                <span className="text-xs" style={{ color: '#aaa' }}>
+                  {Math.round(pesoAsig)} / {maxPesoVuelta} kg ({pct(pesoAsig, maxPesoVuelta)}%)
+                  {maxPosVuelta > 0 && <> · {Math.round(posAsig)} / {maxPosVuelta} pos ({pct(posAsig, maxPosVuelta)}%)</>}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
+              {maxPesoVuelta > 0 && (
+                <span className="text-xs" style={{ color: '#aaa' }}>
+                  {Math.round(pesoSinAsig)} / {pesoDisp > 0 ? `${Math.round(pesoDisp)} kg disp (${pct(pesoSinAsig, pesoDisp)}%)` : `${Math.round(pesoDisp)} kg disp`}
+                  {maxPosVuelta > 0 && <> · {Math.round(posSinAsig)} / {posDisp > 0 ? `${Math.round(posDisp)} pos disp (${pct(posSinAsig, posDisp)}%)` : `${Math.round(posDisp)} pos disp`}</>}
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setModalRutas(true)} disabled={cargando || pedidos.length === 0}

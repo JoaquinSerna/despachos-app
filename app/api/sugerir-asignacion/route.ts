@@ -132,7 +132,7 @@ async function sugerirConRouteOptimization(
   ya_asignados: PedidoInput[],
   sugerencia: Record<string, string | null>,
   sucursal: string,
-): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string; pedidosSinAsignar: Record<string, string> }> {
+): Promise<{ asignacion: Record<string, string | null>; ordenEntrega: Record<string, number>; cambios: any[]; engine: string; pedidosSinAsignar: Record<string, string>; payloadResumen?: any }> {
 
   const projectId = process.env.GOOGLE_CLOUD_PROJECT!
   const bearerToken = await getGoogleBearerToken()

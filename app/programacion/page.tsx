@@ -3154,8 +3154,8 @@ function ProgramacionInner() {
               <span>Total: <strong style={{ color: '#254A96' }}>{pedidos.length}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {Math.round(pesoTotalVuelta)} / {maxPesoVuelta} kg ({pct(pesoTotalVuelta, maxPesoVuelta)}%)
-                  {maxPosVuelta > 0 && <> · {Math.round(posTotalVuelta)} / {maxPosVuelta} pos ({pct(posTotalVuelta, maxPosVuelta)}%)</>}
+                  {maxPosVuelta > 0 && <>{Math.round(posTotalVuelta)} / {maxPosVuelta} pos ({pct(posTotalVuelta, maxPosVuelta)}%) · </>}
+                  {(pesoTotalVuelta / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn ({pct(pesoTotalVuelta, maxPesoVuelta)}%)
                 </span>
               )}
             </div>
@@ -3163,8 +3163,8 @@ function ProgramacionInner() {
               <span>Asignados: <strong style={{ color: '#10b981' }}>{totalAsig}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {Math.round(pesoAsig)} / {maxPesoVuelta} kg ({pct(pesoAsig, maxPesoVuelta)}%)
-                  {maxPosVuelta > 0 && <> · {Math.round(posAsig)} / {maxPosVuelta} pos ({pct(posAsig, maxPosVuelta)}%)</>}
+                  {maxPosVuelta > 0 && <>{Math.round(posAsig)} / {maxPosVuelta} pos ({pct(posAsig, maxPosVuelta)}%) · </>}
+                  {(pesoAsig / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn ({pct(pesoAsig, maxPesoVuelta)}%)
                 </span>
               )}
             </div>
@@ -3172,8 +3172,8 @@ function ProgramacionInner() {
               <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {Math.round(pesoSinAsig)} / {pesoDisp > 0 ? `${Math.round(pesoDisp)} kg disp (${pct(pesoSinAsig, pesoDisp)}%)` : `${Math.round(pesoDisp)} kg disp`}
-                  {maxPosVuelta > 0 && <> · {Math.round(posSinAsig)} / {posDisp > 0 ? `${Math.round(posDisp)} pos disp (${pct(posSinAsig, posDisp)}%)` : `${Math.round(posDisp)} pos disp`}</>}
+                  {maxPosVuelta > 0 && <>{Math.round(posSinAsig)} / {posDisp > 0 ? `${Math.round(posDisp)} pos disp (${pct(posSinAsig, posDisp)}%)` : `${Math.round(posDisp)} pos disp`} · </>}
+                  {(pesoSinAsig / 1000).toFixed(1)} / {pesoDisp > 0 ? `${(pesoDisp / 1000).toFixed(1)} tn disp (${pct(pesoSinAsig, pesoDisp)}%)` : `${(pesoDisp / 1000).toFixed(1)} tn disp`}
                 </span>
               )}
             </div>

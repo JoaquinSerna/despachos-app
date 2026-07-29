@@ -144,7 +144,7 @@ async function sugerirConRouteOptimization(
 
   // Si no hay pedidos con coordenadas, no vale la pena llamar a la API
   if (conCoords.length === 0) {
-    return { asignacion: sugerencia, ordenEntrega: {}, cambios: [], engine: 'algorithm-fallback-no-coords' }
+    return { asignacion: sugerencia, ordenEntrega: {}, cambios: [], engine: 'algorithm-fallback-no-coords', pedidosSinAsignar: {} }
   }
 
   // Camiones con límite de posiciones para carga no-granel

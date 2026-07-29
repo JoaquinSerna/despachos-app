@@ -2363,7 +2363,7 @@ function ProgramacionInner() {
             if (coords.length === 0) continue
             const maxDist = Math.max(...coords.map(c => distanciaKm(deposito.lat, deposito.lng, c.lat, c.lng)))
             const maxVueltas = maxVueltasPorDistancia(maxDist)
-            const vultasASkip = Math.ceil(5 / maxVueltas) - 1
+            const vultasASkip = Math.max(0, 3 - maxVueltas)
             if (vultasASkip > 0 && vueltaActiva <= v + vultasASkip) {
               // Guardar la vuelta más reciente que genera el aviso
               if (!enRuta[camionCod] || v > enRuta[camionCod].vuelta) {
@@ -2952,8 +2952,8 @@ function ProgramacionInner() {
   const pctPesoTotal = pct(pesoTotalVuelta, maxPesoVuelta)
   const pctPosAsig   = pct(posAsig, maxPosVuelta)
   const pctPesoAsig  = pct(pesoAsig, maxPesoVuelta)
-  const pctPosSin    = pct(posSinAsig, posDisp)
-  const pctPesoSin   = pct(pesoSinAsig, pesoDisp)
+  const pctPosLibre  = pct(posDisp, maxPosVuelta)
+  const pctPesoLibre = pct(pesoDisp, maxPesoVuelta)
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
@@ -3122,8 +3122,8 @@ function ProgramacionInner() {
               <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {maxPosVuelta > 0 && <>{Math.round(posSinAsig)} / {Math.round(posDisp)} pos disp {posDisp > 0 && <span style={{ color: colorBarra(pctPosSin) }}>({pctPosSin}%)</span>} · </>}
-                  {(pesoSinAsig / 1000).toFixed(1)} / {(pesoDisp / 1000).toFixed(1)} tn disp {pesoDisp > 0 && <span style={{ color: colorBarra(pctPesoSin) }}>({pctPesoSin}%)</span>}
+                  {maxPosVuelta > 0 && <>{Math.round(posDisp)} / {maxPosVuelta} pos libres <span style={{ color: colorBarra(pctPosLibre) }}>({pctPosLibre}%)</span> · </>}
+                  {(pesoDisp / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn libres <span style={{ color: colorBarra(pctPesoLibre) }}>({pctPesoLibre}%)</span>
                 </span>
               )}
             </div>

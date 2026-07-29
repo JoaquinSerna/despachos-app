@@ -71,6 +71,7 @@ function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p
 function posColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.round(peso / max * 100) }
 function colorBarra(p: number) { return p >= 90 ? '#E52322' : p >= 70 ? '#f59e0b' : '#10b981' }
+function colorOcupacion(p: number) { return p >= 80 ? '#10b981' : p >= 60 ? '#f59e0b' : '#E52322' }
 
 function localidadDeDireccion(dir: string): string {
   if (!dir) return ''
@@ -2947,6 +2948,12 @@ function ProgramacionInner() {
   const maxPosVuelta  = columnas.reduce((a, c) => a + (c.camion.posiciones_total > 0 ? c.camion.posiciones_total : 0), 0)
   const pesoDisp = Math.max(0, maxPesoVuelta - pesoAsig)
   const posDisp  = Math.max(0, maxPosVuelta - posAsig)
+  const pctPosTotal  = pct(posTotalVuelta, maxPosVuelta)
+  const pctPesoTotal = pct(pesoTotalVuelta, maxPesoVuelta)
+  const pctPosAsig   = pct(posAsig, maxPosVuelta)
+  const pctPesoAsig  = pct(pesoAsig, maxPesoVuelta)
+  const pctPosSin    = pct(posSinAsig, posDisp)
+  const pctPesoSin   = pct(pesoSinAsig, pesoDisp)
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-gray-50" style={{ fontFamily: 'Barlow, sans-serif' }}>
@@ -3097,8 +3104,8 @@ function ProgramacionInner() {
               <span>Total: <strong style={{ color: '#254A96' }}>{pedidos.length}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {maxPosVuelta > 0 && <>{Math.round(posTotalVuelta)} / {maxPosVuelta} pos ({pct(posTotalVuelta, maxPosVuelta)}%) · </>}
-                  {(pesoTotalVuelta / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn ({pct(pesoTotalVuelta, maxPesoVuelta)}%)
+                  {maxPosVuelta > 0 && <>{Math.round(posTotalVuelta)} / {maxPosVuelta} pos <span style={{ color: colorOcupacion(pctPosTotal) }}>({pctPosTotal}%)</span> · </>}
+                  {(pesoTotalVuelta / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn <span style={{ color: colorOcupacion(pctPesoTotal) }}>({pctPesoTotal}%)</span>
                 </span>
               )}
             </div>
@@ -3106,8 +3113,8 @@ function ProgramacionInner() {
               <span>Asignados: <strong style={{ color: '#10b981' }}>{totalAsig}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {maxPosVuelta > 0 && <>{Math.round(posAsig)} / {maxPosVuelta} pos ({pct(posAsig, maxPosVuelta)}%) · </>}
-                  {(pesoAsig / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn ({pct(pesoAsig, maxPesoVuelta)}%)
+                  {maxPosVuelta > 0 && <>{Math.round(posAsig)} / {maxPosVuelta} pos <span style={{ color: colorOcupacion(pctPosAsig) }}>({pctPosAsig}%)</span> · </>}
+                  {(pesoAsig / 1000).toFixed(1)} / {(maxPesoVuelta / 1000).toFixed(1)} tn <span style={{ color: colorOcupacion(pctPesoAsig) }}>({pctPesoAsig}%)</span>
                 </span>
               )}
             </div>
@@ -3115,8 +3122,8 @@ function ProgramacionInner() {
               <span>Sin asignar: <strong style={{ color: totalSin > 0 ? '#E52322' : '#B9BBB7' }}>{totalSin}</strong></span>
               {maxPesoVuelta > 0 && (
                 <span className="text-xs" style={{ color: '#aaa' }}>
-                  {maxPosVuelta > 0 && <>{Math.round(posSinAsig)} / {posDisp > 0 ? `${Math.round(posDisp)} pos disp (${pct(posSinAsig, posDisp)}%)` : `${Math.round(posDisp)} pos disp`} · </>}
-                  {(pesoSinAsig / 1000).toFixed(1)} / {pesoDisp > 0 ? `${(pesoDisp / 1000).toFixed(1)} tn disp (${pct(pesoSinAsig, pesoDisp)}%)` : `${(pesoDisp / 1000).toFixed(1)} tn disp`}
+                  {maxPosVuelta > 0 && <>{Math.round(posSinAsig)} / {Math.round(posDisp)} pos disp {posDisp > 0 && <span style={{ color: colorBarra(pctPosSin) }}>({pctPosSin}%)</span>} · </>}
+                  {(pesoSinAsig / 1000).toFixed(1)} / {(pesoDisp / 1000).toFixed(1)} tn disp {pesoDisp > 0 && <span style={{ color: colorBarra(pctPesoSin) }}>({pctPesoSin}%)</span>}
                 </span>
               )}
             </div>

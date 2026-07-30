@@ -113,7 +113,7 @@ export default function MaterialesPage() {
           if (!best || score > best.score) best = { mat, score }
         }
         if (!best || best.score < 0.5) sinMatch.push(alias)
-        else if (best.score >= 0.8) alto.push({ alias, material: best.mat, score: best.score })
+        else if (best.score >= 0.9) alto.push({ alias, material: best.mat, score: best.score })
         else medio.push({ alias, material: best.mat, score: best.score })
       }
       alto.sort((a, b) => b.score - a.score)
@@ -145,22 +145,44 @@ export default function MaterialesPage() {
   }
 
   async function exportarSinMatch() {
-    if (!autoMatchResult?.sinMatch.length) return
+    if (!autoMatchResult) return
     const XLSX = await import('xlsx')
-    const filas = autoMatchResult.sinMatch.map(alias => ({
-      descripcion_pdf: alias.descripcion_pdf,
-      veces_visto: alias.veces_visto,
-      nombre: '',
-      categoria: '',
-      subcategoria: '',
-      tipo_carga: 'complementario',
-      unidad_base: 'u',
-      unidad_logistica: 'u',
-      cant_x_unid_log: 1,
-      posiciones_x_unid_log: 1,
-      peso_kg_x_posicion: 0,
-      notas: '',
-    }))
+    const noAceptados = autoMatchResult.medio.filter(m => !medioAceptados.has(m.alias.id))
+    const filas = [
+      ...noAceptados.map(m => ({
+        descripcion_pdf: m.alias.descripcion_pdf,
+        veces_visto: m.alias.veces_visto,
+        sugerencia: m.material.nombre,
+        confianza: `${Math.round(m.score * 100)}%`,
+        nombre: '',
+        categoria: '',
+        subcategoria: '',
+        tipo_carga: 'complementario',
+        unidad_base: 'u',
+        unidad_logistica: 'u',
+        cant_x_unid_log: 1,
+        posiciones_x_unid_log: 1,
+        peso_kg_x_posicion: 0,
+        notas: '',
+      })),
+      ...autoMatchResult.sinMatch.map(alias => ({
+        descripcion_pdf: alias.descripcion_pdf,
+        veces_visto: alias.veces_visto,
+        sugerencia: '',
+        confianza: '',
+        nombre: '',
+        categoria: '',
+        subcategoria: '',
+        tipo_carga: 'complementario',
+        unidad_base: 'u',
+        unidad_logistica: 'u',
+        cant_x_unid_log: 1,
+        posiciones_x_unid_log: 1,
+        peso_kg_x_posicion: 0,
+        notas: '',
+      })),
+    ]
+    if (!filas.length) return
     const ws = XLSX.utils.json_to_sheet(filas)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Nuevos Materiales')

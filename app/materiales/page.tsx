@@ -649,8 +649,8 @@ export default function MaterialesPage() {
                         <tbody>
                           {autoMatchResult.alto.map(m => (
                             <tr key={m.alias.id} style={{ borderBottom: '1px solid #f4f4f3' }}>
-                              <td className="px-3 py-1.5 font-mono max-w-[220px]" style={{ color: '#888' }}>
-                                <div className="truncate">{m.alias.descripcion_pdf}</div>
+                              <td className="px-3 py-1.5 font-mono" style={{ color: '#888' }}>
+                                {m.alias.descripcion_pdf}
                               </td>
                               <td className="px-1 py-1.5 text-center" style={{ color: '#B9BBB7' }}>→</td>
                               <td className="px-3 py-1.5 font-medium" style={{ color: '#065f46' }}>{m.material.nombre}</td>
@@ -693,8 +693,8 @@ export default function MaterialesPage() {
                               <td className="px-3 py-1.5">
                                 <input type="checkbox" readOnly checked={medioAceptados.has(m.alias.id)} />
                               </td>
-                              <td className="px-2 py-1.5 font-mono max-w-[180px]" style={{ color: '#888' }}>
-                                <div className="truncate">{m.alias.descripcion_pdf}</div>
+                              <td className="px-2 py-1.5 font-mono" style={{ color: '#888' }}>
+                                {m.alias.descripcion_pdf}
                               </td>
                               <td className="px-1 py-1.5 text-center" style={{ color: '#B9BBB7' }}>→</td>
                               <td className="px-3 py-1.5 font-medium" style={{ color: '#1a1a1a' }}>{m.material.nombre}</td>

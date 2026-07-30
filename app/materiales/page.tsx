@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -68,8 +68,141 @@ export default function MaterialesPage() {
   const [guardandoMat, setGuardandoMat] = useState(false)
   const [busquedaMaestro, setBusquedaMaestro] = useState('')
 
+  // Auto-match
+  interface MatchItem { alias: Alias; material: Material; score: number }
+  interface AutoMatchResult { alto: MatchItem[]; medio: MatchItem[]; sinMatch: Alias[] }
+  const [autoMatchResult, setAutoMatchResult] = useState<AutoMatchResult | null>(null)
+  const [corriendoMatch, setCorriendoMatch] = useState(false)
+  const [aplicandoMatch, setAplicandoMatch] = useState(false)
+  const [medioAceptados, setMedioAceptados] = useState<Set<number>>(new Set())
+  const [importando, setImportando] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
+  }
+
+  // ── Auto-match helpers ────────────────────────────────────────────────────
+  function normalizarDesc(s: string) {
+    return s.toLowerCase()
+      .replace(/^\d+[\.\-]\s*/, '')
+      .replace(/,/g, '.')
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ').trim()
+  }
+  function tokenSim(a: string, b: string): number {
+    const aN = normalizarDesc(a), bN = normalizarDesc(b)
+    if (aN === bN) return 1
+    if (aN.includes(bN) || bN.includes(aN)) return 0.85
+    const tokA = new Set(aN.split(/\s+/).filter(t => t.length > 1))
+    const tokB = new Set(bN.split(/\s+/).filter(t => t.length > 1))
+    if (!tokA.size || !tokB.size) return 0
+    let common = 0; for (const t of tokA) if (tokB.has(t)) common++
+    return (2 * common) / (tokA.size + tokB.size)
+  }
+
+  function correrAutoMatch() {
+    setCorriendoMatch(true)
+    setTimeout(() => {
+      const alto: MatchItem[] = [], medio: MatchItem[] = [], sinMatch: Alias[] = []
+      for (const alias of pendientes) {
+        let best: { mat: Material; score: number } | null = null
+        for (const mat of materiales) {
+          const score = tokenSim(alias.descripcion_pdf, mat.nombre)
+          if (!best || score > best.score) best = { mat, score }
+        }
+        if (!best || best.score < 0.5) sinMatch.push(alias)
+        else if (best.score >= 0.8) alto.push({ alias, material: best.mat, score: best.score })
+        else medio.push({ alias, material: best.mat, score: best.score })
+      }
+      alto.sort((a, b) => b.score - a.score)
+      medio.sort((a, b) => b.score - a.score)
+      sinMatch.sort((a, b) => b.veces_visto - a.veces_visto)
+      setAutoMatchResult({ alto, medio, sinMatch })
+      setMedioAceptados(new Set())
+      setCorriendoMatch(false)
+    }, 50)
+  }
+
+  async function aplicarMatches() {
+    if (!autoMatchResult) return
+    setAplicandoMatch(true)
+    const toResolve = [
+      ...autoMatchResult.alto.map(m => ({ aliasId: m.alias.id, materialId: m.material.id })),
+      ...autoMatchResult.medio.filter(m => medioAceptados.has(m.alias.id)).map(m => ({ aliasId: m.alias.id, materialId: m.material.id })),
+    ]
+    if (toResolve.length > 0) {
+      await Promise.all(toResolve.map(({ aliasId, materialId }) =>
+        supabase.from('material_aliases').update({ material_id: materialId, resuelto: true }).eq('id', aliasId)
+      ))
+      const resolvedMap = new Map(toResolve.map(r => [r.aliasId, r.materialId]))
+      setAliases(prev => prev.map(a => resolvedMap.has(a.id) ? { ...a, material_id: resolvedMap.get(a.id)!, resuelto: true } : a))
+      showToast(`${toResolve.length} aliases vinculados`)
+    }
+    setAutoMatchResult(null)
+    setAplicandoMatch(false)
+  }
+
+  async function exportarSinMatch() {
+    if (!autoMatchResult?.sinMatch.length) return
+    const XLSX = await import('xlsx')
+    const filas = autoMatchResult.sinMatch.map(alias => ({
+      descripcion_pdf: alias.descripcion_pdf,
+      veces_visto: alias.veces_visto,
+      nombre: '',
+      categoria: '',
+      subcategoria: '',
+      tipo_carga: 'complementario',
+      unidad_base: 'u',
+      unidad_logistica: 'u',
+      cant_x_unid_log: 1,
+      posiciones_x_unid_log: 1,
+      peso_kg_x_posicion: 0,
+      notas: '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Nuevos Materiales')
+    XLSX.writeFile(wb, `materiales_nuevos_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  async function handleImportarFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    setImportando(true)
+    try {
+      const buffer = await file.arrayBuffer()
+      const XLSX = await import('xlsx')
+      const wb = XLSX.read(buffer)
+      const ws = wb.Sheets[wb.SheetNames[0]]
+      const raw: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
+      const rows = raw
+        .filter(r => r.nombre?.toString().trim())
+        .map(r => ({
+          descripcion_pdf: r.descripcion_pdf?.toString().trim() ?? '',
+          nombre: r.nombre.toString().trim(),
+          categoria: r.categoria?.toString().trim() ?? '',
+          subcategoria: r.subcategoria?.toString().trim() || null,
+          tipo_carga: r.tipo_carga?.toString().trim() || 'complementario',
+          unidad_base: r.unidad_base?.toString().trim() || 'u',
+          unidad_logistica: r.unidad_logistica?.toString().trim() || 'u',
+          cant_x_unid_log: Number(r.cant_x_unid_log) || 1,
+          posiciones_x_unid_log: Number(r.posiciones_x_unid_log) || 1,
+          peso_kg_x_posicion: Number(r.peso_kg_x_posicion) || 0,
+          notas: r.notas?.toString().trim() || null,
+        }))
+      if (rows.length === 0) { showToast('No hay filas con nombre completado', 'err'); setImportando(false); return }
+      const resp = await fetch('/api/materiales/importar', {
+        method: 'POST',
+        body: JSON.stringify({ rows }),
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const result = await resp.json()
+      if (!resp.ok) showToast(result.error ?? 'Error al importar', 'err')
+      else { showToast(`${result.creados} materiales creados, ${result.vinculados} aliases resueltos`); cargar() }
+    } catch { showToast('Error al leer el archivo', 'err') }
+    setImportando(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   useEffect(() => {
@@ -469,6 +602,132 @@ export default function MaterialesPage() {
         </div>
       )}
 
+      {/* Modal Auto-match */}
+      {autoMatchResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" style={{ fontFamily: 'Barlow, sans-serif' }}>
+            <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: '#f0f0f0' }}>
+              <h3 className="font-bold text-sm" style={{ color: '#254A96' }}>🔍 Resultados del auto-match</h3>
+              <span className="text-xs" style={{ color: '#B9BBB7' }}>{pendientes.length} aliases analizados</span>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+
+              {/* Alta confianza */}
+              {autoMatchResult.alto.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#d1fae5', color: '#065f46' }}>
+                      ✓ Alta confianza ({autoMatchResult.alto.length})
+                    </span>
+                    <span className="text-xs" style={{ color: '#B9BBB7' }}>Se vincularán automáticamente</span>
+                  </div>
+                  <div className="rounded-xl overflow-hidden border" style={{ borderColor: '#e8edf8' }}>
+                    <div className="max-h-44 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {autoMatchResult.alto.map(m => (
+                            <tr key={m.alias.id} style={{ borderBottom: '1px solid #f4f4f3' }}>
+                              <td className="px-3 py-1.5 font-mono max-w-[220px]" style={{ color: '#888' }}>
+                                <div className="truncate">{m.alias.descripcion_pdf}</div>
+                              </td>
+                              <td className="px-1 py-1.5 text-center" style={{ color: '#B9BBB7' }}>→</td>
+                              <td className="px-3 py-1.5 font-medium" style={{ color: '#065f46' }}>{m.material.nombre}</td>
+                              <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap" style={{ color: '#B9BBB7' }}>{Math.round(m.score * 100)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Confianza media */}
+              {autoMatchResult.medio.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#fef3c7', color: '#b45309' }}>
+                      ? Confianza media ({autoMatchResult.medio.length})
+                    </span>
+                    <button
+                      onClick={() => setMedioAceptados(prev =>
+                        prev.size === autoMatchResult!.medio.length
+                          ? new Set()
+                          : new Set(autoMatchResult!.medio.map(m => m.alias.id))
+                      )}
+                      className="text-xs px-2 py-0.5 rounded font-medium"
+                      style={{ background: '#f4f4f3', color: '#666' }}>
+                      {medioAceptados.size === autoMatchResult.medio.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                    </button>
+                  </div>
+                  <div className="rounded-xl overflow-hidden border" style={{ borderColor: '#e8edf8' }}>
+                    <div className="max-h-44 overflow-y-auto">
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {autoMatchResult.medio.map(m => (
+                            <tr key={m.alias.id}
+                              style={{ borderBottom: '1px solid #f4f4f3', background: medioAceptados.has(m.alias.id) ? '#f0fdf4' : 'white', cursor: 'pointer' }}
+                              onClick={() => setMedioAceptados(prev => { const n = new Set(prev); n.has(m.alias.id) ? n.delete(m.alias.id) : n.add(m.alias.id); return n })}>
+                              <td className="px-3 py-1.5">
+                                <input type="checkbox" readOnly checked={medioAceptados.has(m.alias.id)} />
+                              </td>
+                              <td className="px-2 py-1.5 font-mono max-w-[180px]" style={{ color: '#888' }}>
+                                <div className="truncate">{m.alias.descripcion_pdf}</div>
+                              </td>
+                              <td className="px-1 py-1.5 text-center" style={{ color: '#B9BBB7' }}>→</td>
+                              <td className="px-3 py-1.5 font-medium" style={{ color: '#1a1a1a' }}>{m.material.nombre}</td>
+                              <td className="px-3 py-1.5 text-right font-mono whitespace-nowrap" style={{ color: '#b45309' }}>{Math.round(m.score * 100)}%</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sin match */}
+              {autoMatchResult.sinMatch.length > 0 && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: '#fde8e8', color: '#E52322' }}>
+                      ✕ Sin match ({autoMatchResult.sinMatch.length})
+                    </span>
+                    <button onClick={exportarSinMatch}
+                      className="text-xs px-3 py-1.5 rounded-lg font-semibold"
+                      style={{ background: '#254A96', color: 'white' }}>
+                      📥 Exportar Excel
+                    </button>
+                  </div>
+                  <div className="rounded-xl px-4 py-3 text-xs" style={{ background: '#fde8e8', color: '#b45309' }}>
+                    Estos {autoMatchResult.sinMatch.length} productos no están en el maestro. Exportalos, completá los datos logísticos e importalos con el botón "Importar maestro".
+                  </div>
+                </div>
+              )}
+
+              {autoMatchResult.alto.length === 0 && autoMatchResult.medio.length === 0 && autoMatchResult.sinMatch.length === 0 && (
+                <p className="text-sm text-center py-6" style={{ color: '#B9BBB7' }}>Sin resultados</p>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t flex gap-2" style={{ borderColor: '#f0f0f0' }}>
+              {(autoMatchResult.alto.length + medioAceptados.size) > 0 && (
+                <button onClick={aplicarMatches} disabled={aplicandoMatch}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50"
+                  style={{ background: '#254A96' }}>
+                  {aplicandoMatch ? 'Vinculando...' : `Vincular ${autoMatchResult.alto.length + medioAceptados.size} aliases`}
+                </button>
+              )}
+              <button onClick={() => setAutoMatchResult(null)}
+                className="px-5 py-2.5 rounded-xl text-sm font-medium"
+                style={{ background: '#f4f4f3', color: '#666' }}>
+                {(autoMatchResult.alto.length + medioAceptados.size) > 0 ? 'Cancelar' : 'Cerrar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <nav className="bg-white border-b sticky top-0 z-40" style={{ borderColor: '#e8edf8' }}>
         <div className="max-w-[1600px] mx-auto px-4 h-14 flex items-center justify-between">
@@ -510,9 +769,24 @@ export default function MaterialesPage() {
               </div>
             ) : (
               <>
-                <div className="rounded-xl px-4 py-3 text-sm flex items-center gap-2" style={{ background: '#fef3c7', color: '#b45309' }}>
-                  <span>⚠️</span>
-                  <span>Estos productos aparecieron en SDs pero no matchearon con ningún material del maestro. Resolvelos para que los pedidos futuros calcules posiciones correctamente.</span>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="rounded-xl px-4 py-3 text-sm flex items-center gap-2 flex-1 min-w-0" style={{ background: '#fef3c7', color: '#b45309' }}>
+                    <span>⚠️</span>
+                    <span>Estos productos aparecieron en SDs pero no matchearon con ningún material del maestro. Resolvelos para que los pedidos futuros calculen posiciones correctamente.</span>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={correrAutoMatch} disabled={corriendoMatch}
+                      className="text-xs px-3 py-2 rounded-lg font-semibold disabled:opacity-50"
+                      style={{ background: '#254A96', color: 'white' }}>
+                      {corriendoMatch ? '⏳ Analizando...' : '🔍 Auto-vincular'}
+                    </button>
+                    <label className={`text-xs px-3 py-2 rounded-lg font-semibold cursor-pointer ${importando ? 'opacity-50 pointer-events-none' : ''}`}
+                      style={{ background: '#f0fdf4', color: '#065f46' }}>
+                      {importando ? '⏳ Importando...' : '📤 Importar maestro'}
+                      <input ref={fileInputRef} type="file" accept=".xlsx" className="hidden"
+                        onChange={handleImportarFile} disabled={importando} />
+                    </label>
+                  </div>
                 </div>
                 <div className="bg-white rounded-xl shadow-sm overflow-hidden">
                   <table className="w-full text-sm">

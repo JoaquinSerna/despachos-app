@@ -66,7 +66,7 @@ function vueltasDisponibles(fecha: string): number[] {
   const horaActual = new Date().getHours()
   return sinSabado.filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
 }
-const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado'])
+const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado', 'en_camino'])
 function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
 function posColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.round(peso / max * 100) }

@@ -595,7 +595,8 @@ export default function MetricasPage() {
           const cam = camionMap[g.camion]
           const flota = flotaMapEx[`${g.camion}|${g.fecha}`]
           const esTrailerEx = /trailer|semi/i.test(cam?.tipo_unidad ?? '')
-          const depot = DEPOSITOS[cam?.sucursal ?? ''] ?? { lat: -34.9205, lng: -57.9536 }
+          const depotCam = DEPOSITOS[cam?.sucursal ?? ''] ?? { lat: -34.9205, lng: -57.9536 }
+          const depot = DEPOSITOS[g.peds[0]?.sucursal] ?? depotCam
 
           const kg = g.peds.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
           const pos = g.peds.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
@@ -762,7 +763,8 @@ export default function MetricasPage() {
         const pv = pedidosCamion.filter((p: any) => p.vuelta === v)
         const kg = pv.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pv.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
-        const dist = calcularDistanciaRuta(pv, depot)
+        const depotVuelta = DEPOSITOS[pv[0]?.sucursal] ?? depot
+        const dist = calcularDistanciaRuta(pv, depotVuelta)
         return {
           vuelta: v,
           pedidos: pv.length,

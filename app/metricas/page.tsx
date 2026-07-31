@@ -108,19 +108,23 @@ const VUELTA_LABEL: Record<number, string> = {
   4: 'V4 · 15–17hs', 5: 'V5 · Fuera de hora',
 }
 
-function calcularDistanciaRuta(pedidos: { latitud: number | null; longitud: number | null; orden_entrega: number | null }[], depot: { lat: number; lng: number }): number {
+function calcularDistanciaRuta(
+  pedidos: { latitud: number | null; longitud: number | null; orden_entrega: number | null }[],
+  depotInicio: { lat: number; lng: number },
+  depotFin?: { lat: number; lng: number },
+): number {
+  const fin = depotFin ?? depotInicio
   const conUbicacion = pedidos
     .filter(p => p.latitud && p.longitud)
     .sort((a, b) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
   if (conUbicacion.length === 0) return 0
   let dist = 0
-  let latPrev = depot.lat, lngPrev = depot.lng
+  let latPrev = depotInicio.lat, lngPrev = depotInicio.lng
   for (const p of conUbicacion) {
     dist += distanciaKm(latPrev, lngPrev, p.latitud!, p.longitud!)
     latPrev = p.latitud!; lngPrev = p.longitud!
   }
-  // vuelta al depósito
-  dist += distanciaKm(latPrev, lngPrev, depot.lat, depot.lng)
+  dist += distanciaKm(latPrev, lngPrev, fin.lat, fin.lng)
   return Math.round(dist)
 }
 
@@ -602,7 +606,8 @@ export default function MetricasPage() {
           const pos = g.peds.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
           const distKmEx = calcularDistanciaRuta(
             g.peds.map((p: any) => ({ latitud: p.latitud, longitud: p.longitud, orden_entrega: p.orden_entrega })),
-            depot
+            depot,
+            depot !== depotCam ? depotCam : undefined,
           )
 
           const detEx: PedidoDetalle[] = g.peds.map((p: any) => ({
@@ -764,7 +769,7 @@ export default function MetricasPage() {
         const kg = pv.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pv.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
         const depotVuelta = DEPOSITOS[pv[0]?.sucursal] ?? depot
-        const dist = calcularDistanciaRuta(pv, depotVuelta)
+        const dist = calcularDistanciaRuta(pv, depotVuelta, depotVuelta !== depot ? depot : undefined)
         return {
           vuelta: v,
           pedidos: pv.length,

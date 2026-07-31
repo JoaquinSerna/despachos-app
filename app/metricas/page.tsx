@@ -595,19 +595,23 @@ export default function MetricasPage() {
       }
       const porVueltaRows = Object.values(vueltaGroupsEx)
         .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion.localeCompare(b.camion) || a.vuelta - b.vuelta)
-        .map(g => {
+        .map((g, idx, arr) => {
           const cam = camionMap[g.camion]
           const flota = flotaMapEx[`${g.camion}|${g.fecha}`]
           const esTrailerEx = /trailer|semi/i.test(cam?.tipo_unidad ?? '')
           const depotCam = DEPOSITOS[cam?.sucursal ?? ''] ?? { lat: -34.9205, lng: -57.9536 }
           const depot = DEPOSITOS[g.peds[0]?.sucursal] ?? depotCam
+          const gNext = arr[idx + 1]
+          const depotFin = (gNext && gNext.camion === g.camion && gNext.fecha === g.fecha)
+            ? (DEPOSITOS[gNext.peds[0]?.sucursal] ?? depotCam)
+            : depotCam
 
           const kg = g.peds.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
           const pos = g.peds.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
           const distKmEx = calcularDistanciaRuta(
             g.peds.map((p: any) => ({ latitud: p.latitud, longitud: p.longitud, orden_entrega: p.orden_entrega })),
             depot,
-            depot !== depotCam ? depotCam : undefined,
+            depotFin,
           )
 
           const detEx: PedidoDetalle[] = g.peds.map((p: any) => ({
@@ -764,12 +768,15 @@ export default function MetricasPage() {
       const depot = DEPOSITOS[camion.sucursal] ?? { lat: -34.9205, lng: -57.9536 }
 
       const vueltasSet = [...new Set(pedidosCamion.map((p: any) => p.vuelta as number))].sort((a, b) => a - b)
-      const vueltas: DatosVuelta[] = vueltasSet.map(v => {
+      const vueltas: DatosVuelta[] = vueltasSet.map((v, idx) => {
         const pv = pedidosCamion.filter((p: any) => p.vuelta === v)
         const kg = pv.reduce((a: number, p: any) => a + (p.peso_total_kg ?? 0), 0)
         const pos = pv.reduce((a: number, p: any) => a + (p.volumen_total_m3 ?? 0), 0)
         const depotVuelta = DEPOSITOS[pv[0]?.sucursal] ?? depot
-        const dist = calcularDistanciaRuta(pv, depotVuelta, depotVuelta !== depot ? depot : undefined)
+        const nextV = vueltasSet[idx + 1]
+        const pvNext = nextV != null ? pedidosCamion.filter((p: any) => p.vuelta === nextV) : null
+        const depotFin = pvNext ? (DEPOSITOS[pvNext[0]?.sucursal] ?? depot) : depot
+        const dist = calcularDistanciaRuta(pv, depotVuelta, depotFin)
         return {
           vuelta: v,
           pedidos: pv.length,

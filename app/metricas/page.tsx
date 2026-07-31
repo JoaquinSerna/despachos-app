@@ -807,7 +807,7 @@ export default function MetricasPage() {
         }
       })
 
-      const distanciaTotalKm = calcularDistanciaRuta(pedidosCamion, depot)
+      const distanciaTotalKm = vueltas.reduce((sum, v) => sum + v.distanciaKm, 0)
       const numVueltas = vueltas.length || 1
       const capacidadKgDia = camion.tonelaje_max_kg * numVueltas
       const capacidadPosDia = camion.posiciones_total * numVueltas
@@ -1851,7 +1851,7 @@ function VistaDiaria({ datos, fecha, camionesNoActivados }: {
                           const trasMin = v.tiempoTrasladoMin
                           // Fallback: estimación de traslado desde km en línea recta
                           // (factor 1.3 de desvío de ruta × vel promedio según sucursal)
-                          const velKmh = getVelFallback(d.sucursal)
+                          const velKmh = getVelFallback(v.detalle[0]?.sucursal ?? d.sucursal)
                           const trasEst = trasMin === null && v.distanciaKm > 0
                             ? Math.round(v.distanciaKm * 1.3 / velKmh * 60)
                             : null

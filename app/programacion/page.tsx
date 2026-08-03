@@ -2453,10 +2453,13 @@ function ProgramacionInner() {
       await new Promise<void>(r => setTimeout(r, 1100))
       if (enrichGenRef.current !== gen) return
       try {
+        const ctrl = new AbortController()
+        const tid = setTimeout(() => ctrl.abort(), 5000)
         const res = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-          { headers: { 'User-Agent': 'despachos-app' } }
+          { headers: { 'User-Agent': 'despachos-app' }, signal: ctrl.signal }
         )
+        clearTimeout(tid)
         const data = await res.json()
         const loc: string = data.address?.city || data.address?.town || data.address?.village || data.address?.suburb || ''
         if (!loc || enrichGenRef.current !== gen) continue

@@ -754,6 +754,22 @@ function TabVerificacion({ rol, userEmail, showToast }: {
         }
       }
 
+      // Verificar solicitudes activas antes de crear
+      const todosIds = [...reqGrupos.values()].flatMap(g => g.items.map(it => it.id_producto))
+      if (todosIds.length > 0) {
+        const { data: itemsActivos } = await supabase
+          .from('requerimiento_items')
+          .select('nombre_producto, requerimientos!inner(nv, estado, sucursal_destino)')
+          .in('id_producto', todosIds)
+        const activos = (itemsActivos ?? []).filter((it: any) =>
+          ['pendiente', 'conf_stock', 'preparacion', 'en_transito'].includes(it.requerimientos.estado)
+        )
+        if (activos.length > 0) {
+          const nombres = [...new Set(activos.map((it: any) => it.nombre_producto))].join(', ')
+          showToast(`⚠ Materiales con transferencia activa: ${nombres}`, 'err')
+        }
+      }
+
       let reqCreados = 0
       for (const [, grupo] of reqGrupos) {
         const { sol, fromBranch } = grupo
@@ -1211,6 +1227,8 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
   const [tfOrigen, setTfOrigen] = useState(row.sucursal_mejor)
   const [tfFecha, setTfFecha] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [solicitudesActivas, setSolicitudesActivas] = useState<any[]>([])
+  const [cargandoAlerta, setCargandoAlerta] = useState(false)
 
   const cob = {
     cubierto:  { bg: '#d1fae5', color: '#065f46', label: 'Cubierto' },
@@ -1326,14 +1344,28 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
         {/* Botón Transferir */}
         {row.cobertura !== 'cubierto' && (
           <button
-            onClick={() => {
+            onClick={async () => {
               if (formTransfer) {
                 setFormTransfer(null)
+                setSolicitudesActivas([])
               } else {
                 setTfCantidad(row.deficit)
                 setTfOrigen(row.sucursal_mejor)
                 setTfFecha('')
                 setFormTransfer({ abierto: true })
+                if (row.id_producto > 0) {
+                  setCargandoAlerta(true)
+                  const { data } = await supabase
+                    .from('requerimiento_items')
+                    .select('cantidad_solicitada, requerimientos!inner(id, nv, notas, estado, sucursal_origen, sucursal_destino, fecha_req)')
+                    .eq('id_producto', row.id_producto)
+                  const activas = (data ?? []).filter((it: any) =>
+                    ['pendiente', 'conf_stock', 'preparacion', 'en_transito'].includes(it.requerimientos.estado)
+                    && it.requerimientos.sucursal_destino === row.sucursal
+                  )
+                  setSolicitudesActivas(activas)
+                  setCargandoAlerta(false)
+                }
               }
             }}
             className="text-xs px-2.5 py-1 rounded-lg font-semibold shrink-0"
@@ -1346,6 +1378,44 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
       {/* Formulario inline de transferencia */}
       {formTransfer && (
         <div className="px-4 pb-4 pt-2 border-t" style={{ background: '#fffbf5', borderColor: '#fed7aa' }}>
+          {/* Alerta de solicitudes activas */}
+          {cargandoAlerta && (
+            <p className="text-xs mb-3" style={{ color: '#b45309' }}>Verificando solicitudes existentes…</p>
+          )}
+          {!cargandoAlerta && solicitudesActivas.length > 0 && (() => {
+            const nvsSolicitudes = new Set(solicitudes.filter(s => row.sol_ids.includes(s.id)).map((s: any) => String(s.id_venta)))
+            const sdsSolicitudes = new Set(row.sol_ids.map(String))
+            return (
+              <div className="mb-3 rounded-lg p-3 text-xs" style={{ background: '#fef3c7', border: '1px solid #fcd34d' }}>
+                <p className="font-bold mb-2" style={{ color: '#92400e' }}>
+                  ⚠ {solicitudesActivas.length === 1 ? 'Ya hay una solicitud activa' : `Ya hay ${solicitudesActivas.length} solicitudes activas`} para este material en {row.sucursal}
+                </p>
+                {solicitudesActivas.map((item: any, i: number) => {
+                  const req = item.requerimientos
+                  const sdMatch = req.notas?.match(/SD #(\d+)/)
+                  const esMisma = (req.nv && nvsSolicitudes.has(req.nv)) || (sdMatch && sdsSolicitudes.has(sdMatch[1]))
+                  const estadoLabel: Record<string, string> = { pendiente: 'Pendiente', conf_stock: 'Stock confirmado', preparacion: 'En preparación', en_transito: 'En tránsito' }
+                  return (
+                    <div key={i} className="flex flex-wrap items-center gap-2 mt-1 pt-1" style={{ borderTop: i > 0 ? '1px solid #fcd34d' : 'none' }}>
+                      <span style={{ color: '#78350f' }}>
+                        {req.sucursal_origen} → {req.sucursal_destino}
+                      </span>
+                      <span className="font-semibold" style={{ color: '#92400e' }}>{item.cantidad_solicitada} u</span>
+                      <span className="px-1.5 py-0.5 rounded font-medium" style={{ background: '#fde68a', color: '#92400e' }}>{estadoLabel[req.estado] ?? req.estado}</span>
+                      {req.nv && <span style={{ color: '#78350f' }}>NV {req.nv}</span>}
+                      {sdMatch && <span style={{ color: '#78350f' }}>SD #{sdMatch[1]}</span>}
+                      <span className="font-bold px-1.5 py-0.5 rounded" style={{ background: esMisma ? '#fecaca' : '#e0e7ff', color: esMisma ? '#dc2626' : '#3730a3' }}>
+                        {esMisma ? '↑ misma NV/SD' : '↑ NV/SD diferente'}
+                      </span>
+                    </div>
+                  )
+                })}
+                <p className="mt-2" style={{ color: '#78350f' }}>
+                  Podés aumentar el volumen de la transferencia existente o crear una nueva si va a proveedor directo.
+                </p>
+              </div>
+            )
+          })()}
           <div className="flex items-end gap-3 flex-wrap">
             <div>
               <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Cantidad</label>

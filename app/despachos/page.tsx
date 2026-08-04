@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -48,6 +48,41 @@ const FORM_INICIAL = {
   barrio_cerrado: false,
   latitud: null as number | null,
   longitud: null as number | null,
+}
+
+function MapaPreview({ lat, lng }: { lat: number; lng: number }) {
+  const mapRef = useRef<HTMLDivElement>(null)
+  const leafletRef = useRef<any>(null)
+
+  useEffect(() => {
+    if (!document.getElementById('leaflet-css')) {
+      const link = document.createElement('link')
+      link.id = 'leaflet-css'; link.rel = 'stylesheet'
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+      document.head.appendChild(link)
+    }
+    function initMap() {
+      if (!mapRef.current) return
+      const L = (window as any).L
+      if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null }
+      const map = L.map(mapRef.current).setView([lat, lng], 15)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OSM', maxZoom: 18,
+      }).addTo(map)
+      L.marker([lat, lng]).addTo(map)
+      leafletRef.current = map
+    }
+    if ((window as any).L) { setTimeout(initMap, 50) }
+    else {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+      script.onload = () => setTimeout(initMap, 50)
+      document.body.appendChild(script)
+    }
+    return () => { if (leafletRef.current) { leafletRef.current.remove(); leafletRef.current = null } }
+  }, [lat, lng])
+
+  return <div ref={mapRef} style={{ height: 220, width: '100%' }} />
 }
 
 export default function NuevoDespacho() {
@@ -1115,11 +1150,7 @@ export default function NuevoDespacho() {
                 <div>
                   <p className="text-xs mb-1" style={{ color: '#B9BBB7' }}>Ubicación de entrega</p>
                   <div className="rounded-xl overflow-hidden border" style={{ borderColor: '#e8edf8', height: 220 }}>
-                    <iframe
-                      src={`https://www.openstreetmap.org/export/embed.html?bbox=${form.longitud! - 0.015},${form.latitud! - 0.015},${form.longitud! + 0.015},${form.latitud! + 0.015}&layer=mapnik&marker=${form.latitud},${form.longitud}`}
-                      width="100%" height="220" style={{ border: 0, display: 'block' }}
-                      loading="lazy"
-                    />
+                    <MapaPreview lat={form.latitud!} lng={form.longitud!} />
                   </div>
                   <p className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{form.latitud}, {form.longitud}</p>
                 </div>

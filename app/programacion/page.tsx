@@ -2564,9 +2564,11 @@ function ProgramacionInner() {
   }
 
   async function handleLimpiar() {
-    const conAsignacion = pedidos.filter(p => p.camion_id)
-    // Limpiar estado local inmediatamente
-    const limpio = pedidos.map(p => ({ ...p, camion_id: null }))
+    // Solo limpiar pedidos editables; no tocar en_camino, entregado, etc.
+    const editablesIds = new Set(pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').map(p => p.id))
+    const conAsignacion = pedidos.filter(p => p.camion_id && editablesIds.has(p.id))
+    // Limpiar estado local inmediatamente (solo editables)
+    const limpio = pedidos.map(p => editablesIds.has(p.id) ? { ...p, camion_id: null } : p)
     setPedidos(limpio); construirColumnas(limpio, camiones); setConfirmado(false)
     ordenGoogleRef.current = {} // descartar orden guardado de Google
     // Limpiar DB si había algo confirmado
@@ -2613,8 +2615,10 @@ function ProgramacionInner() {
   async function handleConfirmar() {
     setGuardando(true)
 
-    const asignados = pedidos.filter(p => p.camion_id)
-    const sinCamion = pedidos.filter(p => !p.camion_id)
+    // Solo operar sobre pedidos en estados editables; ignorar en_camino, entregado, etc.
+    const editables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+    const asignados = editables.filter(p => p.camion_id)
+    const sinCamion = editables.filter(p => !p.camion_id)
 
     const porCamion: Record<string, Pedido[]> = {}
     asignados.forEach(p => {
@@ -2995,8 +2999,10 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
-  const totalAsig = pedidos.filter(p => p.camion_id).length
-  const totalSin = pedidos.length - totalAsig
+  // Solo contabilizar pedidos editables (pendiente/programado) para los totales del confirm
+  const pedidosEditables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+  const totalAsig = pedidosEditables.filter(p => p.camion_id).length
+  const totalSin = pedidosEditables.filter(p => !p.camion_id).length
 
   const pesoAsig     = columnas.reduce((a, c) => a + c.pesoTotal, 0)
   const posAsig      = columnas.reduce((a, c) => a + c.posTotal, 0)

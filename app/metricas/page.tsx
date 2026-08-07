@@ -261,8 +261,12 @@ interface DatosPosicionesMes {
   sucursal: string
   vueltas: number    // cantidad de (camion × fecha × vuelta) únicos despachados
   posReales: number  // sum(volumen_total_m3) de pedidos despachados
-  posTeoricas: number // sum(posiciones_total del camión) por cada vuelta única
+  // Fill rate: denominador = capacidad × vueltas realizadas
+  posTeoricas: number
   pctOcupacion: number
+  // Utilización de flota: denominador = capacidad × vueltas posibles (flota_dia + calcVueltasMaxEfectivas)
+  posTeFlota: number
+  pctFlota: number
 }
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -1007,31 +1011,57 @@ export default function MetricasPage() {
     setDatosPosiciones([])
     try {
       const PAGE = 1000
-      let allPedidos: any[] = []; let from = 0
-      while (true) {
-        let q = supabase.from('pedidos')
-          .select('camion_id, fecha_entrega, sucursal, vuelta, volumen_total_m3')
-          .gte('fecha_entrega', posDesde).lte('fecha_entrega', posHasta)
-          .in('estado', ['en_camino', 'entregado', 'entregado_parcial', 'rechazado'])
-          .not('camion_id', 'is', null)
-          .range(from, from + PAGE - 1)
-        if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
-        const { data } = await q
-        if (!data || data.length === 0) break
-        allPedidos = allPedidos.concat(data)
-        if (data.length < PAGE) break
-        from += PAGE
+
+      // ── Paginar pedidos despachados ──────────────────────────────────────────
+      const paginatePedidos = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('pedidos')
+            .select('camion_id, fecha_entrega, sucursal, vuelta, volumen_total_m3')
+            .gte('fecha_entrega', posDesde).lte('fecha_entrega', posHasta)
+            .in('estado', ['en_camino', 'entregado', 'entregado_parcial', 'rechazado'])
+            .not('camion_id', 'is', null)
+            .range(from, from + PAGE - 1)
+          if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data); if (data.length < PAGE) break; from += PAGE
+        }
+        return all
       }
 
-      const { data: camionesData } = await supabase
-        .from('camiones_flota')
-        .select('codigo, posiciones_total, sucursal')
-      const camionMap: Record<string, any> = {}
-      for (const c of camionesData ?? []) camionMap[c.codigo] = c
+      // ── Paginar flota_dia (para calcular vueltas posibles por camión/día) ───
+      const paginateFlota = async () => {
+        let all: any[] = []; let from = 0
+        while (true) {
+          let q = supabase.from('flota_dia')
+            .select('fecha, camion_codigo, sucursal, km_ruta')
+            .gte('fecha', posDesde).lte('fecha', posHasta).eq('activo', true)
+            .range(from, from + PAGE - 1)
+          if (filtroSucursal) q = q.eq('sucursal', filtroSucursal)
+          const { data } = await q
+          if (!data || data.length === 0) break
+          all = all.concat(data); if (data.length < PAGE) break; from += PAGE
+        }
+        return all
+      }
 
+      const [allPedidos, flotaData, camionesRes] = await Promise.all([
+        paginatePedidos(),
+        paginateFlota(),
+        supabase.from('camiones_flota').select('codigo, posiciones_total, sucursal'),
+      ])
+
+      const camionMap: Record<string, any> = {}
+      for (const c of camionesRes.data ?? []) camionMap[c.codigo] = c
+
+      // ── Acumular posReales + posTeoricas (fill rate: vueltas realizadas) ────
       const porMesSuc: Record<string, {
-        mes: string; sucursal: string; posReales: number; posTeoricas: number; vultasSet: Set<string>
+        mes: string; sucursal: string
+        posReales: number; posTeoricas: number; vultasSet: Set<string>
       }> = {}
+      // Mapa auxiliar: (fecha|camion) → Set de vueltas realizadas (para calcular vMax después)
+      const vueltasPorCamionFecha: Record<string, Set<number>> = {}
 
       for (const p of allPedidos) {
         const mes = (p.fecha_entrega as string).slice(0, 7)
@@ -1041,23 +1071,55 @@ export default function MetricasPage() {
           porMesSuc[key] = { mes, sucursal: suc, posReales: 0, posTeoricas: 0, vultasSet: new Set() }
         }
         porMesSuc[key].posReales += p.volumen_total_m3 ?? 0
-        // Cada combinación única camion+fecha+vuelta = un slot teórico
+
         const vueltaKey = `${p.fecha_entrega}|${p.camion_id}|${p.vuelta ?? 0}`
         if (!porMesSuc[key].vultasSet.has(vueltaKey)) {
           porMesSuc[key].vultasSet.add(vueltaKey)
           porMesSuc[key].posTeoricas += camionMap[p.camion_id]?.posiciones_total ?? 0
         }
+
+        // Registrar qué vueltas hizo este camión este día (para estimar distancia)
+        const cfKey = `${p.fecha_entrega}|${p.camion_id}`
+        if (!vueltasPorCamionFecha[cfKey]) vueltasPorCamionFecha[cfKey] = new Set()
+        if (p.vuelta) vueltasPorCamionFecha[cfKey].add(p.vuelta)
+      }
+
+      // ── Acumular posTeFlota (utilización de flota: vueltas posibles) ────────
+      // Cada fila de flota_dia = un camión activo ese día.
+      // vMax = calcVueltasMaxEfectivas usando km_ruta registrado o distancia estimada.
+      const posTeFlotaMap: Record<string, number> = {}
+      for (const f of flotaData) {
+        const mes = (f.fecha as string).slice(0, 7)
+        const suc = f.sucursal as string
+        const key = `${mes}|${suc}`
+        const cam = camionMap[f.camion_codigo]
+        if (!cam?.posiciones_total) continue
+
+        const cfKey = `${f.fecha}|${f.camion_codigo}`
+        const numVueltas = vueltasPorCamionFecha[cfKey]?.size ?? 0
+        // Distancia promedio por vuelta: si hay km_ruta y vueltas, estimamos; si no, 0 → usa defaultMax
+        const estDist = numVueltas > 0 && f.km_ruta
+          ? (f.km_ruta as number) / (numVueltas * 2)
+          : 0
+        const vMax = calcVueltasMaxEfectivas(suc, estDist, f.fecha)
+        posTeFlotaMap[key] = (posTeFlotaMap[key] ?? 0) + cam.posiciones_total * vMax
       }
 
       const resultado: DatosPosicionesMes[] = Object.values(porMesSuc)
-        .map(d => ({
-          mes: d.mes,
-          sucursal: d.sucursal,
-          vueltas: d.vultasSet.size,
-          posReales: Math.round(d.posReales),
-          posTeoricas: d.posTeoricas,
-          pctOcupacion: d.posTeoricas > 0 ? Math.round(d.posReales / d.posTeoricas * 100) : 0,
-        }))
+        .map(d => {
+          const key = `${d.mes}|${d.sucursal}`
+          const posTeFlota = posTeFlotaMap[key] ?? 0
+          return {
+            mes: d.mes,
+            sucursal: d.sucursal,
+            vueltas: d.vultasSet.size,
+            posReales: Math.round(d.posReales),
+            posTeoricas: d.posTeoricas,
+            pctOcupacion: d.posTeoricas > 0 ? Math.round(d.posReales / d.posTeoricas * 100) : 0,
+            posTeFlota,
+            pctFlota: posTeFlota > 0 ? Math.round(d.posReales / posTeFlota * 100) : 0,
+          }
+        })
         .sort((a, b) => a.mes.localeCompare(b.mes) || a.sucursal.localeCompare(b.sucursal))
 
       setDatosPosiciones(resultado)
@@ -2587,6 +2649,18 @@ function ChatBot({ sucursal }: { sucursal: string }) {
 }
 
 // ─── Vista Posiciones ─────────────────────────────────────────────────────────
+function PctBar({ pct }: { pct: number }) {
+  const color = pct >= 70 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#E52322'
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="font-semibold tabular-nums" style={{ color, minWidth: 36 }}>{Math.min(pct, 999)}%</span>
+      <span className="w-14 h-1.5 rounded-full inline-block overflow-hidden flex-shrink-0" style={{ background: '#f0f0f0' }}>
+        <span className="h-full block rounded-full" style={{ width: `${Math.min(pct, 100)}%`, background: color }} />
+      </span>
+    </span>
+  )
+}
+
 function VistaPosiciones({
   datos, loading, costos, setCostos,
 }: {
@@ -2613,92 +2687,138 @@ function VistaPosiciones({
   }
 
   // Totales por mes (sumando todas las sucursales)
-  const totalesPorMes: Record<string, { posReales: number; posTeoricas: number; vueltas: number }> = {}
+  const totalesPorMes: Record<string, { posReales: number; posTeoricas: number; posTeFlota: number; vueltas: number }> = {}
   for (const d of datos) {
-    if (!totalesPorMes[d.mes]) totalesPorMes[d.mes] = { posReales: 0, posTeoricas: 0, vueltas: 0 }
+    if (!totalesPorMes[d.mes]) totalesPorMes[d.mes] = { posReales: 0, posTeoricas: 0, posTeFlota: 0, vueltas: 0 }
     totalesPorMes[d.mes].posReales += d.posReales
     totalesPorMes[d.mes].posTeoricas += d.posTeoricas
+    totalesPorMes[d.mes].posTeFlota += d.posTeFlota
     totalesPorMes[d.mes].vueltas += d.vueltas
   }
   const meses = [...new Set(datos.map(d => d.mes))].sort()
 
+  // Colores de grupos
+  const GRP_FILL  = '#e8edf8'  // azul claro
+  const GRP_FLOTA = '#fef3c7'  // amarillo claro
+  const GRP_COSTO = '#f0fdf4'  // verde claro
+
   return (
     <div className="space-y-6">
 
+      {/* Leyenda de métricas */}
+      <div className="bg-white rounded-xl shadow-sm px-5 py-3 flex flex-wrap gap-4 text-xs" style={{ color: '#666' }}>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: GRP_FILL }} />
+          <strong>Fill rate:</strong> qué tan llenos salieron los camiones en las vueltas que hicieron
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-3 h-3 rounded-sm inline-block" style={{ background: GRP_FLOTA }} />
+          <strong>Utiliz. flota:</strong> del total de posiciones disponibles en el día (vueltas posibles × camiones activos), cuántas se usaron
+        </span>
+      </div>
+
       {/* Tabla detalle por sucursal */}
       <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b flex items-center justify-between" style={{ borderColor: '#e8edf8' }}>
-          <div>
-            <p className="font-semibold text-sm" style={{ color: '#254A96' }}>Posiciones por mes y sucursal</p>
-            <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
-              Ingresá el costo de distribución mensual por sucursal para calcular $/posición
-            </p>
-          </div>
+        <div className="px-5 py-4 border-b" style={{ borderColor: '#e8edf8' }}>
+          <p className="font-semibold text-sm" style={{ color: '#254A96' }}>Posiciones por mes y sucursal</p>
+          <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+            Ingresá el costo de distribución mensual para calcular $/posición
+          </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm border-collapse">
             <thead>
+              {/* Fila de grupos */}
+              <tr>
+                <th colSpan={4} style={{ background: '#f9fafb', borderBottom: '1px solid #e8edf8' }} />
+                <th colSpan={2} className="text-center px-3 py-1.5 text-xs font-bold"
+                  style={{ background: GRP_FILL, color: '#254A96', borderBottom: '2px solid #254A96', borderLeft: '2px solid #254A96', borderRight: '1px solid #d0d9f0' }}>
+                  Fill rate (vueltas realizadas)
+                </th>
+                <th colSpan={2} className="text-center px-3 py-1.5 text-xs font-bold"
+                  style={{ background: GRP_FLOTA, color: '#92400e', borderBottom: '2px solid #f59e0b', borderLeft: '1px solid #fde68a', borderRight: '1px solid #fde68a' }}>
+                  Utiliz. flota (vueltas posibles)
+                </th>
+                <th colSpan={4} className="text-center px-3 py-1.5 text-xs font-bold"
+                  style={{ background: GRP_COSTO, color: '#166534', borderBottom: '2px solid #10b981', borderLeft: '2px solid #10b981' }}>
+                  Costo por posición
+                </th>
+              </tr>
+              {/* Fila de columnas */}
               <tr style={{ background: '#f9fafb' }}>
-                <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Mes</th>
-                <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Sucursal</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Vueltas</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Pos. Reales</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Pos. Teóricas</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>% Ocup.</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Costo distrib. ($)</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#10b981' }}>$/pos real</th>
-                <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#6366f1' }}>$/pos teórica</th>
+                <th className="text-left px-4 py-2.5 font-semibold text-xs" style={{ color: '#666' }}>Mes</th>
+                <th className="text-left px-4 py-2.5 font-semibold text-xs" style={{ color: '#666' }}>Sucursal</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-xs" style={{ color: '#666' }}>Vueltas</th>
+                <th className="text-right px-4 py-2.5 font-semibold text-xs" style={{ color: '#254A96' }}>Pos. Reales</th>
+                {/* Fill rate */}
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#254A96', background: '#f0f4ff', borderLeft: '2px solid #254A96' }}>Pos. Fill</th>
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#254A96', background: '#f0f4ff', borderRight: '1px solid #d0d9f0' }}>% Fill</th>
+                {/* Utiliz. flota */}
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#92400e', background: '#fffbeb', borderLeft: '1px solid #fde68a' }}>Pos. Flota</th>
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#92400e', background: '#fffbeb', borderRight: '1px solid #fde68a' }}>% Flota</th>
+                {/* Costos */}
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#166534', background: '#f0fdf4', borderLeft: '2px solid #10b981' }}>Costo ($)</th>
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#166534', background: '#f0fdf4' }}>$/pos real</th>
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#166534', background: '#f0fdf4' }}>$/pos fill</th>
+                <th className="text-right px-3 py-2.5 font-semibold text-xs"
+                  style={{ color: '#166534', background: '#f0fdf4' }}>$/pos flota</th>
               </tr>
             </thead>
             <tbody>
               {datos.map((d, i) => {
                 const key = `${d.mes}|${d.sucursal}`
                 const costo = costos[key] ?? 0
-                const cpReal = costo && d.posReales > 0 ? Math.round(costo / d.posReales) : null
-                const cpTeor = costo && d.posTeoricas > 0 ? Math.round(costo / d.posTeoricas) : null
+                const cpReal  = costo && d.posReales    > 0 ? Math.round(costo / d.posReales)    : null
+                const cpFill  = costo && d.posTeoricas  > 0 ? Math.round(costo / d.posTeoricas)  : null
+                const cpFlota = costo && d.posTeFlota   > 0 ? Math.round(costo / d.posTeFlota)   : null
                 return (
                   <tr key={key} style={{ borderTop: i > 0 ? '1px solid #f0f0f0' : 'none' }}>
-                    <td className="px-4 py-3 font-medium" style={{ color: '#333' }}>
-                      {new Date(d.mes + '-15').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
+                    <td className="px-4 py-2.5 font-medium" style={{ color: '#333' }}>
+                      {new Date(d.mes + '-15').toLocaleDateString('es-AR', { month: 'short', year: 'numeric' })}
                     </td>
-                    <td className="px-4 py-3" style={{ color: '#555' }}>{d.sucursal}</td>
-                    <td className="px-4 py-3 text-right font-mono" style={{ color: '#555' }}>
+                    <td className="px-4 py-2.5" style={{ color: '#555' }}>{d.sucursal}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-xs" style={{ color: '#888' }}>
                       {d.vueltas.toLocaleString('es-AR')}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold" style={{ color: '#254A96' }}>
+                    <td className="px-4 py-2.5 text-right font-mono font-bold" style={{ color: '#254A96' }}>
                       {d.posReales.toLocaleString('es-AR')}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono" style={{ color: '#555' }}>
+                    {/* Fill */}
+                    <td className="px-3 py-2.5 text-right font-mono text-xs" style={{ color: '#555', background: '#fafbff', borderLeft: '2px solid #e0e8f8' }}>
                       {d.posTeoricas.toLocaleString('es-AR')}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="font-semibold" style={{ color: d.pctOcupacion >= 70 ? '#10b981' : d.pctOcupacion >= 50 ? '#f59e0b' : '#E52322' }}>
-                          {d.pctOcupacion}%
-                        </span>
-                        <span className="w-16 h-1.5 rounded-full inline-block overflow-hidden" style={{ background: '#f0f0f0' }}>
-                          <span className="h-full block rounded-full transition-all" style={{
-                            width: `${Math.min(d.pctOcupacion, 100)}%`,
-                            background: d.pctOcupacion >= 70 ? '#10b981' : d.pctOcupacion >= 50 ? '#f59e0b' : '#E52322',
-                          }} />
-                        </span>
-                      </span>
+                    <td className="px-3 py-2.5 text-right" style={{ background: '#fafbff', borderRight: '1px solid #e0e8f8' }}>
+                      <PctBar pct={d.pctOcupacion} />
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <input
-                        type="number"
-                        value={costo || ''}
+                    {/* Flota */}
+                    <td className="px-3 py-2.5 text-right font-mono text-xs" style={{ color: '#555', background: '#fffef5', borderLeft: '1px solid #fde68a' }}>
+                      {d.posTeFlota > 0 ? d.posTeFlota.toLocaleString('es-AR') : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right" style={{ background: '#fffef5', borderRight: '1px solid #fde68a' }}>
+                      {d.posTeFlota > 0 ? <PctBar pct={d.pctFlota} /> : <span style={{ color: '#ccc' }}>—</span>}
+                    </td>
+                    {/* Costos */}
+                    <td className="px-3 py-2.5 text-right" style={{ background: '#fafffe', borderLeft: '2px solid #d1fae5' }}>
+                      <input type="number" value={costo || ''} placeholder="0"
                         onChange={e => setCostos(prev => ({ ...prev, [key]: Number(e.target.value) }))}
-                        placeholder="0"
-                        className="w-32 border rounded-lg px-2 py-1 text-sm text-right focus:outline-none"
-                        style={{ borderColor: '#e8edf8' }}
-                      />
+                        className="w-28 border rounded-lg px-2 py-0.5 text-sm text-right focus:outline-none"
+                        style={{ borderColor: '#e8edf8' }} />
                     </td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold" style={{ color: cpReal ? '#10b981' : '#ccc' }}>
+                    <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold" style={{ color: cpReal ? '#10b981' : '#ccc', background: '#fafffe' }}>
                       {cpReal ? `$${cpReal.toLocaleString('es-AR')}` : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right font-mono font-semibold" style={{ color: cpTeor ? '#6366f1' : '#ccc' }}>
-                      {cpTeor ? `$${cpTeor.toLocaleString('es-AR')}` : '—'}
+                    <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold" style={{ color: cpFill ? '#254A96' : '#ccc', background: '#fafffe' }}>
+                      {cpFill ? `$${cpFill.toLocaleString('es-AR')}` : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold" style={{ color: cpFlota ? '#92400e' : '#ccc', background: '#fafffe' }}>
+                      {cpFlota ? `$${cpFlota.toLocaleString('es-AR')}` : '—'}
                     </td>
                   </tr>
                 )
@@ -2715,38 +2835,45 @@ function VistaPosiciones({
             <p className="font-semibold text-sm" style={{ color: '#254A96' }}>Resumen mensual — todas las sucursales</p>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Mes</th>
                   <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Vueltas</th>
-                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Pos. Reales</th>
-                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>Pos. Teóricas</th>
-                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#666' }}>% Ocup.</th>
+                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Pos. Reales</th>
+                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96', background: '#f0f4ff' }}>Pos. Fill</th>
+                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96', background: '#f0f4ff' }}>% Fill</th>
+                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#92400e', background: '#fffbeb' }}>Pos. Flota</th>
+                  <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#92400e', background: '#fffbeb' }}>% Flota</th>
                 </tr>
               </thead>
               <tbody>
                 {meses.map((m, i) => {
                   const t = totalesPorMes[m]
-                  const pct = t.posTeoricas > 0 ? Math.round(t.posReales / t.posTeoricas * 100) : 0
+                  const pctFill  = t.posTeoricas > 0 ? Math.round(t.posReales / t.posTeoricas * 100) : 0
+                  const pctFlota = t.posTeFlota  > 0 ? Math.round(t.posReales / t.posTeFlota  * 100) : 0
                   return (
                     <tr key={m} style={{ borderTop: i > 0 ? '1px solid #f0f0f0' : 'none' }}>
                       <td className="px-4 py-3 font-medium" style={{ color: '#333' }}>
                         {new Date(m + '-15').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono" style={{ color: '#555' }}>
+                      <td className="px-4 py-3 text-right font-mono text-xs" style={{ color: '#888' }}>
                         {t.vueltas.toLocaleString('es-AR')}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono font-semibold" style={{ color: '#254A96' }}>
+                      <td className="px-4 py-3 text-right font-mono font-bold" style={{ color: '#254A96' }}>
                         {t.posReales.toLocaleString('es-AR')}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono" style={{ color: '#555' }}>
+                      <td className="px-4 py-3 text-right font-mono text-xs" style={{ color: '#555', background: '#fafbff' }}>
                         {t.posTeoricas.toLocaleString('es-AR')}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="font-semibold" style={{ color: pct >= 70 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#E52322' }}>
-                          {pct}%
-                        </span>
+                      <td className="px-4 py-3 text-right" style={{ background: '#fafbff' }}>
+                        <PctBar pct={pctFill} />
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs" style={{ color: '#555', background: '#fffef5' }}>
+                        {t.posTeFlota > 0 ? t.posTeFlota.toLocaleString('es-AR') : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right" style={{ background: '#fffef5' }}>
+                        {t.posTeFlota > 0 ? <PctBar pct={pctFlota} /> : <span style={{ color: '#ccc' }}>—</span>}
                       </td>
                     </tr>
                   )

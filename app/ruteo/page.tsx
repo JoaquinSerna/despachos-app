@@ -708,7 +708,7 @@ export default function RuteoPage() {
       const items = p.items ?? []
       const num = p.orden_entrega ?? idx + 1
       const notaComercial = p.notas
-        ? p.notas.split(' | ').map((s: string) => s.trimStart().replace(/^⚡\s*/, '')).filter(Boolean).join(' | ')
+        ? p.notas.split(' | ').filter((s: string) => !s.trimStart().startsWith('⚡')).join(' | ').trim()
         : ''
       const totalFilas = Math.max(items.length, 1) + (notaComercial ? 1 : 0)
       const headerCells = `<td rowspan="${totalFilas}" style="vertical-align:top;font-weight:bold;width:24px">${num}</td><td rowspan="${totalFilas}" style="vertical-align:top;width:38%"><strong>${p.cliente}</strong><br><small style="color:#666">NV ${p.nv}</small><br><small style="color:#888">${p.direccion}</small></td>`
@@ -808,9 +808,9 @@ export default function RuteoPage() {
       const items = p.items ?? []
       const filas = items.length === 0 ? [['Sin items', '', '']] : items.map(i => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
       const numEntrega = p.orden_entrega ?? idx + 1
-      // Mostrar todas las notas — quitar solo el símbolo ⚡ pero mantener el texto completo (incluye motivos del ruteador)
+      // Solo notas cargadas por comercial (las automáticas de sistema empiezan con ⚡)
       const notaComercial = p.notas
-        ? p.notas.split(' | ').map(s => s.trimStart().replace(/^⚡\s*/, '')).filter(Boolean).join(' | ')
+        ? p.notas.split(' | ').filter(s => !s.trimStart().startsWith('⚡')).join(' | ').trim()
         : ''
 
       // Estimar altura para page break (nota puede tener varias líneas)

@@ -53,7 +53,7 @@ Si SÍ es válido, extraé los datos y devolvé SOLO este JSON (sin texto adicio
   "latitud": -37.254967,
   "longitud": -56.984971,
   "productos": [
-    {"descripcion": "nombre del producto sin prefijos numéricos (ej: si dice '1.Arena en bolson' devolvé 'Arena en bolson')", "cantidad": 10}
+    {"descripcion": "nombre del producto — quitá solo el prefijo de lista si empieza con número+punto (ej: '1.Arena en bolson' → 'Arena en bolson', '2. Hierro 6mm' → 'Hierro 6mm'), pero conservá fracciones que forman parte del nombre (ej: '1/2 bolson de arena' queda igual como '1/2 bolson de arena')", "cantidad": 10}
   ]
 }
 No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo el JSON, sin markdown.`

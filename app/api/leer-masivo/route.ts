@@ -16,7 +16,7 @@ Para cada solicitud extraé:
   "longitud": número o null,
   "horario": "Mañana" o "Tarde",
   "prioridad_texto": "Normal" o "Alta" o "Urgente",
-  "productos": [{"descripcion": "nombre del producto sin prefijos numéricos (ej: si dice '1.Arena en bolson' devolvé 'Arena en bolson')", "cantidad": número}]
+  "productos": [{"descripcion": "nombre del producto — quitá solo el prefijo de lista si empieza con número+punto (ej: '1.Arena en bolson' → 'Arena en bolson', '2. Hierro 6mm' → 'Hierro 6mm'), pero conservá fracciones que forman parte del nombre (ej: '1/2 bolson de arena' queda igual como '1/2 bolson de arena')", "cantidad": número}]
 }
 
 No incluyas en productos los que tengan "Transporte" en el nombre.

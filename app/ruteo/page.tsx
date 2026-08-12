@@ -718,6 +718,8 @@ export default function RuteoPage() {
     setConfirmando(false)
   }
 
+  const esDeposito = datosUsuario?.rol === 'deposito'
+
   const pedidosVuelta = pedidos.filter(p => p.vuelta === vueltaActiva)
   const vueltas = [...new Set(pedidos.map(p => p.vuelta))].sort()
   const finalizadosVuelta = pedidosVuelta.filter(p => ['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado)).length
@@ -1764,7 +1766,7 @@ export default function RuteoPage() {
                                 {pedido.notas}
                               </p>
                             )}
-                            {!finalizado && (
+                            {!finalizado && !esDeposito && (
                               <div className="space-y-2 pt-1">
                                 <div className="flex gap-2">
                                   {!esTransfer && (

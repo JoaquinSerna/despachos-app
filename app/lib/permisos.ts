@@ -67,7 +67,7 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   despachos:      ['gerencia', 'admin_flota', 'ruteador', 'comercial'],
   pedidos:        ['gerencia', 'admin_flota', 'ruteador'],
   programacion:   ['gerencia', 'admin_flota', 'ruteador'],
-  ruteo:          ['gerencia', 'admin_flota', 'ruteador'],
+  ruteo:          ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
   confirmaciones: ['gerencia', 'admin_flota', 'confirmador'],
   abastecimiento: ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
   metricas:       ['gerencia', 'admin_flota', 'ruteador'],

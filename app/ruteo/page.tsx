@@ -25,6 +25,7 @@ interface Pedido {
   latitud: number | null
   longitud: number | null
   telefono: string | null
+  preparado_at: string | null
   items?: { nombre: string; cantidad: number; unidad: string }[]
   tipo?: string
   _esTransfer?: boolean
@@ -43,6 +44,14 @@ const VUELTA_LABEL: Record<number, string> = {
   2: '10:00 – 12:00hs',
   3: '13:00 – 15:00hs',
   4: '15:00 – 17:00hs',
+}
+
+// Horario teórico de salida por vuelta (para calcular delta preparación)
+const VUELTA_HORA_SALIDA: Record<number, string> = {
+  1: '08:00',
+  2: '10:00',
+  3: '13:00',
+  4: '15:00',
 }
 
 function hoy() { return new Date().toISOString().split('T')[0] }
@@ -294,6 +303,32 @@ export default function RuteoPage() {
       showToast('Error al iniciar ruta', 'err')
     }
     setGuardandoRuta(false)
+  }
+
+  const togglePreparado = async (pedidoId: string, actual: string | null) => {
+    const nuevoValor = actual ? null : new Date().toISOString()
+    setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, preparado_at: nuevoValor } : p))
+    await fetch('/api/pedidos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: pedidoId, preparado_at: nuevoValor }),
+    })
+  }
+
+  const prepararVuelta = async () => {
+    const ahora = new Date().toISOString()
+    const aPrepara = pedidosVuelta.filter(p => !p.preparado_at)
+    if (aPrepara.length === 0) return
+    setPedidos(prev => prev.map(p =>
+      aPrepara.some(ap => ap.id === p.id) ? { ...p, preparado_at: ahora } : p
+    ))
+    await Promise.all(aPrepara.map(p =>
+      fetch('/api/pedidos', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: p.id, preparado_at: ahora }),
+      })
+    ))
   }
 
   const finalizarRuta = async () => {
@@ -1583,7 +1618,7 @@ export default function RuteoPage() {
 
                 {/* Botones imprimir / descargar PDF */}
                 {datosUsuario?.rol !== 'chofer' && pedidosVuelta.length > 0 && (
-                  <div className="flex gap-2 mb-4">
+                  <div className="flex gap-2 mb-3">
                     <button onClick={imprimirVuelta}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium"
                       style={{ background: '#f4f4f3', color: '#254A96', border: '1px solid #e8edf8' }}>
@@ -1596,6 +1631,30 @@ export default function RuteoPage() {
                     </button>
                   </div>
                 )}
+
+                {/* Preparación de vuelta */}
+                {datosUsuario?.rol !== 'chofer' && pedidosVuelta.length > 0 && (() => {
+                  const preparados = pedidosVuelta.filter(p => p.preparado_at).length
+                  const total = pedidosVuelta.length
+                  const todosListos = preparados === total
+                  return (
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl text-sm"
+                        style={{ background: todosListos ? '#d1fae5' : '#f4f4f3', color: todosListos ? '#065f46' : '#666' }}>
+                        <span>{todosListos ? '✅' : '📦'}</span>
+                        <span className="font-medium">{preparados}/{total} preparados</span>
+                        {todosListos && <span className="text-xs ml-1">— vuelta lista</span>}
+                      </div>
+                      {!todosListos && (
+                        <button onClick={prepararVuelta}
+                          className="px-3 py-2 rounded-xl text-sm font-medium"
+                          style={{ background: '#254A96', color: 'white' }}>
+                          Preparar todo
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 {/* Botón recorrido completo */}
                 {pedidosVuelta.filter(p => !['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado) && p.latitud && p.longitud).length > 0 && (
@@ -1641,10 +1700,23 @@ export default function RuteoPage() {
                                 {pedido.nv && <p className="text-xs" style={{ color: '#B9BBB7' }}>NV {pedido.nv}</p>}
                               </div>
                             </div>
-                            <span className="text-xs px-2 py-1 rounded-full font-medium"
-                              style={entregado ? { background: '#d1fae5', color: '#065f46' } : rechazado ? { background: '#fde8e8', color: '#E52322' } : parcial ? { background: '#fef3c7', color: '#b45309' } : { background: '#e8edf8', color: '#254A96' }}>
-                              {entregado ? 'Completado' : rechazado ? 'Rechazado' : parcial ? 'Parcial' : 'Pendiente'}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              {datosUsuario?.rol !== 'chofer' && !finalizado && (
+                                <button
+                                  onClick={() => togglePreparado(pedido.id, pedido.preparado_at ?? null)}
+                                  title={pedido.preparado_at ? 'Marcar como no preparado' : 'Marcar como preparado'}
+                                  className="text-xs px-2 py-1 rounded-full font-medium transition-colors"
+                                  style={pedido.preparado_at
+                                    ? { background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7' }
+                                    : { background: '#f4f4f3', color: '#888', border: '1px solid #e0e0e0' }}>
+                                  {pedido.preparado_at ? '✅ Listo' : '📦 Preparar'}
+                                </button>
+                              )}
+                              <span className="text-xs px-2 py-1 rounded-full font-medium"
+                                style={entregado ? { background: '#d1fae5', color: '#065f46' } : rechazado ? { background: '#fde8e8', color: '#E52322' } : parcial ? { background: '#fef3c7', color: '#b45309' } : { background: '#e8edf8', color: '#254A96' }}>
+                                {entregado ? 'Completado' : rechazado ? 'Rechazado' : parcial ? 'Parcial' : 'Pendiente'}
+                              </span>
+                            </div>
                           </div>
                           <div className="px-4 py-3 space-y-3">
                             {esRetiro && (

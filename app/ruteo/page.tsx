@@ -1732,7 +1732,7 @@ export default function RuteoPage() {
                               <p className="text-xs mb-0.5" style={{ color: '#B9BBB7' }}>{esTransfer ? 'Destino' : esRetiro ? 'Lugar de retiro' : 'Dirección'}</p>
                               <p className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{pedido.direccion}</p>
                             </div>
-                            {pedido.telefono && !finalizado && (
+                            {pedido.telefono && !finalizado && !esDeposito && (
                               <div className="flex gap-2">
                                 <a href={`tel:${pedido.telefono}`}
                                   className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-sm font-medium border"

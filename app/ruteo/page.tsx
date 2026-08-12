@@ -429,6 +429,7 @@ export default function RuteoPage() {
       estado_pago: '',
       peso_total_kg: null,
       notas: t.notas ?? null,
+      preparado_at: null,
       camion_id: t.cod_vehiculo,
       orden_entrega: null,
       latitud: null,

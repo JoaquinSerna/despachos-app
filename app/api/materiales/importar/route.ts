@@ -61,13 +61,12 @@ export async function POST(req: NextRequest) {
       // La celda puede tener varias variantes separadas por "; " — resolverlas todas
       const variantes = row.descripcion_pdf.split(';').map((v: string) => v.trim()).filter(Boolean)
       for (const variante of variantes) {
-        const { count } = await supabaseAdmin
+        const { error: aliasErr } = await supabaseAdmin
           .from('material_aliases')
           .update({ material_id: mat.id, resuelto: true })
           .eq('descripcion_pdf', variante)
           .eq('resuelto', false)
-          .select('id', { count: 'exact', head: true })
-        vinculados += count ?? 0
+        if (!aliasErr) vinculados++
       }
     }
   }

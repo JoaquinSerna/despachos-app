@@ -221,7 +221,13 @@ export default function MaterialesPage() {
       })
       const result = await resp.json()
       if (!resp.ok) showToast(result.error ?? 'Error al importar', 'err')
-      else { showToast(`${result.creados} materiales creados, ${result.vinculados} aliases resueltos`); cargar() }
+      else {
+        const msg = result.errores?.length
+          ? `${result.creados} creados, ${result.vinculados} aliases. Errores: ${result.errores.slice(0, 2).join(' | ')}`
+          : `${result.creados} materiales creados, ${result.vinculados} aliases resueltos`
+        showToast(msg, result.errores?.length ? 'err' : 'ok')
+        cargar()
+      }
     } catch { showToast('Error al leer el archivo', 'err') }
     setImportando(false)
     if (fileInputRef.current) fileInputRef.current.value = ''

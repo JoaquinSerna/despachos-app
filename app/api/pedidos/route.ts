@@ -17,10 +17,11 @@ async function logAuditAPI(usuarioId: string, usuarioNombre: string, accion: str
 
 // PATCH - actualizar campos de un pedido (reprogramar, cambiar vuelta, etc.)
 // Con _bulk_camion=true: actualiza todos los pedidos de un camión en una fecha
+// Con _reprogramacion: { fecha_from, fecha_to, vuelta_from, vuelta_to, motivo, nv } → loguea en tabla reprogramaciones
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { id, _bulk_camion, _usuario_id, _usuario_nombre, ...rest } = body
+    const { id, _bulk_camion, _usuario_id, _usuario_nombre, _reprogramacion, ...rest } = body
     const uId = _usuario_id ?? ''
     const uNombre = _usuario_nombre ?? ''
 
@@ -58,9 +59,25 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (!id) return NextResponse.json({ error: 'Falta el id del pedido' }, { status: 400 })
-    const { error } = await getAdmin().from('pedidos').update(rest).eq('id', id)
+    const admin = getAdmin()
+    const { error } = await admin.from('pedidos').update(rest).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     if (uId) logAuditAPI(uId, uNombre, 'Actualizó pedido', 'Pedidos API', { id, campos_actualizados: Object.keys(rest) })
+
+    // Loguear reprogramación si viene el campo especial
+    if (_reprogramacion?.fecha_from && _reprogramacion?.fecha_to) {
+      await admin.from('reprogramaciones').insert({
+        pedido_id: id,
+        nv: _reprogramacion.nv ?? null,
+        fecha_from: _reprogramacion.fecha_from,
+        fecha_to: _reprogramacion.fecha_to,
+        vuelta_from: _reprogramacion.vuelta_from ?? null,
+        vuelta_to: _reprogramacion.vuelta_to ?? null,
+        motivo: _reprogramacion.motivo || null,
+        reprogramado_at: new Date().toISOString(),
+      }).catch(e => console.error('Error logueando reprogramación:', e))
+    }
+
     return NextResponse.json({ success: true })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
@@ -95,6 +112,10 @@ export async function POST(req: NextRequest) {
         continue
       }
 
+      // Asegurar fecha_entrega_original al crear
+      if (!pedidoData.fecha_entrega_original && pedidoData.fecha_entrega) {
+        pedidoData.fecha_entrega_original = pedidoData.fecha_entrega
+      }
       const { data, error } = await admin.from('pedidos').insert(pedidoData).select('id').single()
       if (error) {
         errores.push({ id_despacho: pedidoData.id_despacho, error: error.message })

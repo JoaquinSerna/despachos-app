@@ -2950,7 +2950,19 @@ function ProgramacionInner() {
       const resultados = await Promise.all(aReprogramar.map(async p => {
         const res = await fetch('/api/pedidos', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: p.notas ? `${p.notas} | ${nota}` : nota })
+          body: JSON.stringify({
+            id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva,
+            camion_id: null, orden_entrega: null, estado: 'pendiente',
+            notas: p.notas ? `${p.notas} | ${nota}` : nota,
+            _reprogramacion: {
+              nv: p.nv,
+              fecha_from: p.fecha_entrega,
+              fecha_to: reprogVueltaFecha,
+              vuelta_from: p.vuelta,
+              vuelta_to: reprogVueltaNueva,
+              motivo: null,
+            },
+          })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? `Error en pedido ${p.nv}`)
@@ -2970,7 +2982,17 @@ function ProgramacionInner() {
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
     try {
-      await patchPedido(id, { fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal })
+      await patchPedido(id, {
+        fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal,
+        _reprogramacion: {
+          nv: pedido.nv,
+          fecha_from: pedido.fecha_entrega,
+          fecha_to: fecha,
+          vuelta_from: pedido.vuelta,
+          vuelta_to: vuelta,
+          motivo: motivo || null,
+        },
+      })
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)

@@ -26,6 +26,17 @@ interface PedidoRechazado {
   notas: string | null
 }
 
+interface Notificacion {
+  id: string
+  pedido_id: string | null
+  nv: string | null
+  cliente: string | null
+  tipo: string
+  mensaje: string
+  leida: boolean
+  created_at: string
+}
+
 // Pages where the fixed overlay should NOT appear (either not logged-in or has inline bell)
 const HIDDEN_PATHS = ['/', '/dashboard']
 
@@ -41,6 +52,7 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   const [pedidos, setPedidos] = useState<PedidoPendiente[]>([])
   const [rechazados, setRechazados] = useState<PedidoRechazado[]>([])
   const [open, setOpen] = useState(false)
+  const [notificaciones, setNotificaciones] = useState<Notificacion[]>([])
   const [loggedIn, setLoggedIn] = useState(false)
   const [rol, setRol] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
@@ -88,6 +100,7 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
       .limit(8)
     setPedidos(data ?? [])
     setCount((data ?? []).length)
+    return data ?? []
   }
 
   // Comercial: sus pedidos rechazados de los últimos 30 días
@@ -101,7 +114,29 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
       .order('fecha_entrega', { ascending: false })
       .limit(10)
     setRechazados(data ?? [])
-    setCount((data ?? []).length)
+    return data ?? []
+  }
+
+  // Comercial: notificaciones no leídas (reprogramaciones, etc.)
+  const cargarNotificaciones = async (uid: string) => {
+    const { data } = await supabase
+      .from('notificaciones')
+      .select('id, pedido_id, nv, cliente, tipo, mensaje, leida, created_at')
+      .eq('usuario_id', uid)
+      .eq('leida', false)
+      .order('created_at', { ascending: false })
+      .limit(15)
+    setNotificaciones(data ?? [])
+    return data ?? []
+  }
+
+  const marcarNotificacionesLeidas = async (uid: string) => {
+    await supabase
+      .from('notificaciones')
+      .update({ leida: true })
+      .eq('usuario_id', uid)
+      .eq('leida', false)
+    setNotificaciones([])
   }
 
   useEffect(() => {
@@ -112,8 +147,12 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
       return () => clearInterval(interval)
     }
     if (esComercial && userId) {
-      cargarRechazados(userId)
-      const interval = setInterval(() => cargarRechazados(userId), 5 * 60 * 1000)
+      const recargar = async () => {
+        const [r, n] = await Promise.all([cargarRechazados(userId), cargarNotificaciones(userId)])
+        setCount(r.length + n.length)
+      }
+      recargar()
+      const interval = setInterval(recargar, 3 * 60 * 1000)
       return () => clearInterval(interval)
     }
   }, [loggedIn, rol, userId])
@@ -121,7 +160,10 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   useEffect(() => {
     if (!loggedIn) return
     if (esLogistica) cargarLogistica()
-    if (esComercial && userId) cargarRechazados(userId)
+    if (esComercial && userId) {
+      Promise.all([cargarRechazados(userId), cargarNotificaciones(userId)])
+        .then(([r, n]) => setCount(r.length + n.length))
+    }
   }, [pathname])
 
   // Ocultar para roles que no usan la campanita (chofer, etc.)
@@ -129,13 +171,23 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   if (mode === 'fixed' && HIDDEN_PATHS.includes(pathname)) return null
 
   const hayNotificaciones = count > 0
+  const hayReprogramaciones = notificaciones.length > 0
+  const hayRechazados = rechazados.length > 0
   const colorBtn = esComercial
     ? (open ? '#92400e' : hayNotificaciones ? '#f59e0b' : '#fef3c7')
     : (open ? '#1a3a7a' : hayNotificaciones ? '#254A96' : '#e8edf8')
 
   const button = (
     <button
-      onClick={() => setOpen(o => !o)}
+      onClick={() => {
+        const nextOpen = !open
+        setOpen(nextOpen)
+        if (nextOpen && esComercial && userId && hayReprogramaciones) {
+          marcarNotificacionesLeidas(userId).then(() => {
+            setCount(rechazados.length)
+          })
+        }
+      }}
       className="relative flex items-center justify-center rounded-xl"
       style={{
         width: 36, height: 36,
@@ -216,27 +268,44 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   const dropdownComercial = (
     <div
       className="absolute bg-white rounded-2xl shadow-2xl"
-      style={{ top: mode === 'fixed' ? 46 : 44, right: 0, width: 300, border: '1px solid #e8edf8', zIndex: 100 }}
+      style={{ top: mode === 'fixed' ? 46 : 44, right: 0, width: 308, border: '1px solid #e8edf8', zIndex: 100 }}
     >
       <div className="px-4 py-3 flex items-center justify-between border-b" style={{ borderColor: '#f0f0f0' }}>
         <div className="flex items-center gap-2">
           <span style={{ fontSize: 14 }}>🔔</span>
-          <span className="font-semibold text-sm" style={{ color: '#b45309' }}>Pedidos rechazados</span>
+          <span className="font-semibold text-sm" style={{ color: '#b45309' }}>Notificaciones</span>
         </div>
         <span className="text-xs font-semibold rounded-full px-2 py-0.5"
           style={hayNotificaciones ? { background: '#fde8e8', color: '#E52322' } : { background: '#d1fae5', color: '#065f46' }}>
-          {hayNotificaciones ? `${count} para volver a cargar` : 'Sin rechazados ✓'}
+          {hayNotificaciones ? `${count} sin leer` : 'Al día ✓'}
         </span>
       </div>
-      <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-        {!hayNotificaciones ? (
-          <p className="px-4 py-5 text-sm text-center" style={{ color: '#B9BBB7' }}>No tenés pedidos rechazados recientes</p>
-        ) : (
+
+      <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+        {/* Sección reprogramaciones */}
+        {hayReprogramaciones && (
           <>
-            <div className="px-4 pt-3 pb-1">
-              <p className="text-xs" style={{ color: '#b45309' }}>
-                Estos pedidos fueron rechazados y necesitan que cargues un ID nuevo.
-              </p>
+            <div className="px-4 pt-3 pb-1 flex items-center gap-1.5">
+              <span style={{ fontSize: 12 }}>📅</span>
+              <span className="text-xs font-semibold" style={{ color: '#254A96' }}>Reprogramaciones</span>
+            </div>
+            {notificaciones.map(n => (
+              <div key={n.id} className="px-4 py-2.5" style={{ borderBottom: '1px solid #f9f9f9' }}>
+                <p className="text-xs leading-snug" style={{ color: '#1a1a1a' }}>{n.mensaje}</p>
+                <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                  {new Date(n.created_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* Sección rechazados */}
+        {hayRechazados && (
+          <>
+            <div className="px-4 pt-3 pb-1 flex items-center gap-1.5">
+              <span style={{ fontSize: 12 }}>✕</span>
+              <span className="text-xs font-semibold" style={{ color: '#b45309' }}>Pedidos rechazados</span>
             </div>
             {rechazados.map(p => (
               <div key={p.id} className="px-4 py-2.5" style={{ borderBottom: '1px solid #f9f9f9' }}>
@@ -255,14 +324,21 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
             ))}
           </>
         )}
+
+        {!hayNotificaciones && !hayRechazados && (
+          <p className="px-4 py-5 text-sm text-center" style={{ color: '#B9BBB7' }}>No tenés notificaciones pendientes</p>
+        )}
       </div>
-      <div className="px-4 py-3 border-t" style={{ borderColor: '#f0f0f0' }}>
-        <Link href="/despachos" onClick={() => setOpen(false)}
-          className="w-full py-2 rounded-lg text-xs font-semibold text-white"
-          style={{ background: '#f59e0b' }}>
-          📋 Ir a Despachos — cargar nuevo ID
-        </Link>
-      </div>
+
+      {hayRechazados && (
+        <div className="px-4 py-3 border-t" style={{ borderColor: '#f0f0f0' }}>
+          <Link href="/despachos" onClick={() => setOpen(false)}
+            className="w-full block text-center py-2 rounded-lg text-xs font-semibold text-white"
+            style={{ background: '#f59e0b' }}>
+            📋 Ir a Despachos — cargar nuevo ID
+          </Link>
+        </div>
+      )}
     </div>
   )
 

@@ -66,16 +66,69 @@ export async function PATCH(req: NextRequest) {
 
     // Loguear reprogramación si viene el campo especial
     if (_reprogramacion?.fecha_from && _reprogramacion?.fecha_to) {
-      await admin.from('reprogramaciones').insert({
-        pedido_id: id,
-        nv: _reprogramacion.nv ?? null,
-        fecha_from: _reprogramacion.fecha_from,
-        fecha_to: _reprogramacion.fecha_to,
-        vuelta_from: _reprogramacion.vuelta_from ?? null,
-        vuelta_to: _reprogramacion.vuelta_to ?? null,
-        motivo: _reprogramacion.motivo || null,
-        reprogramado_at: new Date().toISOString(),
-      }).catch(e => console.error('Error logueando reprogramación:', e))
+      try {
+        await admin.from('reprogramaciones').insert({
+          pedido_id: id,
+          nv: _reprogramacion.nv ?? null,
+          fecha_from: _reprogramacion.fecha_from,
+          fecha_to: _reprogramacion.fecha_to,
+          vuelta_from: _reprogramacion.vuelta_from ?? null,
+          vuelta_to: _reprogramacion.vuelta_to ?? null,
+          motivo: _reprogramacion.motivo || null,
+          reprogramado_at: new Date().toISOString(),
+        })
+      } catch (e) { console.error('Error logueando reprogramación:', e) }
+
+      // Notificar al vendedor
+      try {
+        const { data: pedido } = await admin
+          .from('pedidos')
+          .select('vendedor_id, cliente, nv')
+          .eq('id', id)
+          .maybeSingle()
+
+        if (pedido?.vendedor_id) {
+          const fechaFrom = _reprogramacion.fecha_from
+          const fechaTo = _reprogramacion.fecha_to
+          const vFrom = _reprogramacion.vuelta_from
+          const vTo = _reprogramacion.vuelta_to
+          const fechaCambia = fechaFrom !== fechaTo
+          const vueltaCambia = vFrom != null && vTo != null && vFrom !== vTo
+
+          const fmtFecha = (iso: string) => {
+            const [, m, d] = iso.split('-')
+            return `${d}/${m}`
+          }
+
+          let tipo: string
+          let mensaje: string
+          const nv = pedido.nv ?? _reprogramacion.nv ?? ''
+          const cliente = pedido.cliente ?? ''
+
+          if (fechaCambia) {
+            tipo = 'reprogramado'
+            mensaje = `NV ${nv} (${cliente}) reprogramado del ${fmtFecha(fechaFrom)} al ${fmtFecha(fechaTo)}`
+            if (vueltaCambia) mensaje += ` · V${vFrom}→V${vTo}`
+            if (_reprogramacion.motivo) mensaje += ` — ${_reprogramacion.motivo}`
+          } else if (vueltaCambia) {
+            tipo = 'vuelta_cambiada'
+            mensaje = `NV ${nv} (${cliente}) movido de V${vFrom} a V${vTo} el ${fmtFecha(fechaFrom)}`
+            if (_reprogramacion.motivo) mensaje += ` — ${_reprogramacion.motivo}`
+          } else {
+            tipo = 'reprogramado'
+            mensaje = `NV ${nv} (${cliente}) fue reprogramado`
+          }
+
+          await admin.from('notificaciones').insert({
+            usuario_id: pedido.vendedor_id,
+            pedido_id: id,
+            nv,
+            cliente,
+            tipo,
+            mensaje,
+          })
+        }
+      } catch (e) { console.error('Error insertando notificación:', e) }
     }
 
     return NextResponse.json({ success: true })

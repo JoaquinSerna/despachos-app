@@ -108,6 +108,8 @@ export default function NuevoDespacho() {
   const [form, setForm] = useState(FORM_INICIAL)
   const [userId, setUserId] = useState<string | null>(null)
   const [userNombre, setUserNombre] = useState('')
+  const [userRol, setUserRol] = useState<string | null>(null)
+  const ROLES_LOGISTICA = ['gerencia', 'admin_flota', 'ruteador', 'confirmador', 'deposito']
   const [misPedidos, setMisPedidos] = useState<any[]>([])
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
   const [pedidoReprog, setPedidoReprog] = useState<any | null>(null)
@@ -144,6 +146,7 @@ export default function NuevoDespacho() {
         if (data) {
           setPuedeEditarDespachos(puedeEditar(data.permisos, data.rol, 'despachos'))
           setUserNombre(data.nombre ?? '')
+          setUserRol(data.rol ?? null)
         }
       })
     })
@@ -194,6 +197,20 @@ export default function NuevoDespacho() {
     if (franja && vultaCerrada(fecha, franja)) {
       toast('Esta vuelta ya cerró para esa fecha. Elegí una franja disponible.', 'err')
       return
+    }
+    // Validar candadito manual — solo para comerciales (logística puede ignorarlo)
+    const esLogistica = userRol !== null && ROLES_LOGISTICA.includes(userRol)
+    if (!esLogistica) {
+      const { data: vcmData } = await supabase
+        .from('vueltas_cerradas_manual')
+        .select('vuelta')
+        .eq('fecha', fecha)
+        .eq('sucursal', pedido.sucursal)
+      const cerradasManual = (vcmData ?? []).map((r: any) => r.vuelta as number)
+      if (cerradasManual.includes(vuelta)) {
+        toast('Esa vuelta está cerrada por logística. Elegí otra franja o contactalos.', 'err')
+        return
+      }
     }
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota

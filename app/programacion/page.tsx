@@ -3025,6 +3025,8 @@ function ProgramacionInner() {
   const pedidosEditables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
   const totalAsig = pedidosEditables.filter(p => p.camion_id).length
   const totalSin = pedidosEditables.filter(p => !p.camion_id).length
+  // Pedidos con camión asignado pero en estado pendiente (asignados sin confirmar)
+  const asignadosSinConfirmar = pedidosEditables.filter(p => p.camion_id && p.estado === 'pendiente')
 
   const pesoAsig     = columnas.reduce((a, c) => a + c.pesoTotal, 0)
   const posAsig      = columnas.reduce((a, c) => a + c.posTotal, 0)
@@ -3255,6 +3257,15 @@ function ProgramacionInner() {
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>
+              {asignadosSinConfirmar.length > 0 && (
+                <span
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold"
+                  style={{ background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' }}
+                  title={`Pedidos con camión asignado pero sin confirmar: ${asignadosSinConfirmar.map(p => `NV ${p.nv}`).join(', ')}`}
+                >
+                  ⚠ {asignadosSinConfirmar.length} asignado{asignadosSinConfirmar.length > 1 ? 's' : ''} sin confirmar
+                </span>
+              )}
               <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0}
                 className="px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-40"
                 style={{ background: confirmado ? '#d1fae5' : '#254A96', color: confirmado ? '#065f46' : 'white' }}>

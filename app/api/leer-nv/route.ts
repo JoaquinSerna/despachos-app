@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1000,
+      max_tokens: 2048,
       messages: [
         {
           role: 'user',
@@ -65,7 +65,19 @@ No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo 
 
     const texto = response.content[0].type === 'text' ? response.content[0].text : ''
     const limpio = texto.replace(/```json|```/g, '').trim()
-    const datos = JSON.parse(limpio)
+    let datos: any
+    try {
+      datos = JSON.parse(limpio)
+    } catch (parseErr) {
+      // Si el JSON quedó truncado (max_tokens alcanzado) el stop_reason es 'max_tokens'
+      const truncado = response.stop_reason === 'max_tokens'
+      console.error('JSON inválido del modelo. stop_reason:', response.stop_reason, 'texto:', limpio.slice(0, 200))
+      return NextResponse.json({
+        error: truncado
+          ? 'El documento tiene demasiados productos para procesar automáticamente. Intentá con menos productos o cargalo manualmente.'
+          : 'El modelo devolvió un formato inesperado. Intentá de nuevo.',
+      }, { status: 422 })
+    }
 
     if (datos.documento_valido === false) {
       return NextResponse.json({

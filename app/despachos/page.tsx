@@ -94,6 +94,7 @@ export default function NuevoDespacho() {
   const [cuposDisponibles, setCuposDisponibles] = useState<number[]>([])
   const [vueltasSinCupoConFlota, setVueltasSinCupoConFlota] = useState<number[]>([])
   const [vueltasCerradas, setVueltasCerradas] = useState<number[]>([])
+  const [vueltasBloqueadasManual, setVueltasBloqueadasManual] = useState<number[]>([])
   const [fueraProgramacionCerrada, setFueraProgramacionCerrada] = useState(false)
   const [flotaSinRevisar, setFlotaSinRevisar] = useState(false)
   const [maxCamionPosiciones, setMaxCamionPosiciones] = useState(0)
@@ -241,7 +242,9 @@ export default function NuevoDespacho() {
     // vuelta=0 en DB = "fuera de programación"
     const fueraCerrada = cerradasManual.includes(0)
     setFueraProgramacionCerrada(fueraCerrada)
-    const cerradas = [...new Set([...cerradasHorario, ...cerradasManual.filter(v => v !== 0)])]
+    const bloqueadasManual = cerradasManual.filter(v => v !== 0)
+    setVueltasBloqueadasManual(bloqueadasManual)
+    const cerradas = [...new Set([...cerradasHorario, ...bloqueadasManual])]
     setVueltasCerradas(cerradas)
     // Si todas las vueltas cerraron, auto-seleccionar "fuera de prog" solo si no está cerrada también
     if (cerradas.length === FRANJAS.length && !fueraCerrada) {
@@ -1212,10 +1215,14 @@ export default function NuevoDespacho() {
                       const bloqueadaBarrio = form.barrio_cerrado && vuelta > 3
                       const tieneFlota = vueltasSinCupoConFlota.includes(vuelta)
                       const disponible = cuposDisponibles.includes(vuelta)
-                      if (cerrada || bloqueadaBarrio) return <option key={vuelta} value={vuelta} disabled>{label} — {bloqueadaBarrio ? '🏘️ No disponible para barrio cerrado' : '⛔ Fuera de horario'}</option>
+                      if (bloqueadaBarrio) return <option key={vuelta} value={vuelta} disabled>{label} — 🏘️ No disponible para barrio cerrado</option>
+                      if (cerrada) {
+                        const motivo = vueltasBloqueadasManual.includes(vuelta) ? '🔒 Sin disponibilidad' : '⛔ Fuera de horario'
+                        return <option key={vuelta} value={vuelta} disabled>{label} — {motivo}</option>
+                      }
                       if (disponible) return <option key={vuelta} value={vuelta}>{label}{horario ? ` — ${horario}` : ''}</option>
                       if (tieneFlota) return <option key={vuelta} value={vuelta}>{label} — ⚠️ Sin cupo (cargar igual)</option>
-                      return <option key={vuelta} value={vuelta} disabled>{label} — Sin cupo</option>
+                      return <option key={vuelta} value={vuelta} disabled>{label} — 🔒 Sin disponibilidad</option>
                     })}
                     <option value="fuera_prog" disabled={fueraProgramacionCerrada || form.barrio_cerrado}>
                       {fueraProgramacionCerrada ? 'Fuera de prog. — 🔒 Cerrado' : form.barrio_cerrado ? 'Fuera de prog. — 🏘️ No disponible para barrio cerrado' : 'Pedido fuera de programación'}

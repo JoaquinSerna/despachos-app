@@ -283,6 +283,7 @@ export default function MetricasPage() {
   const [toast, setToast] = useState<string | null>(null)
   const [chatAbierto, setChatAbierto] = useState(false)
   const [exportando, setExportando] = useState(false)
+  const [exportandoMensaje, setExportandoMensaje] = useState('Exportando...')
   const primerDiaMes = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01` }
   const [fechaExportDesde, setFechaExportDesde] = useState(primerDiaMes)
   const [fechaExportHasta, setFechaExportHasta] = useState(hoy)
@@ -351,6 +352,7 @@ export default function MetricasPage() {
     if (!fechaExportDesde || !fechaExportHasta) { showToast('Seleccioná el intervalo de fechas'); return }
     if (fechaExportDesde > fechaExportHasta) { showToast('La fecha de inicio debe ser anterior al fin'); return }
     setExportando(true)
+    setExportandoMensaje('Cargando datos...')
     try {
       const XLSX = await import('xlsx')
       const wb = XLSX.utils.book_new()
@@ -611,6 +613,46 @@ export default function MetricasPage() {
         if (!vueltaGroupsEx[key]) vueltaGroupsEx[key] = { camion: p.camion_id, fecha: p.fecha_entrega, vuelta: p.vuelta ?? 0, peds: [] }
         vueltaGroupsEx[key].peds.push(p)
       }
+
+      // Calcular km reales via Valhalla para cada vuelta del export
+      const kmValhallaEx: Record<string, number> = {}   // key → km real de ruta (ida+vuelta)
+      const kmValhallaDiaEx: Record<string, number> = {} // "camion|fecha" → suma de km reales del día
+      const vueltaKeys = Object.keys(vueltaGroupsEx)
+      for (let vi = 0; vi < vueltaKeys.length; vi++) {
+        const key = vueltaKeys[vi]
+        const g = vueltaGroupsEx[key]
+        const cam = camionMap[g.camion]
+        if (!cam) continue
+        const depotCam = DEPOSITOS[cam.sucursal ?? ''] ?? { lat: -34.9205, lng: -57.9536 }
+        const stops = g.peds
+          .filter((p: any) => p.latitud && p.longitud)
+          .sort((a: any, b: any) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
+        if (stops.length === 0) continue
+        const pts = [
+          `${depotCam.lng},${depotCam.lat}`,
+          ...stops.map((p: any) => `${p.longitud},${p.latitud}`),
+          `${depotCam.lng},${depotCam.lat}`,
+        ].join(';')
+        setExportandoMensaje(`Calculando km reales (${vi + 1}/${vueltaKeys.length})...`)
+        let kmV: number | null = null
+        for (let intento = 0; intento < 2 && kmV === null; intento++) {
+          try {
+            if (intento > 0) await new Promise(r => setTimeout(r, 3000))
+            const res = await fetch(`/api/km-ruta?coords=${encodeURIComponent(pts)}`)
+            if (res.ok) {
+              const json = await res.json()
+              if (json.distanciaM) kmV = Math.round(json.distanciaM / 1000)
+            }
+          } catch { /* ignorar */ }
+        }
+        if (kmV !== null) {
+          kmValhallaEx[key] = kmV
+          const dKey = `${g.camion}|${g.fecha}`
+          kmValhallaDiaEx[dKey] = (kmValhallaDiaEx[dKey] ?? 0) + kmV
+        }
+      }
+      setExportandoMensaje('Generando Excel...')
+
       const porVueltaRows = Object.values(vueltaGroupsEx)
         .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.camion.localeCompare(b.camion) || a.vuelta - b.vuelta)
         .map((g, idx, arr) => {
@@ -682,7 +724,8 @@ export default function MetricasPage() {
             'Pedidos granel': pedidosGranel,
             'Kg': Math.round(kg),
             'Posiciones': Math.round(pos),
-            'Km est. ruta': distKmEx || '',
+            'Km ruta real (ida+vuelta)': kmValhallaEx[`${g.camion}|${g.fecha}|${g.vuelta}`] ?? '',
+            'Km est. ruta (linea recta)': distKmEx || '',
             'T. traslado est. (min)': trasMin || '',
             'T. descarga est. (min)': descMin || '',
             'T. total est. (min)': totalMin || '',
@@ -694,7 +737,7 @@ export default function MetricasPage() {
             'Inicio día (todas las vueltas)': hInicioDia,
             'Fin día (todas las vueltas)': hFinDia,
             'Duración día total (min)': durRealDia ?? '',
-            'Km reales día total': flota?.km_ruta ?? '',
+            'Km reales día total': flota?.km_ruta ?? kmValhallaDiaEx[`${g.camion}|${g.fecha}`] ?? '',
           }
         })
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(porVueltaRows), 'Por vuelta')
@@ -885,25 +928,35 @@ export default function MetricasPage() {
     calcularKmReales(sorted)   // actualiza km en background con OSRM
   }
 
-  // Calcula km reales de ruta usando OSRM (open source, gratis, sin API key)
+  // Calcula km reales de ruta via Valhalla y, al terminar cada camión,
+  // guarda el total en flota_dia.km_ruta (si aún no tiene valor real).
   async function calcularKmReales(datos: DatosCamionDia[]) {
     type Req = { camionCodigo: string; vueltaIdx: number; coords: string }
     const reqs: Req[] = []
 
+    // Para Option B: rastrear cuántas rutas tiene cada camión y si ya tiene km_ruta
+    const routesTotal: Record<string, number> = {}
+    const routesDone: Record<string, number> = {}
+    const kmAcum: Record<string, number> = {}
+    const kmRutaYaTiene: Record<string, boolean> = {}
+
     for (const d of datos) {
+      kmRutaYaTiene[d.camion_codigo] = d.km_ruta !== null
       const depot = DEPOSITOS[d.sucursal] ?? { lat: -34.9205, lng: -57.9536 }
       d.vueltas.forEach((v, vueltaIdx) => {
         const stops = v.detalle
           .filter(p => p.latitud && p.longitud)
           .sort((a, b) => (a.orden_entrega ?? 999) - (b.orden_entrega ?? 999))
         if (stops.length === 0) return
-        // OSRM: longitud,latitud (al revés de lo habitual)
         const pts = [
           `${depot.lng},${depot.lat}`,
           ...stops.map(p => `${p.longitud},${p.latitud}`),
           `${depot.lng},${depot.lat}`,
         ].join(';')
         reqs.push({ camionCodigo: d.camion_codigo, vueltaIdx, coords: pts })
+        routesTotal[d.camion_codigo] = (routesTotal[d.camion_codigo] ?? 0) + 1
+        kmAcum[d.camion_codigo] = kmAcum[d.camion_codigo] ?? 0
+        routesDone[d.camion_codigo] = routesDone[d.camion_codigo] ?? 0
       })
     }
 
@@ -912,7 +965,6 @@ export default function MetricasPage() {
     // Secuencial para no saturar Valhalla. Cada resultado actualiza la UI en cuanto llega.
     for (const r of reqs) {
       let json: any = null
-      // Reintentar una vez si falla (Valhalla puede tener picos de latencia)
       for (let intento = 0; intento < 2 && json === null; intento++) {
         try {
           if (intento > 0) await new Promise(res => setTimeout(res, 3000))
@@ -920,28 +972,45 @@ export default function MetricasPage() {
           if (res.ok) json = await res.json()
         } catch { /* ignorar, se reintentará */ }
       }
-      if (!json) continue
 
-      const distM: number | null = json.distanciaM ?? null
-      const durMin: number | null = json.duracionMin ?? null
-      if (!distM && durMin === null) continue   // nada útil
+      const distM: number | null = json?.distanciaM ?? null
+      const durMin: number | null = json?.duracionMin ?? null
 
-      setDatosDia(prev => {
-        const next = prev.map(d => ({
-          ...d,
-          vueltas: d.vueltas.map(v => ({ ...v })),
-        }))
-        const ci = next.findIndex(d => d.camion_codigo === r.camionCodigo)
-        if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
-          if (distM) {
-            next[ci].vueltas[r.vueltaIdx].distanciaKm = Math.round(distM / 1000)
-            next[ci].vueltas[r.vueltaIdx].kmReal = true
+      if (distM) kmAcum[r.camionCodigo] = (kmAcum[r.camionCodigo] ?? 0) + Math.round(distM / 1000)
+      routesDone[r.camionCodigo] = (routesDone[r.camionCodigo] ?? 0) + 1
+
+      if (distM || durMin !== null) {
+        setDatosDia(prev => {
+          const next = prev.map(d => ({
+            ...d,
+            vueltas: d.vueltas.map(v => ({ ...v })),
+          }))
+          const ci = next.findIndex(d => d.camion_codigo === r.camionCodigo)
+          if (ci !== -1 && next[ci].vueltas[r.vueltaIdx]) {
+            if (distM) {
+              next[ci].vueltas[r.vueltaIdx].distanciaKm = Math.round(distM / 1000)
+              next[ci].vueltas[r.vueltaIdx].kmReal = true
+            }
+            if (durMin !== null) next[ci].vueltas[r.vueltaIdx].tiempoTrasladoMin = durMin
+            next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
           }
-          if (durMin !== null) next[ci].vueltas[r.vueltaIdx].tiempoTrasladoMin = durMin
-          next[ci].distanciaTotalKm = next[ci].vueltas.reduce((a, v) => a + v.distanciaKm, 0)
+          return next
+        })
+      }
+
+      // Option B: cuando terminaron todas las vueltas de este camión, guardar en flota_dia
+      if (routesDone[r.camionCodigo] >= (routesTotal[r.camionCodigo] ?? 0)) {
+        const kmTotal = kmAcum[r.camionCodigo] ?? 0
+        if (kmTotal > 0 && !kmRutaYaTiene[r.camionCodigo]) {
+          try {
+            await fetch('/api/flota-dia', {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ camion_codigo: r.camionCodigo, fecha, km_ruta: kmTotal }),
+            })
+          } catch (e) { console.error('Error guardando km_ruta en flota_dia:', e) }
         }
-        return next
-      })
+      }
     }
   }
 
@@ -1628,7 +1697,7 @@ export default function MetricasPage() {
             <button onClick={exportarExcel} disabled={exportando}
               className="px-4 py-2 rounded-lg text-sm font-semibold disabled:opacity-50"
               style={{ background: '#f4f4f3', color: '#254A96', border: '1px solid #e8edf8' }}>
-              {exportando ? 'Exportando...' : '⬇️ Excel'}
+              {exportando ? exportandoMensaje : '⬇️ Excel'}
             </button>
             {fechaExportDesde && fechaExportHasta && (
               <span className="text-xs self-center" style={{ color: '#B9BBB7' }}>

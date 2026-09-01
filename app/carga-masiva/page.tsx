@@ -7,9 +7,10 @@ import { logAuditoria } from '../lib/auditoria'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
-  { vuelta: 1, label: 'Primera hora (8-10hs)' },
-  { vuelta: 2, label: 'Antes del mediodía (10-12hs)' },
-  { vuelta: 3, label: 'Después del mediodía (13-17hs)' },
+  { vuelta: 1, label: 'Vuelta 1 — 8 a 10hs' },
+  { vuelta: 2, label: 'Vuelta 2 — 10 a 12hs' },
+  { vuelta: 3, label: 'Vuelta 3 — 13 a 15hs' },
+  { vuelta: 4, label: 'Vuelta 4 — después de las 16hs' },
 ]
 
 function detectarSucursal(sucursalObra: string, deposito: string): string {

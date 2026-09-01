@@ -295,7 +295,7 @@ export default function NuevoDespacho() {
     const posNuevas = posicionesTotal > 0 ? posicionesTotal : 0
 
     for (const { vuelta } of FRANJAS) {
-      const vueltas = vuelta === 3 ? [3, 4] : [vuelta]
+      const vueltas = [vuelta]
       let pesoUsado = 0; let posUsadas = 0
       for (const v of vueltas) {
         const { data: pv } = await supabase
@@ -476,7 +476,7 @@ export default function NuevoDespacho() {
     if (form.barrio_cerrado) {
       const vueltaNum = form.vuelta === 'fuera_prog' ? 0 : parseInt(form.vuelta)
       if (form.vuelta === 'fuera_prog' || vueltaNum > 3) {
-        setError('Los pedidos de barrio cerrado solo se pueden cargar en V1, V2 o V3 (solo vamos hasta las 15hs).')
+        setError('Los pedidos de barrio cerrado solo se pueden cargar en V1, V2 o V3 (hasta las 15hs). V4 y fuera de programación no están disponibles para barrios cerrados.')
         setLoading(false)
         return
       }

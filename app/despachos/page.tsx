@@ -1213,7 +1213,7 @@ export default function NuevoDespacho() {
                       const tieneFlota = vueltasSinCupoConFlota.includes(vuelta)
                       const disponible = cuposDisponibles.includes(vuelta)
                       if (cerrada || bloqueadaBarrio) return <option key={vuelta} value={vuelta} disabled>{label} — {bloqueadaBarrio ? '🏘️ No disponible para barrio cerrado' : '⛔ Fuera de horario'}</option>
-                      if (disponible) return <option key={vuelta} value={vuelta}>{label} — {horario}</option>
+                      if (disponible) return <option key={vuelta} value={vuelta}>{label}{horario ? ` — ${horario}` : ''}</option>
                       if (tieneFlota) return <option key={vuelta} value={vuelta}>{label} — ⚠️ Sin cupo (cargar igual)</option>
                       return <option key={vuelta} value={vuelta} disabled>{label} — Sin cupo</option>
                     })}

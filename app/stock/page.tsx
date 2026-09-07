@@ -176,7 +176,7 @@ export default function StockPage() {
             onChange={e => setBusqueda(e.target.value)}
             placeholder="Buscar producto por nombre…"
             className="w-full border rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2"
-            style={{ borderColor: '#e8edf8', focusRingColor: '#254A96' }}
+            style={{ borderColor: '#e8edf8' }}
           />
 
           <div className="flex flex-wrap gap-2 items-center">

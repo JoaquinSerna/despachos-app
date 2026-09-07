@@ -157,15 +157,34 @@ export default function StockPage() {
           <div className="w-px h-5 bg-gray-200" />
           <img src="/logo.png" alt="Construyo al Costo" className="h-7 w-auto rounded-lg hidden sm:block" />
           <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Stock por sucursal</span>
-          {ultimoImport && (
-            <span className="ml-auto text-xs shrink-0" style={{ color: '#B9BBB7' }}>
-              Actualizado {fmtFecha(ultimoImport)}
-            </span>
-          )}
         </div>
       </nav>
 
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6 space-y-4">
+
+        {/* Aviso fecha de actualización */}
+        {(() => {
+          if (!ultimoImport) return (
+            <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium"
+              style={{ background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }}>
+              ⚠️ No hay datos de stock cargados todavía.
+            </div>
+          )
+          const diasAtras = Math.floor((Date.now() - new Date(ultimoImport).getTime()) / 86400000)
+          const esViejo = diasAtras >= 3
+          return (
+            <div className="flex items-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium"
+              style={esViejo
+                ? { background: '#fff3cd', color: '#856404', border: '1px solid #ffc107' }
+                : { background: '#e8edf8', color: '#254A96', border: '1px solid #c8d8f0' }}>
+              {esViejo ? '⚠️' : '📦'}
+              <span>
+                Stock actualizado el <strong>{fmtFecha(ultimoImport)}</strong>
+                {esViejo && <span className="ml-1">(hace {diasAtras} días — puede estar desactualizado)</span>}
+              </span>
+            </div>
+          )
+        })()}
 
         {/* Filtros */}
         <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">

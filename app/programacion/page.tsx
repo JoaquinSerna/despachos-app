@@ -625,12 +625,12 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             <input type="text" value={reprogMotivo}
               onChange={e => setReprogMotivo(e.target.value)}
               onMouseDown={e => e.stopPropagation()}
-              placeholder="Motivo (ej: lluvia, cliente no disponible)"
+              placeholder={reprogFecha && reprogFecha !== pedido.fecha_entrega ? 'Motivo obligatorio *' : 'Motivo (ej: lluvia, cliente no disponible)'}
               className="w-full text-xs border rounded px-2 py-1.5 focus:outline-none"
-              style={{ borderColor: '#e8edf8' }} />
+              style={{ borderColor: reprogFecha && reprogFecha !== pedido.fecha_entrega && !reprogMotivo.trim() ? '#E52322' : '#e8edf8' }} />
           </div>
           <div className="flex gap-1.5 mt-2">
-            <button disabled={!reprogFecha}
+            <button disabled={!reprogFecha || (reprogFecha !== pedido.fecha_entrega && !reprogMotivo.trim())}
               onMouseDown={e => e.stopPropagation()}
               onClick={e => { e.stopPropagation(); onReprogramar(pedido.id, reprogFecha, reprogVuelta, reprogMotivo); setModo('normal') }}
               className="flex-1 text-xs py-1.5 rounded font-medium text-white disabled:opacity-40"

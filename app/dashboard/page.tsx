@@ -20,6 +20,7 @@ const TODAS_LAS_CARDS = [
   { href: '/abastecimiento', icon: '🏭', titulo: 'Abastecimiento',     descripcion: 'Transferencias entre sucursales',            disponible: true, roles: ['gerencia','ruteador','deposito'] },
   { href: '/metricas',       icon: '📊', titulo: 'Métricas',           descripcion: 'Ocupación de flota y tiempos de ruta',       disponible: true, roles: ['gerencia','ruteador','admin_flota'] },
   { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',           descripcion: 'Gestión de usuarios y permisos',             disponible: true, roles: ['gerencia'] },
+  { href: '/stock',          icon: '🏷️', titulo: 'Stock',              descripcion: 'Consulta de stock por sucursal',             disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
   { href: '/ayuda',          icon: '📖', titulo: 'Manual de uso',      descripcion: 'Guía paso a paso y diagramas de flujo',      disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial','confirmador','chofer'] },
 ]
  
@@ -275,14 +276,17 @@ export default function Dashboard() {
                 })()}
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Motivo</label>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>
+                  Motivo{reprogFechaDash && reprogFechaDash !== pedidoReprogDash?.fecha_entrega ? ' *' : ''}
+                </label>
                 <input type="text" value={reprogMotivoDash} onChange={e => setReprogMotivoDash(e.target.value)}
-                  placeholder="Ej: lluvia, cliente no disponible"
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+                  placeholder={reprogFechaDash && reprogFechaDash !== pedidoReprogDash?.fecha_entrega ? 'Motivo obligatorio *' : 'Ej: lluvia, cliente no disponible'}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: reprogFechaDash && reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim() ? '#E52322' : '#e8edf8' }} />
               </div>
             </div>
             <div className="flex gap-2 mt-5">
-              <button disabled={!reprogFechaDash || vueltasCerradasPara(reprogFechaDash).includes(reprogVueltaDash)}
+              <button disabled={!reprogFechaDash || vueltasCerradasPara(reprogFechaDash).includes(reprogVueltaDash) || (reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim())}
                 onClick={() => handleReprogramarDashboard(pedidoReprogDash, reprogFechaDash, reprogVueltaDash, reprogMotivoDash)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                 style={{ background: '#254A96' }}>Confirmar</button>

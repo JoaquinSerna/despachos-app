@@ -214,7 +214,7 @@ export default function FinDelDiaPage() {
                 </div>
               </div>
               <button
-                disabled={seleccionados.size === 0 || !fechaDestino || procesando}
+                disabled={seleccionados.size === 0 || !fechaDestino || !motivo.trim() || procesando}
                 onClick={handleReprogramar}
                 className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                 style={{ background: '#254A96' }}>

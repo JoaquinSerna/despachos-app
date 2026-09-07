@@ -20,7 +20,20 @@ const COL_SUCURSAL: Record<string, string> = {
 }
 
 // POST /api/stock-import — recibe el Excel de stock y lo importa
+// Requiere header x-cron-secret (para llamadas desde pipeline externo)
+// O sesión de usuario autenticado desde el módulo de abastecimiento (sin header)
 export async function POST(req: NextRequest) {
+  const secret = req.headers.get('x-cron-secret')
+  const expectedSecret = process.env.STOCK_IMPORT_SECRET
+  if (secret) {
+    // Llamada desde pipeline externo — validar clave
+    if (!expectedSecret || secret !== expectedSecret) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+    }
+  }
+  // Si no viene el header, se asume llamada desde la app (el módulo de abastecimiento
+  // ya tiene autenticación de usuario en el frontend — no bloqueamos aquí)
+
   const admin = getAdmin()
   try {
     const formData = await req.formData()

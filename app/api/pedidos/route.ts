@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { enviarMailReprogramacion } from '../../lib/mailer'
 
 function getAdmin() {
   return createClient(
@@ -127,6 +128,24 @@ export async function PATCH(req: NextRequest) {
             tipo,
             mensaje,
           })
+
+          // Enviar mail al vendedor si tiene email registrado
+          try {
+            const { data: vendedor } = await admin
+              .from('usuarios')
+              .select('nombre, email')
+              .eq('id', pedido.vendedor_id)
+              .maybeSingle()
+            if (vendedor?.email) {
+              await enviarMailReprogramacion({
+                destinatario: vendedor.email,
+                nombre: vendedor.nombre ?? '',
+                nv,
+                cliente,
+                mensaje,
+              })
+            }
+          } catch (e) { console.error('Error enviando mail de reprogramación:', e) }
         }
       } catch (e) { console.error('Error insertando notificación:', e) }
     }

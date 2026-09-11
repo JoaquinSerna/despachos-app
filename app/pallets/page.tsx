@@ -80,8 +80,9 @@ export default function PalletsPage() {
   const [cargandoCom, setCargandoCom]     = useState(false)
 
   // vista ruteador
-  const [rutFecha, setRutFecha]       = useState(hoy())
-  const [rutChofer, setRutChofer]     = useState('')
+  const [rutFechaDesde, setRutFechaDesde] = useState(hoy())
+  const [rutFechaHasta, setRutFechaHasta] = useState(hoy())
+  const [rutChofer, setRutChofer]         = useState('')
   const [rutData, setRutData]         = useState<Devolucion[]>([])
   const [cargandoRut, setCargandoRut] = useState(false)
 
@@ -196,15 +197,16 @@ export default function PalletsPage() {
     let q = supabase
       .from('devoluciones_pallets')
       .select('*')
-      .eq('fecha', rutFecha)
+      .gte('fecha', rutFechaDesde)
+      .lte('fecha', rutFechaHasta)
       .order('chofer_nombre')
     if (rutChofer.trim()) q = q.ilike('chofer_nombre', `%${rutChofer.trim()}%`)
-    const { data } = await q.limit(200)
+    const { data } = await q.limit(500)
     setRutData(data ?? [])
     setCargandoRut(false)
-  }, [rutFecha, rutChofer])
+  }, [rutFechaDesde, rutFechaHasta, rutChofer])
 
-  useEffect(() => { if (tab === 'ruteador') cargarRuteador() }, [tab, rutFecha, rutChofer])
+  useEffect(() => { if (tab === 'ruteador') cargarRuteador() }, [tab, rutFechaDesde, rutFechaHasta, rutChofer])
 
   // ── Guardar registro ──
   async function handleGuardar() {
@@ -628,8 +630,13 @@ export default function PalletsPage() {
           <>
             <div className="bg-white rounded-xl shadow-sm p-4 flex gap-3 flex-wrap items-end">
               <div>
-                <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Fecha</label>
-                <input type="date" value={rutFecha} onChange={e => setRutFecha(e.target.value)}
+                <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Desde</label>
+                <input type="date" value={rutFechaDesde} onChange={e => setRutFechaDesde(e.target.value)}
+                  className="border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Hasta</label>
+                <input type="date" value={rutFechaHasta} onChange={e => setRutFechaHasta(e.target.value)}
                   className="border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
               </div>
               <div className="flex-1 min-w-36">
@@ -667,7 +674,7 @@ export default function PalletsPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr style={{ background: '#fafafa' }}>
-                          {['Cliente', 'Sucursal', 'Sanos', 'Dañados', 'Rotos', 'Foto', 'Notas'].map(h => (
+                          {['Fecha', 'Cliente', 'Sucursal', 'Sanos', 'Dañados', 'Rotos', 'Foto', 'Notas'].map(h => (
                             <th key={h} className="px-4 py-2 text-left text-xs font-semibold" style={{ color: '#888' }}>{h}</th>
                           ))}
                         </tr>
@@ -675,6 +682,7 @@ export default function PalletsPage() {
                       <tbody>
                         {rows.map(r => (
                           <tr key={r.id} className="border-t" style={{ borderColor: '#f5f5f5' }}>
+                            <td className="px-4 py-2.5 text-xs" style={{ color: '#888' }}>{fmtFecha(r.fecha)}</td>
                             <td className="px-4 py-2.5 font-medium text-sm" style={{ color: '#1a1a1a' }}>{r.cliente ?? <span style={{ color: '#B9BBB7' }}>Sin cliente</span>}</td>
                             <td className="px-4 py-2.5 text-xs" style={{ color: '#888' }}>{r.sucursal}</td>
                             <td className="px-4 py-2.5 text-sm font-bold text-center" style={{ color: r.sanos > 0 ? '#1a7a3c' : '#B9BBB7' }}>

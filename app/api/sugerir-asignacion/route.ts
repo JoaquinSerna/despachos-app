@@ -600,7 +600,7 @@ La "asignacion" debe incluir TODOS los ids de la lista.`
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2048,
+    max_tokens: 4096,
     messages: [{ role: 'user', content: prompt }],
   })
 
@@ -608,7 +608,13 @@ La "asignacion" debe incluir TODOS los ids de la lista.`
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) return { asignacion: sugerencia, cambios: [], engine: 'claude-haiku-fallback' }
 
-  const result = JSON.parse(jsonMatch[0])
+  let result: any
+  try {
+    result = JSON.parse(jsonMatch[0])
+  } catch (e: any) {
+    console.error('[sugerir-asignacion] JSON.parse error (respuesta truncada?):', e.message)
+    return { asignacion: sugerencia, cambios: [], engine: 'claude-haiku-fallback-parse-error' }
+  }
 
   const asignacionFinal: Record<string, string | null> = { ...sugerencia }
   const cambiosValidos: any[] = []

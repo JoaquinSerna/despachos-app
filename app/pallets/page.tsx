@@ -576,7 +576,7 @@ export default function PalletsPage() {
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b" style={{ borderColor: '#f0f0f0' }}>
-                <span className="font-semibold text-sm" style={{ color: '#254A96' }}>💰 Pallets para reintegro (solo sanos)</span>
+                <span className="font-semibold text-sm" style={{ color: '#254A96' }}>💰 Pallets para reintegro</span>
               </div>
               {cargandoCom ? (
                 <div className="flex justify-center py-8">

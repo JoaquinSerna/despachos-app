@@ -17,13 +17,14 @@ function hace30Dias() {
 interface Devolucion {
   id: string
   fecha: string
-  cliente: string
+  cliente: string | null
   chofer_nombre: string
   sucursal: string
   sanos: number
   daniados: number
   rotos: number
   notas: string | null
+  foto_url: string | null
   registrado_por_nombre: string | null
   created_at: string
 }
@@ -34,27 +35,30 @@ interface Chofer {
 }
 
 // ── Roles autorizados ──
-const ROLES_DEPOSITO = ['deposito', 'admin_flota', 'gerencia', 'ruteador']
+const ROLES_DEPOSITO  = ['deposito', 'admin_flota', 'gerencia', 'ruteador']
 const ROLES_COMERCIAL = ['comercial', 'admin_flota', 'gerencia']
 const ROLES_RUTEADOR  = ['ruteador', 'admin_flota', 'gerencia']
 
 export default function PalletsPage() {
   const router = useRouter()
-  const [rol, setRol]       = useState<string | null>(null)
-  const [userId, setUserId] = useState('')
+  const [rol, setRol]           = useState<string | null>(null)
+  const [userId, setUserId]     = useState('')
   const [userNombre, setUserNombre] = useState('')
-  const [tab, setTab]       = useState<'registrar' | 'comercial' | 'ruteador'>('registrar')
+  const [tab, setTab]           = useState<'registrar' | 'comercial' | 'ruteador'>('registrar')
 
   // ── form registro ──
-  const [fecha, setFecha]         = useState(hoy())
-  const [sucursal, setSucursal]   = useState('LP520')
-  const [chofer, setChofer]       = useState('')
-  const [cliente, setCliente]     = useState('')
-  const [sanos, setSanos]         = useState('')
-  const [daniados, setDaniados]   = useState('')
-  const [rotos, setRotos]         = useState('')
-  const [notas, setNotas]         = useState('')
-  const [guardando, setGuardando] = useState(false)
+  const [fecha, setFecha]       = useState(hoy())
+  const [sucursal, setSucursal] = useState('LP520')
+  const [chofer, setChofer]     = useState('')
+  const [cliente, setCliente]   = useState('')
+  const [sanos, setSanos]       = useState('')
+  const [daniados, setDaniados] = useState('')
+  const [rotos, setRotos]       = useState('')
+  const [notas, setNotas]       = useState('')
+  const [foto, setFoto]         = useState<File | null>(null)
+  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
+  const [guardando, setGuardando]     = useState(false)
+  const fotoInputRef = useRef<HTMLInputElement>(null)
 
   // autocomplete cliente
   const [sugerencias, setSugerencias] = useState<string[]>([])
@@ -65,7 +69,7 @@ export default function PalletsPage() {
   const [choferes, setChoferes] = useState<Chofer[]>([])
 
   // registros recientes
-  const [registros, setRegistros] = useState<Devolucion[]>([])
+  const [registros, setRegistros]     = useState<Devolucion[]>([])
   const [cargandoReg, setCargandoReg] = useState(false)
 
   // vista comercial
@@ -76,10 +80,13 @@ export default function PalletsPage() {
   const [cargandoCom, setCargandoCom]     = useState(false)
 
   // vista ruteador
-  const [rutFecha, setRutFecha]   = useState(hoy())
-  const [rutChofer, setRutChofer] = useState('')
-  const [rutData, setRutData]     = useState<Devolucion[]>([])
+  const [rutFecha, setRutFecha]       = useState(hoy())
+  const [rutChofer, setRutChofer]     = useState('')
+  const [rutData, setRutData]         = useState<Devolucion[]>([])
   const [cargandoRut, setCargandoRut] = useState(false)
+
+  // foto ampliada
+  const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null)
 
   // toast
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
@@ -96,7 +103,6 @@ export default function PalletsPage() {
       setUserNombre(data?.nombre ?? '')
       const r = data?.rol ?? ''
       setRol(r)
-      // Determinar tab inicial según rol
       if (ROLES_DEPOSITO.includes(r)) setTab('registrar')
       else if (ROLES_COMERCIAL.includes(r)) setTab('comercial')
       else if (ROLES_RUTEADOR.includes(r)) setTab('ruteador')
@@ -136,7 +142,22 @@ export default function PalletsPage() {
     return () => clearTimeout(t)
   }, [cliente])
 
-  // ── Cargar registros recientes (tab registrar) ──
+  // ── Manejo de foto ──
+  function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setFoto(file)
+    const url = URL.createObjectURL(file)
+    setFotoPreview(url)
+  }
+
+  function limpiarFoto() {
+    setFoto(null)
+    setFotoPreview(null)
+    if (fotoInputRef.current) fotoInputRef.current.value = ''
+  }
+
+  // ── Cargar registros recientes ──
   const cargarRegistros = useCallback(async () => {
     setCargandoReg(true)
     const { data } = await supabase
@@ -187,32 +208,57 @@ export default function PalletsPage() {
 
   // ── Guardar registro ──
   async function handleGuardar() {
-    if (!cliente.trim() || !chofer) { showToast('Completá cliente y chofer', 'err'); return }
+    if (!chofer) { showToast('Seleccioná un chofer', 'err'); return }
     const s = parseInt(sanos) || 0
     const d = parseInt(daniados) || 0
     const r = parseInt(rotos) || 0
     if (s + d + r === 0) { showToast('Ingresá al menos un pallet (sano, dañado o roto)', 'err'); return }
 
+    // Si hay cliente, la foto es obligatoria
+    const clienteTrimmed = cliente.trim()
+    if (clienteTrimmed && !foto) {
+      showToast('Si cargás un cliente, la foto es obligatoria', 'err'); return
+    }
+
     setGuardando(true)
+
+    // Subir foto si corresponde
+    let foto_url: string | null = null
+    if (foto && clienteTrimmed) {
+      const ext = foto.name.split('.').pop() ?? 'jpg'
+      const path = `${fecha}/${Date.now()}_${chofer.replace(/\s+/g, '_')}.${ext}`
+      const { error: uploadErr } = await supabase.storage
+        .from('pallets-fotos')
+        .upload(path, foto, { upsert: false })
+      if (uploadErr) {
+        showToast(`Error al subir foto: ${uploadErr.message}`, 'err')
+        setGuardando(false); return
+      }
+      const { data: urlData } = supabase.storage.from('pallets-fotos').getPublicUrl(path)
+      foto_url = urlData.publicUrl
+    }
+
     const { error } = await supabase.from('devoluciones_pallets').insert({
       fecha,
       sucursal,
-      cliente: cliente.trim(),
+      cliente: clienteTrimmed || null,
       chofer_nombre: chofer,
       sanos: s,
       daniados: d,
       rotos: r,
       notas: notas.trim() || null,
+      foto_url,
       registrado_por_id: userId || null,
       registrado_por_nombre: userNombre || null,
     })
+
     if (error) { showToast(`Error: ${error.message}`, 'err'); setGuardando(false); return }
 
     if (userId) logAuditoria(userId, userNombre, 'Registró devolución de pallets', 'Pallets',
-      { cliente: cliente.trim(), chofer, sanos: s, daniados: d, rotos: r })
+      { cliente: clienteTrimmed || 'sin cliente', chofer, sanos: s, daniados: d, rotos: r })
 
-    showToast(`✓ Pallets registrados — ${cliente.trim()}`)
-    setCliente(''); setSanos(''); setDaniados(''); setRotos(''); setNotas('')
+    showToast(`✓ Pallets registrados${clienteTrimmed ? ` — ${clienteTrimmed}` : ''}`)
+    setCliente(''); setSanos(''); setDaniados(''); setRotos(''); setNotas(''); limpiarFoto()
     cargarRegistros()
     setGuardando(false)
   }
@@ -223,29 +269,42 @@ export default function PalletsPage() {
   // ── Totales comercial ──
   const totalSanos = comData.reduce((s, r) => s + r.sanos, 0)
 
+  const fmtFecha = (iso: string) => {
+    const [y, m, d] = iso.split('-')
+    return `${d}/${m}/${y}`
+  }
+
+  const clienteObligatorio = cliente.trim().length > 0
+
   if (!rol) return (
     <div className="min-h-screen flex items-center justify-center" style={{ background: '#f9f9f9' }}>
       <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
     </div>
   )
 
-  const puedeRegistrar = ROLES_DEPOSITO.includes(rol)
+  const puedeRegistrar   = ROLES_DEPOSITO.includes(rol)
   const puedeVerComercial = ROLES_COMERCIAL.includes(rol)
-  const puedeVerRuteador = ROLES_RUTEADOR.includes(rol)
+  const puedeVerRuteador  = ROLES_RUTEADOR.includes(rol)
 
   const tabs: { key: 'registrar' | 'comercial' | 'ruteador'; label: string; icon: string }[] = [
-    ...(puedeRegistrar  ? [{ key: 'registrar' as const,  label: 'Registrar',     icon: '📦' }] : []),
-    ...(puedeVerComercial ? [{ key: 'comercial' as const, label: 'Reintegros',    icon: '💰' }] : []),
-    ...(puedeVerRuteador  ? [{ key: 'ruteador'  as const, label: 'Por chofer',    icon: '🚛' }] : []),
+    ...(puedeRegistrar    ? [{ key: 'registrar' as const, label: 'Registrar',  icon: '📦' }] : []),
+    ...(puedeVerComercial ? [{ key: 'comercial' as const, label: 'Reintegros', icon: '💰' }] : []),
+    ...(puedeVerRuteador  ? [{ key: 'ruteador'  as const, label: 'Por chofer', icon: '🚛' }] : []),
   ]
-
-  const fmtFecha = (iso: string) => {
-    const [y, m, d] = iso.split('-')
-    return `${d}/${m}/${y}`
-  }
 
   return (
     <div className="min-h-screen" style={{ background: '#f9f9f9', fontFamily: 'Barlow, sans-serif' }}>
+
+      {/* Lightbox foto */}
+      {fotoAmpliada && (
+        <div
+          className="fixed inset-0 z-[9999] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.85)' }}
+          onClick={() => setFotoAmpliada(null)}>
+          <img src={fotoAmpliada} alt="Foto pallet" className="max-w-[90vw] max-h-[90vh] rounded-xl shadow-2xl object-contain" />
+          <button className="absolute top-4 right-4 text-white text-3xl font-bold" onClick={() => setFotoAmpliada(null)}>✕</button>
+        </div>
+      )}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl shadow-lg text-sm font-medium text-white flex items-center gap-2"
@@ -287,19 +346,16 @@ export default function PalletsPage() {
         {/* ── TAB REGISTRAR ── */}
         {tab === 'registrar' && (
           <>
-            {/* Formulario */}
             <div className="bg-white rounded-xl shadow-sm p-5 space-y-4">
               <h2 className="font-semibold text-sm" style={{ color: '#254A96' }}>Nuevo registro de pallets</h2>
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                {/* Fecha */}
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Fecha</label>
                   <input type="date" value={fecha} onChange={e => setFecha(e.target.value)}
                     className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
                     style={{ borderColor: '#e8edf8' }} />
                 </div>
-                {/* Sucursal */}
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Sucursal</label>
                   <select value={sucursal} onChange={e => setSucursal(e.target.value)}
@@ -308,7 +364,6 @@ export default function PalletsPage() {
                     {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                {/* Chofer */}
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Chofer</label>
                   <select value={chofer} onChange={e => setChofer(e.target.value)}
@@ -320,29 +375,75 @@ export default function PalletsPage() {
                 </div>
               </div>
 
-              {/* Cliente autocomplete */}
-              <div ref={clienteRef} className="relative">
-                <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Cliente</label>
-                <input
-                  type="text"
-                  value={cliente}
-                  onChange={e => { setCliente(e.target.value); setShowSug(true) }}
-                  onFocus={() => setShowSug(true)}
-                  placeholder="Buscar cliente…"
-                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  style={{ borderColor: cliente.trim() ? '#e8edf8' : '#E52322' }}
-                  autoComplete="off"
-                />
-                {showSug && sugerencias.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 bg-white border rounded-lg shadow-lg z-20 mt-0.5 max-h-44 overflow-y-auto"
-                    style={{ borderColor: '#e8edf8' }}>
-                    {sugerencias.map(s => (
-                      <button key={s} onClick={() => { setCliente(s); setShowSug(false) }}
-                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 transition-colors"
-                        style={{ color: '#1a1a1a' }}>
-                        {s}
+              {/* Cliente (opcional) + foto (obligatoria si hay cliente) */}
+              <div className="space-y-3">
+                <div ref={clienteRef} className="relative">
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>
+                    Cliente <span style={{ color: '#B9BBB7' }}>(opcional — si lo cargás, la foto es obligatoria)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={cliente}
+                    onChange={e => { setCliente(e.target.value); setShowSug(true) }}
+                    onFocus={() => setShowSug(true)}
+                    placeholder="Buscar cliente… o dejá vacío"
+                    className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                    style={{ borderColor: '#e8edf8' }}
+                    autoComplete="off"
+                  />
+                  {showSug && sugerencias.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 bg-white border rounded-lg shadow-lg z-20 mt-0.5 max-h-44 overflow-y-auto"
+                      style={{ borderColor: '#e8edf8' }}>
+                      {sugerencias.map(s => (
+                        <button key={s} onClick={() => { setCliente(s); setShowSug(false) }}
+                          className="w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50"
+                          style={{ color: '#1a1a1a' }}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Foto — solo aparece si hay cliente */}
+                {clienteObligatorio && (
+                  <div className="rounded-xl p-4 space-y-3" style={{ background: '#f9f9f9', border: '1px dashed #e8edf8' }}>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold" style={{ color: foto ? '#1a7a3c' : '#E52322' }}>
+                        📷 Foto del pallet {foto ? '✓' : '(obligatoria)'}
+                      </label>
+                      {foto && (
+                        <button onClick={limpiarFoto} className="text-xs px-2 py-1 rounded" style={{ color: '#E52322', background: '#fde8e8' }}>
+                          Cambiar foto
+                        </button>
+                      )}
+                    </div>
+
+                    {fotoPreview ? (
+                      <img
+                        src={fotoPreview}
+                        alt="Vista previa"
+                        className="w-full max-h-48 object-cover rounded-lg cursor-pointer"
+                        onClick={() => setFotoAmpliada(fotoPreview)}
+                      />
+                    ) : (
+                      <button
+                        onClick={() => fotoInputRef.current?.click()}
+                        className="w-full py-8 rounded-lg text-sm font-medium flex flex-col items-center gap-2 transition-colors"
+                        style={{ background: '#fde8e8', color: '#E52322', border: '1.5px dashed #E52322' }}>
+                        <span style={{ fontSize: 28 }}>📷</span>
+                        <span>Tocar para sacar foto o elegir de la galería</span>
                       </button>
-                    ))}
+                    )}
+
+                    <input
+                      ref={fotoInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      hidden
+                      onChange={handleFotoChange}
+                    />
                   </div>
                 )}
               </div>
@@ -352,15 +453,14 @@ export default function PalletsPage() {
                 <label className="block text-xs font-medium mb-2" style={{ color: '#666' }}>Pallets recibidos</label>
                 <div className="grid grid-cols-3 gap-3">
                   {[
-                    { label: 'Sanos', color: '#1a7a3c', bg: '#d1fae5', value: sanos, set: setSanos },
+                    { label: 'Sanos',   color: '#1a7a3c', bg: '#d1fae5', value: sanos,   set: setSanos },
                     { label: 'Dañados', color: '#b45309', bg: '#fef3c7', value: daniados, set: setDaniados },
-                    { label: 'Rotos', color: '#E52322', bg: '#fde8e8', value: rotos, set: setRotos },
+                    { label: 'Rotos',   color: '#E52322', bg: '#fde8e8', value: rotos,    set: setRotos },
                   ].map(({ label, color, bg, value, set }) => (
                     <div key={label} className="rounded-xl p-3 text-center" style={{ background: bg }}>
                       <p className="text-xs font-semibold mb-2" style={{ color }}>{label}</p>
                       <input
-                        type="number"
-                        min="0"
+                        type="number" min="0"
                         value={value}
                         onChange={e => set(e.target.value)}
                         placeholder="0"
@@ -407,7 +507,7 @@ export default function PalletsPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ background: '#f9f9f9' }}>
-                        {['Fecha', 'Cliente', 'Chofer', 'Sanos', 'Dañados', 'Rotos', 'Notas', 'Registrado por'].map(h => (
+                        {['Fecha', 'Cliente', 'Chofer', 'Sanos', 'Dañados', 'Rotos', 'Foto', 'Notas'].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold" style={{ color: '#888' }}>{h}</th>
                         ))}
                       </tr>
@@ -416,8 +516,8 @@ export default function PalletsPage() {
                       {registros.map(r => (
                         <tr key={r.id} className="border-t hover:bg-gray-50" style={{ borderColor: '#f5f5f5' }}>
                           <td className="px-4 py-2.5 text-xs" style={{ color: '#888' }}>{fmtFecha(r.fecha)}</td>
-                          <td className="px-4 py-2.5 font-medium text-xs" style={{ color: '#1a1a1a', maxWidth: 180 }}>
-                            <span className="block truncate">{r.cliente}</span>
+                          <td className="px-4 py-2.5 text-xs font-medium" style={{ color: '#1a1a1a', maxWidth: 160 }}>
+                            <span className="block truncate">{r.cliente ?? <span style={{ color: '#B9BBB7' }}>—</span>}</span>
                           </td>
                           <td className="px-4 py-2.5 text-xs" style={{ color: '#555' }}>{r.chofer_nombre}</td>
                           <td className="px-4 py-2.5 text-xs font-bold text-center" style={{ color: r.sanos > 0 ? '#1a7a3c' : '#B9BBB7' }}>
@@ -429,10 +529,14 @@ export default function PalletsPage() {
                           <td className="px-4 py-2.5 text-xs font-bold text-center" style={{ color: r.rotos > 0 ? '#E52322' : '#B9BBB7' }}>
                             {r.rotos > 0 ? r.rotos : '—'}
                           </td>
+                          <td className="px-4 py-2.5 text-center">
+                            {r.foto_url
+                              ? <img src={r.foto_url} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer inline-block border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(r.foto_url!)} />
+                              : <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>}
+                          </td>
                           <td className="px-4 py-2.5 text-xs" style={{ color: '#888', maxWidth: 140 }}>
                             <span className="block truncate">{r.notas ?? '—'}</span>
                           </td>
-                          <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>{r.registrado_por_nombre ?? '—'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -446,7 +550,6 @@ export default function PalletsPage() {
         {/* ── TAB COMERCIAL ── */}
         {tab === 'comercial' && (
           <>
-            {/* Filtros */}
             <div className="bg-white rounded-xl shadow-sm p-4 flex gap-3 flex-wrap items-end">
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Desde</label>
@@ -471,7 +574,6 @@ export default function PalletsPage() {
               )}
             </div>
 
-            {/* Tabla */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
               <div className="px-4 py-3 border-b" style={{ borderColor: '#f0f0f0' }}>
                 <span className="font-semibold text-sm" style={{ color: '#254A96' }}>💰 Pallets para reintegro (solo sanos)</span>
@@ -487,7 +589,7 @@ export default function PalletsPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ background: '#f9f9f9' }}>
-                        {['Fecha', 'Cliente', 'Pallets sanos', 'Chofer', 'Sucursal', 'Notas'].map(h => (
+                        {['Fecha', 'Cliente', 'Pallets sanos', 'Foto', 'Chofer', 'Sucursal', 'Notas'].map(h => (
                           <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold" style={{ color: '#888' }}>{h}</th>
                         ))}
                       </tr>
@@ -496,12 +598,17 @@ export default function PalletsPage() {
                       {comData.map(r => (
                         <tr key={r.id} className="border-t hover:bg-green-50" style={{ borderColor: '#f5f5f5' }}>
                           <td className="px-4 py-3 text-xs" style={{ color: '#888' }}>{fmtFecha(r.fecha)}</td>
-                          <td className="px-4 py-3 font-semibold text-sm" style={{ color: '#1a1a1a' }}>{r.cliente}</td>
+                          <td className="px-4 py-3 font-semibold text-sm" style={{ color: '#1a1a1a' }}>{r.cliente ?? '—'}</td>
                           <td className="px-4 py-3">
                             <span className="px-3 py-1 rounded-full text-sm font-bold"
                               style={{ background: '#d1fae5', color: '#1a7a3c' }}>
                               {r.sanos} pallet{r.sanos !== 1 ? 's' : ''}
                             </span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {r.foto_url
+                              ? <img src={r.foto_url} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer inline-block border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(r.foto_url!)} />
+                              : <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>}
                           </td>
                           <td className="px-4 py-3 text-xs" style={{ color: '#555' }}>{r.chofer_nombre}</td>
                           <td className="px-4 py-3 text-xs" style={{ color: '#888' }}>{r.sucursal}</td>
@@ -519,7 +626,6 @@ export default function PalletsPage() {
         {/* ── TAB RUTEADOR ── */}
         {tab === 'ruteador' && (
           <>
-            {/* Filtros */}
             <div className="bg-white rounded-xl shadow-sm p-4 flex gap-3 flex-wrap items-end">
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#666' }}>Fecha</label>
@@ -534,7 +640,6 @@ export default function PalletsPage() {
               </div>
             </div>
 
-            {/* Por chofer */}
             {cargandoRut ? (
               <div className="flex justify-center py-8">
                 <div className="w-5 h-5 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
@@ -562,7 +667,7 @@ export default function PalletsPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr style={{ background: '#fafafa' }}>
-                          {['Cliente', 'Sucursal', 'Sanos', 'Dañados', 'Rotos', 'Notas'].map(h => (
+                          {['Cliente', 'Sucursal', 'Sanos', 'Dañados', 'Rotos', 'Foto', 'Notas'].map(h => (
                             <th key={h} className="px-4 py-2 text-left text-xs font-semibold" style={{ color: '#888' }}>{h}</th>
                           ))}
                         </tr>
@@ -570,7 +675,7 @@ export default function PalletsPage() {
                       <tbody>
                         {rows.map(r => (
                           <tr key={r.id} className="border-t" style={{ borderColor: '#f5f5f5' }}>
-                            <td className="px-4 py-2.5 font-medium text-sm" style={{ color: '#1a1a1a' }}>{r.cliente}</td>
+                            <td className="px-4 py-2.5 font-medium text-sm" style={{ color: '#1a1a1a' }}>{r.cliente ?? <span style={{ color: '#B9BBB7' }}>Sin cliente</span>}</td>
                             <td className="px-4 py-2.5 text-xs" style={{ color: '#888' }}>{r.sucursal}</td>
                             <td className="px-4 py-2.5 text-sm font-bold text-center" style={{ color: r.sanos > 0 ? '#1a7a3c' : '#B9BBB7' }}>
                               {r.sanos > 0 ? r.sanos : '—'}
@@ -580,6 +685,11 @@ export default function PalletsPage() {
                             </td>
                             <td className="px-4 py-2.5 text-sm font-bold text-center" style={{ color: r.rotos > 0 ? '#E52322' : '#B9BBB7' }}>
                               {r.rotos > 0 ? r.rotos : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 text-center">
+                              {r.foto_url
+                                ? <img src={r.foto_url} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer inline-block border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(r.foto_url!)} />
+                                : <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>}
                             </td>
                             <td className="px-4 py-2.5 text-xs" style={{ color: '#888' }}>{r.notas ?? '—'}</td>
                           </tr>

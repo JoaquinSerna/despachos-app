@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import * as XLSX from 'xlsx'
 
 const CATEGORIAS = [
   'Accesorios','Adhesivos y Aditivos','Áridos','Cementos','Chapas',
@@ -346,6 +347,27 @@ export default function MaterialesPage() {
 
   const pendientes = aliases.filter(a => !a.resuelto)
   const resueltos  = aliases.filter(a => a.resuelto)
+
+  // ── Exportar maestro a Excel ──────────────────────────────────────────────────
+  function exportarMaestro() {
+    const filas = maestroFiltrado.map(m => ({
+      ID: m.id,
+      Nombre: m.nombre,
+      Categoría: m.categoria,
+      Subcategoría: m.subcategoria ?? '',
+      'Unidad base': m.unidad_base,
+      'Unidad logística': m.unidad_logistica,
+      'Cant x unid log': m.cant_x_unid_log,
+      'Posiciones x unid log': m.posiciones_x_unid_log,
+      'Peso kg x posición': m.peso_kg_x_posicion,
+      'Tipo de carga': m.tipo_carga,
+      Notas: m.notas ?? '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Maestro')
+    XLSX.writeFile(wb, `maestro_materiales_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
 
   const maestroFiltrado = useMemo(() => {
     if (!busquedaMaestro.trim()) return materiales
@@ -905,6 +927,12 @@ export default function MaterialesPage() {
                 className="flex-1 border rounded-xl px-3 py-2 text-sm focus:outline-none max-w-sm"
                 style={{ borderColor: '#e8edf8' }} />
               <span className="text-xs" style={{ color: '#B9BBB7' }}>{maestroFiltrado.length} materiales</span>
+              <button
+                onClick={exportarMaestro}
+                className="text-xs px-3 py-2 rounded-lg font-semibold ml-auto"
+                style={{ background: '#f0fdf4', color: '#065f46' }}>
+                📥 Exportar Excel
+              </button>
             </div>
             <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
               <table className="w-full text-sm">

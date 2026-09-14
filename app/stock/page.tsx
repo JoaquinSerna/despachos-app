@@ -28,6 +28,12 @@ interface ProductoStock {
   total: number
 }
 
+interface ComprometidoRow {
+  id_producto: number
+  sucursal: string
+  comprometido: number
+}
+
 function agrupar(rows: StockRow[]): ProductoStock[] {
   const map = new Map<number, ProductoStock>()
   for (const r of rows) {
@@ -61,6 +67,11 @@ export default function StockPage() {
   const [ultimoImport, setUltimoImport] = useState<string | null>(null)
   const [totalRows, setTotalRows] = useState(0)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Stock proyectado
+  const [verProyectado, setVerProyectado] = useState(false)
+  const [comprometido, setComprometido] = useState<Map<string, number>>(new Map())
+  const [cargandoProyectado, setCargandoProyectado] = useState(false)
 
   // Verificar sesión
   useEffect(() => {
@@ -119,6 +130,31 @@ export default function StockPage() {
     }
   }, [])
 
+  // Cargar datos de stock comprometido
+  const cargarProyectado = useCallback(async () => {
+    setCargandoProyectado(true)
+    try {
+      const res = await fetch('/api/stock-proyectado')
+      if (!res.ok) { setCargandoProyectado(false); return }
+      const data: ComprometidoRow[] = await res.json()
+      const map = new Map<string, number>()
+      for (const row of data) {
+        map.set(`${row.id_producto}|${row.sucursal}`, row.comprometido)
+      }
+      setComprometido(map)
+    } finally {
+      setCargandoProyectado(false)
+    }
+  }, [])
+
+  const toggleProyectado = useCallback(async () => {
+    const nuevo = !verProyectado
+    setVerProyectado(nuevo)
+    if (nuevo && comprometido.size === 0) {
+      await cargarProyectado()
+    }
+  }, [verProyectado, comprometido, cargarProyectado])
+
   // Disparar búsqueda con debounce en texto, inmediato en filtros
   useEffect(() => {
     if (verificando) return
@@ -137,6 +173,14 @@ export default function StockPage() {
     if (n === 0) return { color: '#B9BBB7' }
     if (n < 10) return { color: '#e88a00' }
     return { color: '#1a7a3c' }
+  }
+
+  // Color para stock proyectado
+  const proyectadoColor = (actual: number, comprometidoVal: number) => {
+    const proy = actual - comprometidoVal
+    if (proy <= 0) return { color: '#E52322' }   // rojo: sin stock proyectado
+    if (proy < 10) return { color: '#e88a00' }   // naranja: bajo
+    return { color: '#1a7a3c' }                   // verde: ok
   }
 
   if (verificando) return (
@@ -248,17 +292,51 @@ export default function StockPage() {
         ) : (
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">
             {/* Header */}
-            <div className="px-4 py-2.5 border-b flex items-center justify-between" style={{ borderColor: '#f0f0f0', background: '#f9f9f9' }}>
+            <div className="px-4 py-2.5 border-b flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: '#f0f0f0', background: '#f9f9f9' }}>
               <span className="text-xs font-medium" style={{ color: '#B9BBB7' }}>
                 {totalRows} producto{totalRows !== 1 ? 's' : ''}
                 {sucursalFiltro ? ` con stock en ${sucursalFiltro}` : ''}
               </span>
-              <div className="flex items-center gap-3">
-                <span className="text-xs" style={{ color: '#1a7a3c' }}>● disponible</span>
-                <span className="text-xs" style={{ color: '#e88a00' }}>● bajo (&lt;10)</span>
-                <span className="text-xs" style={{ color: '#B9BBB7' }}>● sin stock</span>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Leyenda colores */}
+                {verProyectado ? (
+                  <>
+                    <span className="text-xs" style={{ color: '#1a7a3c' }}>● proy. ok</span>
+                    <span className="text-xs" style={{ color: '#e88a00' }}>● proy. bajo</span>
+                    <span className="text-xs" style={{ color: '#E52322' }}>● proy. ≤0</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-xs" style={{ color: '#1a7a3c' }}>● disponible</span>
+                    <span className="text-xs" style={{ color: '#e88a00' }}>● bajo (&lt;10)</span>
+                    <span className="text-xs" style={{ color: '#B9BBB7' }}>● sin stock</span>
+                  </>
+                )}
+
+                {/* Toggle proyectado */}
+                <button
+                  onClick={toggleProyectado}
+                  disabled={cargandoProyectado}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold border transition-colors"
+                  style={verProyectado
+                    ? { background: '#254A96', color: '#fff', borderColor: '#254A96' }
+                    : { background: '#f5f6fa', color: '#254A96', borderColor: '#e8edf8' }}>
+                  {cargandoProyectado ? (
+                    <span className="w-3 h-3 border border-t-transparent rounded-full animate-spin inline-block" style={{ borderColor: verProyectado ? '#fff' : '#254A96', borderTopColor: 'transparent' }} />
+                  ) : '📊'}
+                  {verProyectado ? 'Stock proyectado' : 'Ver proyectado'}
+                </button>
               </div>
             </div>
+
+            {/* Aviso modo proyectado */}
+            {verProyectado && (
+              <div className="px-4 py-2 text-xs border-b" style={{ background: '#eef2ff', color: '#254A96', borderColor: '#c8d8f0' }}>
+                <strong>Modo proyectado:</strong> stock actual menos pedidos pendientes/programados con entrega hoy o posterior.
+                El número chico en gris es el comprometido. <span style={{ color: '#E52322' }}>Rojo</span> = sin stock proyectado.
+              </div>
+            )}
 
             {/* Tabla */}
             <div className="overflow-x-auto">
@@ -270,7 +348,7 @@ export default function StockPage() {
                     {SUCURSALES.map(s => (
                       <th key={s}
                         className="text-center px-3 py-2.5 text-xs font-semibold"
-                        style={{ color: sucursalFiltro === s ? '#254A96' : '#B9BBB7', minWidth: 80 }}>
+                        style={{ color: sucursalFiltro === s ? '#254A96' : '#B9BBB7', minWidth: verProyectado ? 90 : 80 }}>
                         {s}
                       </th>
                     ))}
@@ -278,7 +356,7 @@ export default function StockPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {productos.map((p, i) => (
+                  {productos.map((p) => (
                     <tr key={p.id_producto}
                       className="border-t hover:bg-gray-50 transition-colors"
                       style={{ borderColor: '#f0f0f0' }}>
@@ -291,19 +369,65 @@ export default function StockPage() {
                       <td className="px-3 py-3 hidden md:table-cell">
                         <span className="text-xs" style={{ color: '#666' }}>{p.categoria || '—'}</span>
                       </td>
-                      {SUCURSALES.map(s => (
-                        <td key={s} className="px-3 py-3 text-center">
-                          <span className="text-sm font-semibold tabular-nums"
-                            style={stockColor(p.stock[s])}>
-                            {p.stock[s] > 0 ? p.stock[s] : '—'}
-                          </span>
-                        </td>
-                      ))}
+                      {SUCURSALES.map(s => {
+                        const actual = p.stock[s]
+                        const comp = comprometido.get(`${p.id_producto}|${s}`) ?? 0
+                        const proy = actual - comp
+
+                        if (!verProyectado) {
+                          return (
+                            <td key={s} className="px-3 py-3 text-center">
+                              <span className="text-sm font-semibold tabular-nums"
+                                style={stockColor(actual)}>
+                                {actual > 0 ? actual : '—'}
+                              </span>
+                            </td>
+                          )
+                        }
+
+                        // Modo proyectado
+                        return (
+                          <td key={s} className="px-3 py-2 text-center">
+                            {/* Proyectado (grande) */}
+                            <span className="text-sm font-bold tabular-nums block leading-tight"
+                              style={actual === 0 ? { color: '#B9BBB7' } : proyectadoColor(actual, comp)}>
+                              {actual === 0 ? '—' : proy <= 0 ? '0' : proy}
+                            </span>
+                            {/* Comprometido (chico, gris) */}
+                            {actual > 0 && comp > 0 && (
+                              <span className="text-xs tabular-nums block leading-tight"
+                                style={{ color: '#B9BBB7' }}>
+                                -{comp}
+                              </span>
+                            )}
+                          </td>
+                        )
+                      })}
                       <td className="px-3 py-3 text-center">
-                        <span className="text-xs font-semibold tabular-nums"
-                          style={{ color: p.total > 0 ? '#254A96' : '#B9BBB7' }}>
-                          {p.total > 0 ? p.total : '—'}
-                        </span>
+                        {!verProyectado ? (
+                          <span className="text-xs font-semibold tabular-nums"
+                            style={{ color: p.total > 0 ? '#254A96' : '#B9BBB7' }}>
+                            {p.total > 0 ? p.total : '—'}
+                          </span>
+                        ) : (
+                          (() => {
+                            const totalComp = SUCURSALES.reduce((sum, s) => sum + (comprometido.get(`${p.id_producto}|${s}`) ?? 0), 0)
+                            const totalProy = p.total - totalComp
+                            return (
+                              <div className="text-center">
+                                <span className="text-xs font-bold tabular-nums block leading-tight"
+                                  style={{ color: totalProy <= 0 ? '#E52322' : totalProy < 10 ? '#e88a00' : '#254A96' }}>
+                                  {totalProy <= 0 ? '0' : totalProy}
+                                </span>
+                                {totalComp > 0 && (
+                                  <span className="text-xs tabular-nums block leading-tight" style={{ color: '#B9BBB7' }}>
+                                    -{totalComp}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })()
+                        )}
                       </td>
                     </tr>
                   ))}

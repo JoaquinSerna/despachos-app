@@ -144,6 +144,17 @@ export default function Dashboard() {
       showToast('Esta vuelta ya cerró para esa fecha. Elegí una franja disponible.', 'err')
       return
     }
+    // Verificar bloqueo manual del ruteador (candadito)
+    const { data: vcmData } = await supabase
+      .from('vueltas_cerradas_manual')
+      .select('vuelta')
+      .eq('fecha', fecha)
+      .eq('sucursal', p.sucursal)
+    const cerradasManual = (vcmData ?? []).map((r: any) => r.vuelta as number).filter((v: number) => v !== 0)
+    if (cerradasManual.includes(vuelta)) {
+      showToast('Esa vuelta está cerrada por logística. Elegí otra franja o contactalos.', 'err')
+      return
+    }
     const nota = `⚡ Reprogramado desde ${p.fecha_entrega} V${p.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const res = await fetch('/api/pedidos', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },

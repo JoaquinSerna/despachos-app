@@ -535,6 +535,23 @@ export default function ConfirmacionesPage() {
     if (!modalReprog || !reprogFecha) return
     const peds = modalReprog.pedidos
     setReprogGuardando(true)
+
+    // Verificar bloqueo manual del ruteador (candadito) antes de reprogramar
+    const sucursal = peds[0]?.sucursal
+    if (sucursal && reprogVuelta) {
+      const { data: vcmData } = await supabase
+        .from('vueltas_cerradas_manual')
+        .select('vuelta')
+        .eq('fecha', reprogFecha)
+        .eq('sucursal', sucursal)
+      const cerradasManual = (vcmData ?? []).map((r: any) => r.vuelta as number).filter((v: number) => v !== 0)
+      if (cerradasManual.includes(reprogVuelta)) {
+        showToast('Esa vuelta está cerrada por logística. Elegí otra franja o consultá con el ruteador.', 'err')
+        setReprogGuardando(false)
+        return
+      }
+    }
+
     const estadoConf: 'rechazado_cliente' | 'rechazado_cac' = reprogMotivo === 'cliente' ? 'rechazado_cliente' : 'rechazado_cac'
     const motivoLabel = reprogMotivo === 'cliente' ? 'a pedido del cliente' : 'reprogramado por CAC'
 

@@ -730,9 +730,12 @@ export default function RuteoPage() {
     const win = window.open('', '_blank')
     if (!win) return
 
-    // Consolidar totales
+    const pedidosNormales = pedidosVuelta.filter(p => !p._esTransfer)
+    const pedidosTransfer = pedidosVuelta.filter(p => p._esTransfer)
+
+    // Consolidar totales (solo pedidos normales)
     const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
-    pedidosVuelta.forEach(p => {
+    pedidosNormales.forEach(p => {
       ;(p.items ?? []).forEach(item => {
         if (!totales[item.nombre]) totales[item.nombre] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
         totales[item.nombre].cantidad += item.cantidad
@@ -742,7 +745,7 @@ export default function RuteoPage() {
     const fechaStr = new Date(fecha + 'T12:00:00').toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
 
     // Cada pedido = su propia <table> con page-break-inside:avoid
-    const tablasPorPedido = pedidosVuelta.map((p, idx) => {
+    const tablasPorPedido = pedidosNormales.map((p, idx) => {
       const items = p.items ?? []
       const num = p.orden_entrega ?? idx + 1
       const notaComercial = p.notas
@@ -770,6 +773,35 @@ export default function RuteoPage() {
       return `<table class="pedido"><thead><tr><th style="width:24px">#</th><th style="width:38%">Cliente / NV / Dirección</th><th>Material</th><th class="qty" style="width:60px">Cant.</th><th style="width:36px">U.</th></tr></thead><tbody>${primeraFila}${filasResto}</tbody></table>`
     }).join('')
 
+    // Sección de transferencias internas
+    const tablasTransfer = pedidosTransfer.length > 0 ? `
+      <div style="page-break-inside:avoid">
+        <h2 style="color:#047857;border-color:#047857">📦 Transferencias internas — ${pedidosTransfer.length} viaje${pedidosTransfer.length !== 1 ? 's' : ''}</h2>
+        ${pedidosTransfer.map(t => {
+          const items = t.items ?? []
+          const destino = t.direccion ?? t.cliente
+          return `<table class="pedido transfer"><thead><tr>
+            <th style="background:#047857">Destino</th>
+            <th style="background:#047857">NV / Nota</th>
+            <th style="background:#047857">Material</th>
+            <th class="qty" style="background:#047857;width:60px">Cant.</th>
+            <th style="background:#047857;width:36px">U.</th>
+          </tr></thead><tbody>
+            ${items.length === 0
+              ? `<tr><td rowspan="1" style="color:#047857;font-weight:bold">→ ${destino}</td><td style="color:#666">${t.nv || '—'}</td><td colspan="3" style="color:#999">Sin items</td></tr>`
+              : items.map((item: {nombre:string;cantidad:number;unidad:string}, i: number) => `<tr>
+                  ${i === 0 ? `<td rowspan="${items.length}" style="vertical-align:top;color:#047857;font-weight:bold">→ ${destino}</td><td rowspan="${items.length}" style="vertical-align:top;color:#666">${t.nv || '—'}${t.notas ? `<br><small>${t.notas}</small>` : ''}</td>` : ''}
+                  <td>${item.nombre}</td><td class="qty" style="color:#047857">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td>
+                </tr>`).join('')
+            }
+          </tbody></table>`
+        }).join('')}
+      </div>` : ''
+
+    const metaParts = []
+    if (pedidosNormales.length > 0) metaParts.push(`${pedidosNormales.length} entrega${pedidosNormales.length !== 1 ? 's' : ''}`)
+    if (pedidosTransfer.length > 0) metaParts.push(`${pedidosTransfer.length} transferencia${pedidosTransfer.length !== 1 ? 's' : ''}`)
+
     win.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
       <title>${camionSeleccionado} — V${vueltaActiva} — ${fecha}</title>
       <style>
@@ -778,6 +810,7 @@ export default function RuteoPage() {
         .meta{font-size:11px;color:#666;margin-bottom:14px}
         h2{font-size:12px;margin:14px 0 8px;color:#254A96;border-bottom:1px solid #ccc;padding-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
         table.pedido{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:11px;page-break-inside:avoid;table-layout:fixed}
+        table.transfer thead th{background:#047857!important}
         thead{display:table-header-group}
         th{background:#254A96;color:#fff;padding:5px 7px;text-align:left}
         td{padding:4px 7px;border-bottom:1px solid #eee;overflow:hidden}
@@ -786,17 +819,17 @@ export default function RuteoPage() {
         @media print{@page{margin:15mm}table.pedido{page-break-inside:avoid}}
       </style></head><body>
       <h1>🚛 ${camionSeleccionado} — Vuelta ${vueltaActiva} · ${VUELTA_LABEL[vueltaActiva!] ?? ''}</h1>
-      <p class="meta">${fechaStr} · ${pedidosVuelta.length} entregas</p>
+      <p class="meta">${fechaStr} · ${metaParts.join(' · ')}</p>
 
-      <h2>Detalle por entrega</h2>
-      ${tablasPorPedido}
+      ${pedidosNormales.length > 0 ? `<h2>Detalle por entrega</h2>${tablasPorPedido}` : ''}
+      ${tablasTransfer}
 
-      <h2 style="page-break-before:always">Materiales a preparar (total vuelta)</h2>
+      ${Object.values(totales).length > 0 ? `<h2 style="page-break-before:always">Materiales a preparar (total vuelta)</h2>
       <table class="totales"><thead><tr><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead><tbody>
         ${Object.values(totales).sort((a, b) => a.nombre.localeCompare(b.nombre)).map(t =>
           `<tr><td>${t.nombre}</td><td class="qty">${t.cantidad.toLocaleString('es-AR')}</td><td>${t.unidad}</td></tr>`
         ).join('')}
-      </tbody></table>
+      </tbody></table>` : ''}
       <script>window.onload=()=>window.print()</script>
       </body></html>`)
     win.document.close()
@@ -818,8 +851,9 @@ export default function RuteoPage() {
     const margenIzq = 14
     const ancho = 182
 
-    const pedidosEntrega = pedidosVuelta.filter(p => p.tipo !== 'retiro')
+    const pedidosEntrega = pedidosVuelta.filter(p => p.tipo !== 'retiro' && !p._esTransfer)
     const pedidosRetiroPDF = pedidosVuelta.filter(p => p.tipo === 'retiro')
+    const pedidosTransferPDF = pedidosVuelta.filter(p => p._esTransfer === true)
 
     // ── Encabezado ──
     doc.setFillColor(...azul)
@@ -832,9 +866,10 @@ export default function RuteoPage() {
     doc.setTextColor(...gris)
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
-    const subtitulo = pedidosRetiroPDF.length > 0
-      ? `${fechaStr} · ${pedidosEntrega.length} entregas · ${pedidosRetiroPDF.length} retiro${pedidosRetiroPDF.length !== 1 ? 's' : ''}`
-      : `${fechaStr} · ${pedidosEntrega.length} entregas`
+    const subtPartes = [`${pedidosEntrega.length} entrega${pedidosEntrega.length !== 1 ? 's' : ''}`]
+    if (pedidosRetiroPDF.length > 0) subtPartes.push(`${pedidosRetiroPDF.length} retiro${pedidosRetiroPDF.length !== 1 ? 's' : ''}`)
+    if (pedidosTransferPDF.length > 0) subtPartes.push(`${pedidosTransferPDF.length} transferencia${pedidosTransferPDF.length !== 1 ? 's' : ''}`)
+    const subtitulo = `${fechaStr} · ${subtPartes.join(' · ')}`
     doc.text(subtitulo, margenIzq, y)
     y += 8
 
@@ -1014,6 +1049,60 @@ export default function RuteoPage() {
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(...gris)
           doc.text(fila[2], margenIzq + ancho - 2, y + 4.2, { align: 'right' })
+          y += 6
+        })
+        y += 3
+      })
+    }
+
+    // ── Transferencias internas ──
+    if (pedidosTransferPDF.length > 0) {
+      if (y + 20 > 270) { doc.addPage(); y = 15 }
+      y += 4
+      const verde: [number, number, number] = [4, 120, 87]
+      const verdeClaro: [number, number, number] = [236, 253, 245]
+      doc.setFillColor(...verde)
+      doc.rect(margenIzq, y, ancho, 8, 'F')
+      doc.setTextColor(...blanco)
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'bold')
+      doc.text(`📦 TRANSFERENCIAS INTERNAS — ${pedidosTransferPDF.length} viaje${pedidosTransferPDF.length !== 1 ? 's' : ''}`, margenIzq + 3, y + 5.5)
+      y += 10
+
+      pedidosTransferPDF.forEach((t, idx) => {
+        const items = t.items ?? []
+        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
+        const destino = t.direccion ?? t.cliente
+        const alturaEstimada = 8 + filas.length * 6
+        if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
+
+        // Cabecera del viaje
+        doc.setFillColor(...verdeClaro)
+        doc.rect(margenIzq, y, ancho, 8, 'F')
+        doc.setTextColor(...verde)
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.text(`${idx + 1}. → ${destino}`, margenIzq + 2, y + 5.5)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(...gris)
+        doc.setFontSize(8)
+        doc.text(`NV ${t.nv}${t.notas ? ` · ${t.notas}` : ''}`, margenIzq + 60, y + 5.5)
+        y += 8
+
+        // Items del viaje
+        filas.forEach((fila: any[], i: number) => {
+          doc.setFillColor(i % 2 === 0 ? 255 : 240, i % 2 === 0 ? 255 : 253, i % 2 === 0 ? 255 : 245)
+          doc.rect(margenIzq, y, ancho, 6, 'F')
+          doc.setTextColor(30, 30, 30)
+          doc.setFontSize(8.5)
+          doc.setFont('helvetica', 'normal')
+          doc.text(String(fila[0]), margenIzq + 4, y + 4.2)
+          doc.setFont('helvetica', 'bold')
+          doc.setTextColor(...verde)
+          doc.text(String(fila[1]), margenIzq + ancho - 20, y + 4.2, { align: 'right' })
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(...gris)
+          doc.text(String(fila[2]), margenIzq + ancho - 2, y + 4.2, { align: 'right' })
           y += 6
         })
         y += 3

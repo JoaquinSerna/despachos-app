@@ -5,6 +5,7 @@ import { supabase } from '@/app/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { logAuditoria } from '@/app/lib/auditoria'
+import * as XLSX from 'xlsx'
 
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -276,6 +277,68 @@ export default function PalletsPage() {
     return `${d}/${m}/${y}`
   }
 
+  // ── Exportar ──────────────────────────────────────────────────────────────────
+  function exportarRegistros() {
+    const filas = registros.map(r => ({
+      Fecha: fmtFecha(r.fecha),
+      Cliente: r.cliente ?? '',
+      Chofer: r.chofer_nombre,
+      Sucursal: r.sucursal,
+      Sanos: r.sanos,
+      Dañados: r.daniados,
+      Rotos: r.rotos,
+      Notas: r.notas ?? '',
+      'Registrado por': r.registrado_por_nombre ?? '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Registros')
+    XLSX.writeFile(wb, `pallets_registros_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
+
+  function exportarReintegros() {
+    const filas = comData.map(r => ({
+      Fecha: fmtFecha(r.fecha),
+      Cliente: r.cliente ?? '',
+      'Pallets sanos': r.sanos,
+      Chofer: r.chofer_nombre,
+      Sucursal: r.sucursal,
+      Notas: r.notas ?? '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(filas)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Reintegros')
+    XLSX.writeFile(wb, `pallets_reintegros_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
+
+  function exportarPorChofer() {
+    // Una fila por registro con chofer incluido, más una hoja de totales por chofer
+    const detalle = rutData.map(r => ({
+      Chofer: r.chofer_nombre,
+      Fecha: fmtFecha(r.fecha),
+      Cliente: r.cliente ?? '',
+      Sucursal: r.sucursal,
+      Sanos: r.sanos,
+      Dañados: r.daniados,
+      Rotos: r.rotos,
+      Notas: r.notas ?? '',
+    }))
+    const totalesPorChofer = choferesList.map(nombre => {
+      const rows = rutData.filter(r => r.chofer_nombre === nombre)
+      return {
+        Chofer: nombre,
+        'Total sanos': rows.reduce((s, r) => s + r.sanos, 0),
+        'Total dañados': rows.reduce((s, r) => s + r.daniados, 0),
+        'Total rotos': rows.reduce((s, r) => s + r.rotos, 0),
+        'Total pallets': rows.reduce((s, r) => s + r.sanos + r.daniados + r.rotos, 0),
+      }
+    })
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(totalesPorChofer), 'Resumen')
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detalle), 'Detalle')
+    XLSX.writeFile(wb, `pallets_choferes_${new Date().toISOString().split('T')[0]}.xlsx`)
+  }
+
   const clienteObligatorio = cliente.trim().length > 0
 
   if (!rol) return (
@@ -494,9 +557,14 @@ export default function PalletsPage() {
 
             {/* Lista recientes */}
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-              <div className="px-4 py-3 border-b flex items-center justify-between" style={{ borderColor: '#f0f0f0' }}>
+              <div className="px-4 py-3 border-b flex items-center justify-between gap-3" style={{ borderColor: '#f0f0f0' }}>
                 <span className="font-semibold text-sm" style={{ color: '#254A96' }}>Últimos 30 días</span>
-                <span className="text-xs" style={{ color: '#B9BBB7' }}>{registros.length} registros</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs" style={{ color: '#B9BBB7' }}>{registros.length} registros</span>
+                  <button onClick={exportarRegistros} className="text-xs px-3 py-1.5 rounded-lg font-semibold" style={{ background: '#f0fdf4', color: '#065f46' }}>
+                    📥 Exportar
+                  </button>
+                </div>
               </div>
               {cargandoReg ? (
                 <div className="flex justify-center py-8">
@@ -569,11 +637,18 @@ export default function PalletsPage() {
                   placeholder="Nombre del cliente…"
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
               </div>
-              {totalSanos > 0 && (
-                <div className="ml-auto px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: '#d1fae5', color: '#1a7a3c' }}>
-                  Total: {totalSanos} pallets sanos
-                </div>
-              )}
+              <div className="ml-auto flex items-center gap-2">
+                {totalSanos > 0 && (
+                  <div className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: '#d1fae5', color: '#1a7a3c' }}>
+                    Total: {totalSanos} pallets sanos
+                  </div>
+                )}
+                {comData.length > 0 && (
+                  <button onClick={exportarReintegros} className="text-xs px-3 py-2 rounded-lg font-semibold" style={{ background: '#f0fdf4', color: '#065f46' }}>
+                    📥 Exportar
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm overflow-hidden">
@@ -645,6 +720,11 @@ export default function PalletsPage() {
                   placeholder="Nombre del chofer…"
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
               </div>
+              {rutData.length > 0 && (
+                <button onClick={exportarPorChofer} className="text-xs px-3 py-2 rounded-lg font-semibold self-end" style={{ background: '#f0fdf4', color: '#065f46' }}>
+                  📥 Exportar
+                </button>
+              )}
             </div>
 
             {cargandoRut ? (

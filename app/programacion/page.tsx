@@ -15,6 +15,7 @@ interface Pedido {
   latitud: number | null; longitud: number | null; barrio_cerrado?: boolean; prioridad?: boolean
   requiere_volcador?: boolean
   localidad?: string
+  created_at?: string
   items?: { nombre: string; cantidad: number; unidad: string }[]
 }
 interface Camion {
@@ -524,6 +525,25 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           ⚠️ Pedido grande — requiere separación
         </div>
       )}
+      {(() => {
+        if (!pedido.created_at || !pedido.fecha_entrega) return null
+        const creadoMs = new Date(pedido.created_at).getTime()
+        const entregaMs = new Date(pedido.fecha_entrega + 'T12:00:00').getTime()
+        const diasAntic = Math.round((entregaMs - creadoMs) / 86400000)
+        const diasHaceMs = Date.now() - creadoMs
+        const diasHace = Math.floor(diasHaceMs / 86400000)
+        let bg = '#d1fae5'; let color = '#065f46'
+        if (diasAntic <= 0) { bg = '#fde8e8'; color = '#E52322' }
+        else if (diasAntic <= 1) { bg = '#fef3c7'; color = '#b45309' }
+        const label = diasHace === 0 ? 'hoy' : diasHace === 1 ? 'ayer' : `hace ${diasHace}d`
+        const antics = diasAntic <= 0 ? 'mismo día' : diasAntic === 1 ? '1d de anticip.' : `${diasAntic}d de anticip.`
+        return (
+          <div className="text-xs mb-1.5 px-2 py-0.5 rounded-lg inline-flex items-center gap-1"
+            style={{ background: bg, color }}>
+            ⏱ Cargado {label} · {antics}
+          </div>
+        )
+      })()}
       <div className="flex items-start justify-between gap-2 mb-1">
         <span className="font-semibold text-xs leading-tight" style={{ color: '#254A96' }}>{pedido.cliente}</span>
         <div className="flex items-center gap-1 shrink-0">
@@ -1946,6 +1966,7 @@ function ProgramacionInner() {
   const [puedeEditarProg, setPuedeEditarProg] = useState(false)
   const [userId, setUserId] = useState('')
   const [userNombre, setUserNombre] = useState('')
+  const [userRol, setUserRol] = useState('')
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
@@ -1954,6 +1975,9 @@ function ProgramacionInner() {
         if (!data) return
         setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
         setUserNombre(data.nombre ?? '')
+        setUserRol(data.rol ?? '')
+        // Deposito: forzar tab de transferencias
+        if (data.rol === 'deposito') setVueltaActiva(VUELTA_TRANSFERENCIAS)
         // Pre-seleccionar sucursal del usuario si no viene por URL param
         if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
@@ -2235,7 +2259,7 @@ function ProgramacionInner() {
       tipo: 'transferencia',
       items: (req.requerimiento_items ?? []).map((it: any) => ({
         nombre: it.nombre_producto,
-        cantidad: it.cantidad_solicitada,
+        cantidad: it.cantidad_aprobada ?? it.cantidad_solicitada,
         unidad: '',
       })),
       prioridad: false,
@@ -2283,7 +2307,7 @@ function ProgramacionInner() {
     if (vueltaActiva === VUELTA_TRANSFERENCIAS) { setCargando(false); return }
     setCargando(true); setConfirmado(false)
     let q = supabase.from('pedidos')
-      .select('*, prioridad, barrio_cerrado')
+      .select('*, prioridad, barrio_cerrado, created_at')
       .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
       .in('estado', ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado']).order('cliente')
     q = vueltaActiva === VUELTA_FUERA ? q.eq('vuelta', 0) : q.eq('vuelta', vueltaActiva)
@@ -3127,7 +3151,7 @@ function ProgramacionInner() {
             </div>
           </div>
           <div className="flex gap-1.5 pb-3 flex-wrap items-center">
-            {VUELTAS.map(v => {
+            {VUELTAS.filter(v => userRol !== 'deposito' || v.num === VUELTA_TRANSFERENCIAS).map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
               const esTransferencias = v.num === VUELTA_TRANSFERENCIAS

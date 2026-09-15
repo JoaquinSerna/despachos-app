@@ -1938,6 +1938,7 @@ function ProgramacionInner() {
   const [contadorSinVuelta, setContadorSinVuelta] = useState(0)
   const [contadorTransferencias, setContadorTransferencias] = useState(0)
   const [transferencias, setTransferencias] = useState<any[]>([])
+  const [selTransfers, setSelTransfers] = useState<Set<string>>(new Set())
   const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
   const [recalculandoTodos, setRecalculandoTodos] = useState(false)
   const dragTransferRef = useRef<Pedido | null>(null)
@@ -2217,7 +2218,8 @@ function ProgramacionInner() {
           .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
       ])
       const data = await res.json()
-      const list = Array.isArray(data) ? data : []
+      // Solo mostrar transferencias sin programar (vuelta=0) en el tab de transferencias
+      const list = (Array.isArray(data) ? data : []).filter((r: any) => !r.vuelta || r.vuelta === 0)
       setTransferencias(list)
       setContadorTransferencias(list.length)
       // Cargar camiones para el kanban de transferencias
@@ -2249,8 +2251,8 @@ function ProgramacionInner() {
       vuelta: req.vuelta ?? 1,
       estado: req.estado,
       estado_pago: 'cuenta_corriente',
-      peso_total_kg: null,
-      volumen_total_m3: null,
+      peso_total_kg: req.peso_total_kg ?? null,
+      volumen_total_m3: req.volumen_total_m3 ?? null,
       notas: req.notas ?? null,
       camion_id: req.cod_vehiculo ?? null,
       orden_entrega: null,
@@ -2266,6 +2268,17 @@ function ProgramacionInner() {
       barrio_cerrado: false,
       requiere_volcador: false,
     }
+  }
+
+  async function asignarVueltaASeleccion(reqIds: string[], vuelta: number) {
+    await Promise.all(reqIds.map(id =>
+      fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta }) })
+    ))
+    setTransferencias(prev => prev.filter(r => !reqIds.includes(r.id)))
+    setSelTransfers(prev => { const s = new Set(prev); reqIds.forEach(id => s.delete(id)); return s })
+    setContadorTransferencias(prev => Math.max(0, prev - reqIds.length))
+    const label = vuelta === 5 ? 'DHora' : `V${vuelta}`
+    showToast(`${reqIds.length} transferencia${reqIds.length !== 1 ? 's' : ''} asignada${reqIds.length !== 1 ? 's' : ''} a ${label}`)
   }
 
   async function asignarCamionTransfer(reqId: string, codigoCamion: string | null) {
@@ -2340,7 +2353,7 @@ function ProgramacionInner() {
     }
     // Una sola consulta cubre flota propia + camiones de otras sucursales;
     // el contador de sin-vuelta corre en paralelo para no bloquear
-    const [{ data: allFd }, { count: cSinVuelta }] = await Promise.all([
+    const [{ data: allFd }, { count: cSinVuelta }, { data: reqVuelta }] = await Promise.all([
       supabase.from('flota_dia')
         .select('camion_codigo, sucursal, revisado, sucursal_extra, sucursal_extra_desde_vuelta')
         .eq('fecha', fecha).eq('activo', true)
@@ -2349,6 +2362,11 @@ function ProgramacionInner() {
         .select('id', { count: 'exact', head: true })
         .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
         .eq('vuelta', 0).in('estado', ['pendiente', 'programado']),
+      vueltaActiva > 0
+        ? supabase.from('requerimientos').select('*, requerimiento_items(*)')
+            .eq('fecha_solicitada', fecha).eq('sucursal_origen', sucursal)
+            .eq('vuelta', vueltaActiva).in('estado', ['pendiente', 'conf_stock', 'preparacion'])
+        : Promise.resolve({ data: [] as any[] }),
     ])
     const fd = (allFd ?? []).filter((f: any) => f.sucursal === sucursal)
     const fdExtra = (allFd ?? []).filter((f: any) => f.sucursal_extra === sucursal)
@@ -2451,7 +2469,9 @@ function ProgramacionInner() {
     }
 
     const conLocalidad = todosConItems.map((p: any) => ({ ...p, localidad: localidadDeDireccion(p.direccion) }))
-    setPedidos(conLocalidad); setCamiones(camsConAviso); construirColumnas(conLocalidad, camsConAviso); setCargando(false)
+    const transfersDeVuelta = (reqVuelta ?? []).map((r: any) => transferToPedido(r))
+    const conTodo = [...conLocalidad, ...transfersDeVuelta]
+    setPedidos(conTodo); setCamiones(camsConAviso); construirColumnas(conTodo, camsConAviso); setCargando(false)
     enrichLocalidades(conLocalidad)
   }
 
@@ -2626,10 +2646,14 @@ function ProgramacionInner() {
     e.preventDefault(); setDragOver(null)
     if (!dragPedido.current) return
     const dropped = dragPedido.current
-    const camionAnterior = dropped.camion_id
-    const id = dropped.id; dragPedido.current = null
-    const act = pedidos.map(p => p.id === id ? { ...p, camion_id: cod } : p)
+    dragPedido.current = null
+    const act = pedidos.map(p => p.id === dropped.id ? { ...p, camion_id: cod } : p)
     setPedidos(act); construirColumnas(act, camiones)
+    if (dropped.tipo === 'transferencia') {
+      asignarCamionTransfer(dropped.id, cod)
+      return
+    }
+    const camionAnterior = dropped.camion_id
     if (userId) {
       const accion = cod ? 'Asignó camión' : 'Desasignó camión'
       logAuditoria(userId, userNombre, accion, 'Programación', { pedido_nv: dropped.nv, cliente: dropped.cliente, camion_anterior: camionAnterior, camion_nuevo: cod })
@@ -2639,8 +2663,8 @@ function ProgramacionInner() {
   async function handleConfirmar() {
     setGuardando(true)
 
-    // Solo operar sobre pedidos en estados editables; ignorar en_camino, entregado, etc.
-    const editables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+    // Solo operar sobre pedidos en estados editables; ignorar transfers, en_camino, entregado, etc.
+    const editables = pedidos.filter(p => p.tipo !== 'transferencia' && (p.estado === 'pendiente' || p.estado === 'programado'))
     const asignados = editables.filter(p => p.camion_id)
     const sinCamion = editables.filter(p => !p.camion_id)
 
@@ -2748,6 +2772,15 @@ function ProgramacionInner() {
 
   async function handleEditarPeso(id: string, peso: number, posiciones: number) {
     const pedido = pedidos.find(p => p.id === id)
+    if (pedido?.tipo === 'transferencia') {
+      try {
+        await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, peso_total_kg: peso, volumen_total_m3: posiciones }) })
+        const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones } : p)
+        setPedidos(act); construirColumnas(act, camiones)
+        showToast('Peso y posiciones actualizados')
+      } catch { showToast('Error al actualizar', 'err') }
+      return
+    }
     try {
       await patchPedido(id, { peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false })
       const act = pedidos.map(p => p.id === id ? { ...p, peso_total_kg: peso, volumen_total_m3: posiciones, pedido_grande: false } : p)
@@ -2931,6 +2964,15 @@ function ProgramacionInner() {
 
   async function handleCancelar(id: string) {
     const pedido = pedidos.find(p => p.id === id)
+    if (pedido?.tipo === 'transferencia') {
+      try {
+        await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, estado: 'rechazado' }) })
+        const act = pedidos.filter(p => p.id !== id)
+        setPedidos(act); construirColumnas(act, camiones)
+        showToast('Transferencia cancelada')
+      } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+      return
+    }
     try {
       const res = await fetch('/api/pedidos', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
       const data = await res.json()
@@ -2944,6 +2986,16 @@ function ProgramacionInner() {
 
   async function handleCambiarVuelta(id: string, nuevaVuelta: number) {
     const pedido = pedidos.find(p => p.id === id)
+    if (pedido?.tipo === 'transferencia') {
+      try {
+        await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta: nuevaVuelta, cod_vehiculo: null }) })
+        const act = pedidos.filter(p => p.id !== id)
+        setPedidos(act); construirColumnas(act, camiones)
+        if (nuevaVuelta === 0) { cargarTransferencias(); showToast('Transferencia devuelta a sin programar') }
+        else showToast(`Transferencia movida a V${nuevaVuelta}`)
+      } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+      return
+    }
     try {
       await patchPedido(id, { vuelta: nuevaVuelta, camion_id: null, estado: 'pendiente' })
       const act = pedidos.filter(p => p.id !== id)
@@ -2957,7 +3009,7 @@ function ProgramacionInner() {
     if (!reprogVueltaFecha) return
 
     // Solo reprogramar pedidos activos (excluir finalizados: en_camino, entregado, etc.)
-    const activos = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+    const activos = pedidos.filter(p => p.tipo !== 'transferencia' && (p.estado === 'pendiente' || p.estado === 'programado'))
     const aReprogramar = camionParaReprog
       ? activos.filter(p => p.camion_id === camionParaReprog)
       : activos
@@ -3003,6 +3055,16 @@ function ProgramacionInner() {
   async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = pedidos.find(p => p.id === id)
     if (!pedido) return
+    if (pedido.tipo === 'transferencia') {
+      try {
+        await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, fecha_solicitada: fecha, vuelta: 0, cod_vehiculo: null }) })
+        const act = pedidos.filter(p => p.id !== id)
+        setPedidos(act); construirColumnas(act, camiones)
+        cargarTransferencias()
+        showToast('Transferencia reprogramada')
+      } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
+      return
+    }
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
     try {
@@ -3388,77 +3450,130 @@ function ProgramacionInner() {
         />
 
         {vueltaActiva === VUELTA_TRANSFERENCIAS ? (
-          /* ── Vista transferencias: kanban igual al principal ── */
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="px-4 py-2 flex items-center gap-3 shrink-0" style={{ borderBottom: '1px solid #f0f0f0' }}>
+          /* ── Vista transferencias: agrupada por destino ── */
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex items-center gap-3 mb-4">
               <p className="text-xs font-medium" style={{ color: '#B9BBB7' }}>
-                {transferencias.length} transferencia{transferencias.length !== 1 ? 's' : ''} pendiente{transferencias.length !== 1 ? 's' : ''} desde {sucursal}
+                {transferencias.length} transferencia{transferencias.length !== 1 ? 's' : ''} sin programar desde {sucursal}
               </p>
-              <button onClick={cargarTransferencias} className="text-xs px-3 py-1.5 rounded-lg" style={{ color: '#ea580c', background: '#fff7ed' }}>
+              <button onClick={() => { cargarTransferencias(); setSelTransfers(new Set()) }}
+                className="text-xs px-3 py-1.5 rounded-lg" style={{ color: '#ea580c', background: '#fff7ed' }}>
                 Actualizar
               </button>
             </div>
             {transferencias.length === 0 ? (
-              <div className="flex flex-col items-center justify-center flex-1" style={{ color: '#B9BBB7' }}>
+              <div className="flex flex-col items-center justify-center py-24" style={{ color: '#B9BBB7' }}>
                 <div className="text-4xl mb-3">🔄</div>
                 <p>No hay transferencias pendientes desde {sucursal}</p>
+                <p className="text-xs mt-1">Las transferencias asignadas a una vuelta aparecen en esa vuelta del kanban</p>
               </div>
-            ) : (
-              <div className="flex-1 overflow-hidden flex gap-2 p-4">
-                {/* Sin asignar — fija a la izquierda */}
-                <div className="shrink-0 h-full" style={{ zIndex: 10 }}>
-                  <ColumnaCamion sinAsignar esTransferencia
-                    columna={{ camion: { codigo: '', sucursal, tipo_unidad: '', posiciones_total: 0, tonelaje_max_kg: 0, grua_hidraulica: false, volcador: false }, pedidos: transferencias.filter((r: any) => !r.cod_vehiculo).map(transferToPedido), pesoTotal: 0, posTotal: 0 }}
-                    onDrop={(e) => { e.preventDefault(); if (dragTransferRef.current) { asignarCamionTransfer(dragTransferRef.current.id, null); dragTransferRef.current = null } setDragOver(null) }}
-                    onDragOver={(e) => { e.preventDefault(); setDragOver('__sin_asignar_transfer__') }}
-                    onDragLeave={() => setDragOver(null)}
-                    onDragStart={(e, p) => { dragTransferRef.current = p; e.dataTransfer.effectAllowed = 'move' }}
-                    isDragOver={dragOver === '__sin_asignar_transfer__'}
-                    onCancelar={cancelarTransfer}
-                    onCambiarVuelta={cambiarVueltaTransfer}
-                    onReprogramar={reprogramarTransfer}
-                    onEditarPeso={() => {}}
-                    onRecalcularPosiciones={() => {}}
-                    onToggleVolcador={() => {}}
-                    onSepararPedido={() => {}}
-                    onMoverSucursal={() => {}}
-                    onIncidenciaStock={() => {}}
-                    soloVer={!puedeEditarProg}
-                  />
-                </div>
-                <div className="w-px shrink-0 self-stretch" style={{ background: '#e8edf8' }} />
-                {/* Columnas por camión */}
-                <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
-                  <div className="flex gap-2 h-full pr-2">
-                    {camionesTransfer.map(c => (
-                      <ColumnaCamion key={c.codigo} esTransferencia
-                        columna={{ camion: c, pedidos: transferencias.filter((r: any) => r.cod_vehiculo === c.codigo).map(transferToPedido), pesoTotal: 0, posTotal: 0 }}
-                        onDrop={(e) => { e.preventDefault(); if (dragTransferRef.current) { asignarCamionTransfer(dragTransferRef.current.id, c.codigo); dragTransferRef.current = null } setDragOver(null) }}
-                        onDragOver={(e) => { e.preventDefault(); setDragOver(c.codigo + '__transfer__') }}
-                        onDragLeave={() => setDragOver(null)}
-                        onDragStart={(e, p) => { dragTransferRef.current = p; e.dataTransfer.effectAllowed = 'move' }}
-                        isDragOver={dragOver === c.codigo + '__transfer__'}
-                        onCancelar={cancelarTransfer}
-                        onCambiarVuelta={cambiarVueltaTransfer}
-                        onReprogramar={reprogramarTransfer}
-                        onEditarPeso={() => {}}
-                        onRecalcularPosiciones={() => {}}
-                        onToggleVolcador={() => {}}
-                        onSepararPedido={() => {}}
-                        onMoverSucursal={() => {}}
-                        onIncidenciaStock={() => {}}
-                        soloVer={!puedeEditarProg}
-                      />
-                    ))}
-                    {camionesTransfer.length === 0 && (
-                      <div className="flex flex-col items-center justify-center flex-1 py-16" style={{ color: '#B9BBB7' }}>
-                        <p className="text-sm">No hay camiones activos para {sucursal} hoy</p>
-                      </div>
-                    )}
+            ) : (() => {
+              const grupos: Record<string, any[]> = {}
+              transferencias.forEach(r => {
+                const dest = r.sucursal_destino ?? 'Sin destino'
+                if (!grupos[dest]) grupos[dest] = []
+                grupos[dest].push(r)
+              })
+              return Object.entries(grupos).map(([destino, reqs]) => {
+                const selEnGrupo = reqs.filter(r => selTransfers.has(r.id))
+                const todosSeleccionados = selEnGrupo.length === reqs.length
+                const toggleGrupo = () => {
+                  setSelTransfers(prev => {
+                    const s = new Set(prev)
+                    if (todosSeleccionados) reqs.forEach(r => s.delete(r.id))
+                    else reqs.forEach(r => s.add(r.id))
+                    return s
+                  })
+                }
+                return (
+                  <div key={destino} className="mb-4 rounded-xl overflow-hidden" style={{ border: '1px solid #e8edf8' }}>
+                    {/* Header del grupo */}
+                    <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap"
+                      style={{ background: '#f8f9fc', borderBottom: '1px solid #e8edf8' }}>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={todosSeleccionados} onChange={toggleGrupo}
+                          className="w-4 h-4 rounded" style={{ accentColor: '#ea580c' }} />
+                        <span className="text-sm font-semibold" style={{ color: '#254A96' }}>→ {destino}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium"
+                          style={{ background: '#fff7ed', color: '#ea580c' }}>
+                          {reqs.length} transfer{reqs.length !== 1 ? 'encias' : 'encia'}
+                        </span>
+                      </label>
+                      {selEnGrupo.length > 0 && puedeEditarProg && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs" style={{ color: '#B9BBB7' }}>Asignar {selEnGrupo.length} a:</span>
+                          {[1, 2, 3, 4].map(v => (
+                            <button key={v} onClick={() => asignarVueltaASeleccion(selEnGrupo.map(r => r.id), v)}
+                              className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
+                              style={{ background: '#e8edf8', color: '#254A96' }}>
+                              V{v}
+                            </button>
+                          ))}
+                          <button onClick={() => asignarVueltaASeleccion(selEnGrupo.map(r => r.id), 5)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"
+                            style={{ background: '#f0f9ff', color: '#0369a1' }}>
+                            DHora
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {/* Items del grupo */}
+                    {reqs.map((req, idx) => {
+                      const isSel = selTransfers.has(req.id)
+                      const items: any[] = req.requerimiento_items ?? []
+                      return (
+                        <div key={req.id}
+                          className="px-4 py-3 flex items-start gap-3 transition-colors"
+                          style={{
+                            background: isSel ? '#fff7ed' : 'white',
+                            borderTop: idx > 0 ? '1px solid #f0f0f0' : undefined,
+                          }}>
+                          <input type="checkbox" checked={isSel}
+                            onChange={() => setSelTransfers(prev => {
+                              const s = new Set(prev)
+                              isSel ? s.delete(req.id) : s.add(req.id)
+                              return s
+                            })}
+                            className="mt-0.5 w-4 h-4 shrink-0 cursor-pointer" style={{ accentColor: '#ea580c' }} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <span className="text-xs font-semibold" style={{ color: '#254A96' }}>
+                                NV {req.nv || '—'}
+                              </span>
+                              {req.cliente && (
+                                <span className="text-xs" style={{ color: '#666' }}>{req.cliente}</span>
+                              )}
+                              {req.fecha_solicitada && (
+                                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: '#f0f0f0', color: '#666' }}>
+                                  {req.fecha_solicitada}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                              {items.map((it: any, i: number) => (
+                                <span key={i} className="text-xs" style={{ color: '#444' }}>
+                                  {it.nombre_producto}: <strong>{it.cantidad_aprobada ?? it.cantidad_solicitada}</strong>
+                                </span>
+                              ))}
+                            </div>
+                            {(req.peso_total_kg || req.volumen_total_m3) && (
+                              <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
+                                {req.peso_total_kg ? `${req.peso_total_kg} kg` : ''}
+                                {req.peso_total_kg && req.volumen_total_m3 ? ' · ' : ''}
+                                {req.volumen_total_m3 ? `${req.volumen_total_m3} pos.` : ''}
+                              </p>
+                            )}
+                            {req.notas && (
+                              <p className="text-xs mt-0.5 italic" style={{ color: '#B9BBB7' }}>{req.notas}</p>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                </div>
-              </div>
-            )}
+                )
+              })
+            })()}
           </div>
         ) : cargando ? (
           <div className="flex justify-center py-24">

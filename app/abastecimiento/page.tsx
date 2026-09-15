@@ -1679,6 +1679,13 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
     const data = await res.json()
     setGuardando(false)
     if (!data.success) { showToast(`Error: ${data.error}`, 'err'); return }
+    // Recalcular peso/posiciones desde maestro de productos cuando hay items aprobados
+    if (items_update.length > 0 || nuevoEstado === 'conf_stock') {
+      fetch('/api/recalcular-posiciones', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requerimiento_id: req.id }),
+      }).catch(() => {})
+    }
     showToast(`Estado actualizado: ${ESTADO_LABEL[nuevoEstado]}`)
     setExpanded(false)
     onUpdated()

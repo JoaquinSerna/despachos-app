@@ -2220,6 +2220,26 @@ function ProgramacionInner() {
       const data = await res.json()
       // Solo mostrar transferencias sin programar (vuelta=0) en el tab de transferencias
       const list = (Array.isArray(data) ? data : []).filter((r: any) => !r.vuelta || r.vuelta === 0)
+
+      // Auto-calcular peso/posiciones para transfers que aún no lo tienen
+      const sinPeso = list.filter((r: any) => r.peso_total_kg == null && (r.requerimiento_items ?? []).length > 0)
+      if (sinPeso.length > 0) {
+        const resp = await fetch('/api/recalcular-posiciones', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requerimiento_ids: sinPeso.map((r: any) => r.id) }),
+        })
+        if (resp.ok) {
+          const { resultados } = await resp.json()
+          const calcMap: Record<string, { posiciones: number; peso_kg: number }> = {}
+          for (const r of resultados ?? []) calcMap[r.id] = r
+          for (const tr of list) {
+            if (calcMap[tr.id]) {
+              tr.peso_total_kg = calcMap[tr.id].peso_kg
+              tr.volumen_total_m3 = calcMap[tr.id].posiciones
+            }
+          }
+        }
+      }
       setTransferencias(list)
       setContadorTransferencias(list.length)
       // Cargar camiones para el kanban de transferencias

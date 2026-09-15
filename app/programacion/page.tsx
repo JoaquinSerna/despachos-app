@@ -3497,6 +3497,10 @@ function ProgramacionInner() {
               return Object.entries(grupos).map(([destino, reqs]) => {
                 const selEnGrupo = reqs.filter(r => selTransfers.has(r.id))
                 const todosSeleccionados = selEnGrupo.length === reqs.length
+                const totalPesoGrupo = reqs.reduce((s, r: any) => s + (r.peso_total_kg ?? 0), 0)
+                const totalPosGrupo = reqs.reduce((s, r: any) => s + (r.volumen_total_m3 ?? 0), 0)
+                const totalPesoSel = selEnGrupo.reduce((s, r: any) => s + (r.peso_total_kg ?? 0), 0)
+                const totalPosSel = selEnGrupo.reduce((s, r: any) => s + (r.volumen_total_m3 ?? 0), 0)
                 const toggleGrupo = () => {
                   setSelTransfers(prev => {
                     const s = new Set(prev)
@@ -3510,7 +3514,7 @@ function ProgramacionInner() {
                     {/* Header del grupo */}
                     <div className="px-4 py-3 flex items-center justify-between gap-2 flex-wrap"
                       style={{ background: '#f8f9fc', borderBottom: '1px solid #e8edf8' }}>
-                      <label className="flex items-center gap-2 cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer flex-wrap">
                         <input type="checkbox" checked={todosSeleccionados} onChange={toggleGrupo}
                           className="w-4 h-4 rounded" style={{ accentColor: '#ea580c' }} />
                         <span className="text-sm font-semibold" style={{ color: '#254A96' }}>→ {destino}</span>
@@ -3518,9 +3522,23 @@ function ProgramacionInner() {
                           style={{ background: '#fff7ed', color: '#ea580c' }}>
                           {reqs.length} transfer{reqs.length !== 1 ? 'encias' : 'encia'}
                         </span>
+                        {(totalPesoGrupo > 0 || totalPosGrupo > 0) && (
+                          <span className="text-xs font-medium" style={{ color: '#555' }}>
+                            {totalPesoGrupo > 0 ? `${totalPesoGrupo.toLocaleString('es-AR')} kg` : ''}
+                            {totalPesoGrupo > 0 && totalPosGrupo > 0 ? ' · ' : ''}
+                            {totalPosGrupo > 0 ? `${totalPosGrupo} pos.` : ''}
+                          </span>
+                        )}
                       </label>
                       {selEnGrupo.length > 0 && puedeEditarProg && (
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {(totalPesoSel > 0 || totalPosSel > 0) && (
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded" style={{ background: '#fff7ed', color: '#ea580c' }}>
+                              {totalPesoSel > 0 ? `${totalPesoSel.toLocaleString('es-AR')} kg` : ''}
+                              {totalPesoSel > 0 && totalPosSel > 0 ? ' · ' : ''}
+                              {totalPosSel > 0 ? `${totalPosSel} pos.` : ''}
+                            </span>
+                          )}
                           <span className="text-xs" style={{ color: '#B9BBB7' }}>Asignar {selEnGrupo.length} a:</span>
                           {[1, 2, 3, 4].map(v => (
                             <button key={v} onClick={() => asignarVueltaASeleccion(selEnGrupo.map(r => r.id), v)}
@@ -3577,8 +3595,12 @@ function ProgramacionInner() {
                               ))}
                             </div>
                             {(req.peso_total_kg || req.volumen_total_m3) && (
-                              <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
-                                {req.peso_total_kg ? `${req.peso_total_kg} kg` : ''}
+                              <p className="text-xs mt-0.5 font-medium" style={{ color: '#555' }}>
+                                {req.peso_total_kg
+                                  ? req.peso_total_kg >= 1000
+                                    ? `${(req.peso_total_kg / 1000).toFixed(2)} t`
+                                    : `${req.peso_total_kg} kg`
+                                  : ''}
                                 {req.peso_total_kg && req.volumen_total_m3 ? ' · ' : ''}
                                 {req.volumen_total_m3 ? `${req.volumen_total_m3} pos.` : ''}
                               </p>

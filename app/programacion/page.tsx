@@ -15,6 +15,7 @@ interface Pedido {
   latitud: number | null; longitud: number | null; barrio_cerrado?: boolean; prioridad?: boolean
   requiere_volcador?: boolean
   localidad?: string
+  created_at?: string
   items?: { nombre: string; cantidad: number; unidad: string }[]
 }
 interface Camion {
@@ -66,7 +67,7 @@ function vueltasDisponibles(fecha: string): number[] {
   const horaActual = new Date().getHours()
   return sinSabado.filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
 }
-const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado'])
+const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado', 'en_camino'])
 function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }
 function posColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.volumen_total_m3 ?? 0), 0) }
 function pct(peso: number, max: number) { return max === 0 ? 0 : Math.round(peso / max * 100) }
@@ -524,6 +525,25 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
           ⚠️ Pedido grande — requiere separación
         </div>
       )}
+      {(() => {
+        if (!pedido.created_at || !pedido.fecha_entrega) return null
+        const creadoMs = new Date(pedido.created_at).getTime()
+        const entregaMs = new Date(pedido.fecha_entrega + 'T12:00:00').getTime()
+        const diasAntic = Math.round((entregaMs - creadoMs) / 86400000)
+        const diasHaceMs = Date.now() - creadoMs
+        const diasHace = Math.floor(diasHaceMs / 86400000)
+        let bg = '#d1fae5'; let color = '#065f46'
+        if (diasAntic <= 0) { bg = '#fde8e8'; color = '#E52322' }
+        else if (diasAntic <= 1) { bg = '#fef3c7'; color = '#b45309' }
+        const label = diasHace === 0 ? 'hoy' : diasHace === 1 ? 'ayer' : `hace ${diasHace}d`
+        const antics = diasAntic <= 0 ? 'mismo día' : diasAntic === 1 ? '1d de anticip.' : `${diasAntic}d de anticip.`
+        return (
+          <div className="text-xs mb-1.5 px-2 py-0.5 rounded-lg inline-flex items-center gap-1"
+            style={{ background: bg, color }}>
+            ⏱ Cargado {label} · {antics}
+          </div>
+        )
+      })()}
       <div className="flex items-start justify-between gap-2 mb-1">
         <span className="font-semibold text-xs leading-tight" style={{ color: '#254A96' }}>{pedido.cliente}</span>
         <div className="flex items-center gap-1 shrink-0">
@@ -936,7 +956,13 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
   const maxDistKm = !sinAsignar && deposito
     ? Math.max(0, ...pedidos.filter(p => p.latitud && p.longitud).map(p => distanciaKm(deposito.lat, deposito.lng, p.latitud!, p.longitud!)))
     : 0
-  const maxVueltas = maxDistKm > 0 ? maxVueltasPorDistancia(maxDistKm) : null
+  const esGrua = !sinAsignar && !!(camion as any).grua_hidraulica
+  const maxVueltas = maxDistKm > 0
+    ? Math.min(
+        maxVueltasPorDistancia(maxDistKm),
+        maxVueltasPorTiempo(maxDistKm, posTotal, pedidos.length, esGrua)
+      )
+    : null
   const w = isExpanded ? 360 : 220
   return (
     <div onDrop={e => onDrop(e, sinAsignar ? null : camion.codigo)}
@@ -945,9 +971,10 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
         width: w, minWidth: w,
-        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : '#f0f0f0'}`,
-        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : '#f9f9f9',
+        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#e0e0e0' : '#f0f0f0'}`,
+        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#f0f0f0' : '#f9f9f9',
         boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : bloqueado ? '0 0 0 2px rgba(245,158,11,0.15)' : 'none',
+        opacity: (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? 0.65 : 1,
       }}>
       <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
@@ -975,6 +1002,12 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                   <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#f5f3ff', color: '#7c3aed' }}
                     title={`Viene de ${(camion as any)._desde_sucursal}, disponible desde V${(camion as any)._disponible_desde_vuelta ?? 2}`}>
                     🔀 {(camion as any)._desde_sucursal} V{(camion as any)._disponible_desde_vuelta ?? 2}+
+                  </span>
+                )}
+                {(camion as any)._sale_a_sucursal && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#fde8e8', color: '#E52322' }}
+                    title={`Va a ${(camion as any)._sale_a_sucursal} desde V${(camion as any)._sale_desde_vuelta ?? 2}`}>
+                    🔀 → {(camion as any)._sale_a_sucursal} V{(camion as any)._sale_desde_vuelta ?? 2}+
                   </span>
                 )}
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
@@ -1056,6 +1089,31 @@ function maxVueltasPorDistancia(distKm: number): number {
   if (distKm < 50) return 3
   if (distKm < 100) return 2
   return 1
+}
+
+// Jornada laboral y demora de recarga en depósito (en horas)
+const JORNADA_H = 9
+const RECARGA_H = 40 / 60
+
+/**
+ * Cap de vueltas basado en el tiempo estimado de la vuelta.
+ * @param maxDistKm  distancia en línea recta al pedido más lejano (km)
+ * @param posTotal   m3 totales de la vuelta (volumen_total_m3 acumulado)
+ * @param numStops   cantidad de pedidos/paradas de la vuelta
+ * @param esGrua     el camión tiene grúa hidráulica (descarga más lenta por parada)
+ */
+function maxVueltasPorTiempo(maxDistKm: number, posTotal: number, numStops: number, esGrua: boolean): number {
+  const VEL_KMH = 25
+  const FACTOR_RUTA = 1.5          // factor crow-flies → distancia real de ruta
+  const MIN_POR_POS = esGrua ? 8 : 3   // min por m3 de pallet: grúa es más lenta
+  const MIN_POR_PARADA = 5
+
+  const trasladoMin = (maxDistKm * FACTOR_RUTA / VEL_KMH) * 60
+  const descargaMin = posTotal * MIN_POR_POS + numStops * MIN_POR_PARADA
+  const totalHoras = (trasladoMin + descargaMin) / 60
+
+  if (totalHoras <= 0) return 4
+  return Math.max(1, Math.floor((JORNADA_H + RECARGA_H) / (totalHoras + RECARGA_H)))
 }
 
 function calcularOrdenRuta(pedidos: Pedido[], sucursal: string, ordenGoogle?: Record<string, number>): Record<string, number> {
@@ -1899,7 +1957,7 @@ function ProgramacionInner() {
   })
   const enrichGenRef = useRef(0)
   // Guarda la última sugerencia IA para comparar con la confirmación final
-  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string } | null>(null)
+  const ultimaSugerenciaRef = useRef<{ asigs: Record<string, string | null>; timestamp: string; engine: string; payloadResumen: any } | null>(null)
   // Orden de visitas optimizado devuelto por Google Route Opt (pedido_id → posición en ruta)
   const ordenGoogleRef = useRef<Record<string, number>>({})
 
@@ -1908,6 +1966,7 @@ function ProgramacionInner() {
   const [puedeEditarProg, setPuedeEditarProg] = useState(false)
   const [userId, setUserId] = useState('')
   const [userNombre, setUserNombre] = useState('')
+  const [userRol, setUserRol] = useState('')
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
@@ -1916,6 +1975,9 @@ function ProgramacionInner() {
         if (!data) return
         setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
         setUserNombre(data.nombre ?? '')
+        setUserRol(data.rol ?? '')
+        // Deposito: forzar tab de transferencias
+        if (data.rol === 'deposito') setVueltaActiva(VUELTA_TRANSFERENCIAS)
         // Pre-seleccionar sucursal del usuario si no viene por URL param
         if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
@@ -2197,7 +2259,7 @@ function ProgramacionInner() {
       tipo: 'transferencia',
       items: (req.requerimiento_items ?? []).map((it: any) => ({
         nombre: it.nombre_producto,
-        cantidad: it.cantidad_solicitada,
+        cantidad: it.cantidad_aprobada ?? it.cantidad_solicitada,
         unidad: '',
       })),
       prioridad: false,
@@ -2245,7 +2307,7 @@ function ProgramacionInner() {
     if (vueltaActiva === VUELTA_TRANSFERENCIAS) { setCargando(false); return }
     setCargando(true); setConfirmado(false)
     let q = supabase.from('pedidos')
-      .select('*, prioridad, barrio_cerrado')
+      .select('*, prioridad, barrio_cerrado, created_at')
       .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
       .in('estado', ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado']).order('cliente')
     q = vueltaActiva === VUELTA_FUERA ? q.eq('vuelta', 0) : q.eq('vuelta', vueltaActiva)
@@ -2311,10 +2373,17 @@ function ProgramacionInner() {
     // Enriquecer con metadata de sucursal extra y ordenar por código
     const cams = (cd ?? [])
       .map((c: any) => {
-        const extra = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
-        return extra
-          ? { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
-          : c
+        const extra  = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
+        const propio = fd.find((f: any) => f.camion_codigo === c.codigo)
+        if (extra) {
+          // Camión que viene de otra sucursal: disponible desde vuelta X
+          return { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
+        }
+        if (propio?.sucursal_extra) {
+          // Camión local que se va a otra sucursal desde vuelta X
+          return { ...c, _sale_a_sucursal: propio.sucursal_extra, _sale_desde_vuelta: propio.sucursal_extra_desde_vuelta ?? 2 }
+        }
+        return c
       })
       .sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
     setFlotaSinRevisar(flotaSinRevisar)
@@ -2408,10 +2477,13 @@ function ProgramacionInner() {
       await new Promise<void>(r => setTimeout(r, 1100))
       if (enrichGenRef.current !== gen) return
       try {
+        const ctrl = new AbortController()
+        const tid = setTimeout(() => ctrl.abort(), 5000)
         const res = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`,
-          { headers: { 'User-Agent': 'despachos-app' } }
+          { headers: { 'User-Agent': 'despachos-app' }, signal: ctrl.signal }
         )
+        clearTimeout(tid)
         const data = await res.json()
         const loc: string = data.address?.city || data.address?.town || data.address?.village || data.address?.suburb || ''
         if (!loc || enrichGenRef.current !== gen) continue
@@ -2447,6 +2519,8 @@ function ProgramacionInner() {
 
     // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)
+    let engineUsado = 'algorithm-only'
+    let payloadResumenGuardado: any = null
     try {
       const res = await fetch('/api/sugerir-asignacion', {
         method: 'POST',
@@ -2457,13 +2531,20 @@ function ProgramacionInner() {
         const data = await res.json()
         if (data.asignacion) {
           Object.assign(asigs, data.asignacion)
+          engineUsado = data.engine ?? 'unknown'
+          payloadResumenGuardado = data.payloadResumen ?? null
           // Guardar orden de visitas optimizado de Google para usarlo en Confirmar
           if (data.ordenEntrega && Object.keys(data.ordenEntrega).length > 0) {
             ordenGoogleRef.current = data.ordenEntrega
           }
           const isGoogle = (data.engine ?? '').includes('google')
           const engineLabel = isGoogle ? '🗺️ Google Route Opt.' : '🤖 IA (Claude)'
-          if (data.cambios?.length) {
+          const sinAsignarCount = data.pedidosSinAsignar ? Object.keys(data.pedidosSinAsignar).length : 0
+          if (sinAsignarCount > 0) {
+            const motivos = Object.values(data.pedidosSinAsignar as Record<string, string>)
+            const motivoUnico = [...new Set(motivos)].join(' / ')
+            showToast(`${engineLabel} — ${sinAsignarCount} pedido${sinAsignarCount > 1 ? 's' : ''} sin asignar: ${motivoUnico}`, 'err')
+          } else if (data.cambios?.length) {
             showToast(`${engineLabel} — ${data.cambios.length} cambio${data.cambios.length > 1 ? 's' : ''}`)
           } else if (isGoogle) {
             const asignados = Object.values(data.asignacion as Record<string, string | null>).filter(Boolean).length
@@ -2480,7 +2561,7 @@ function ProgramacionInner() {
     setOverflowPedidos(vueltaActiva < 4 ? overflow : [])
 
     // Guardar sugerencia para comparar con confirmación final
-    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString() }
+    ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString(), engine: engineUsado, payloadResumen: payloadResumenGuardado }
 
     // Log de auditoría con detalle de la sugerencia
     if (userId) {
@@ -2488,6 +2569,8 @@ function ProgramacionInner() {
       const sinCamionIA = Object.entries(asigs).filter(([, c]) => c === null)
       logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
         fecha, sucursal, vuelta: vueltaActiva,
+        engine: engineUsado,
+        payload_google: payloadResumenGuardado,
         total_sin_asignar_antes: sin.length,
         asignados_por_ia: asignados.length,
         sin_camion_ia: sinCamionIA.length,
@@ -2505,9 +2588,11 @@ function ProgramacionInner() {
   }
 
   async function handleLimpiar() {
-    const conAsignacion = pedidos.filter(p => p.camion_id)
-    // Limpiar estado local inmediatamente
-    const limpio = pedidos.map(p => ({ ...p, camion_id: null }))
+    // Solo limpiar pedidos editables; no tocar en_camino, entregado, etc.
+    const editablesIds = new Set(pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').map(p => p.id))
+    const conAsignacion = pedidos.filter(p => p.camion_id && editablesIds.has(p.id))
+    // Limpiar estado local inmediatamente (solo editables)
+    const limpio = pedidos.map(p => editablesIds.has(p.id) ? { ...p, camion_id: null } : p)
     setPedidos(limpio); construirColumnas(limpio, camiones); setConfirmado(false)
     ordenGoogleRef.current = {} // descartar orden guardado de Google
     // Limpiar DB si había algo confirmado
@@ -2554,8 +2639,10 @@ function ProgramacionInner() {
   async function handleConfirmar() {
     setGuardando(true)
 
-    const asignados = pedidos.filter(p => p.camion_id)
-    const sinCamion = pedidos.filter(p => !p.camion_id)
+    // Solo operar sobre pedidos en estados editables; ignorar en_camino, entregado, etc.
+    const editables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+    const asignados = editables.filter(p => p.camion_id)
+    const sinCamion = editables.filter(p => !p.camion_id)
 
     const porCamion: Record<string, Pedido[]> = {}
     asignados.forEach(p => {
@@ -2623,6 +2710,7 @@ function ProgramacionInner() {
             total_pedidos: pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').length,
             total_camiones: Object.keys(columnas.reduce((acc, col) => { if (col.pedidos.length > 0) acc[col.camion.codigo] = true; return acc }, {} as Record<string, boolean>)).length,
             uso_sugerencia_ia: !!ultimaSug,
+            engine: ultimaSug?.engine ?? null,
             sugerencia_timestamp: ultimaSug?.timestamp ?? null,
             movimientos_respecto_ia: movimientos.length,
             asignaciones_finales: asignados.map(p => ({
@@ -2886,7 +2974,19 @@ function ProgramacionInner() {
       const resultados = await Promise.all(aReprogramar.map(async p => {
         const res = await fetch('/api/pedidos', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: p.notas ? `${p.notas} | ${nota}` : nota })
+          body: JSON.stringify({
+            id: p.id, fecha_entrega: reprogVueltaFecha, vuelta: reprogVueltaNueva,
+            camion_id: null, orden_entrega: null, estado: 'pendiente',
+            notas: p.notas ? `${p.notas} | ${nota}` : nota,
+            _reprogramacion: {
+              nv: p.nv,
+              fecha_from: p.fecha_entrega,
+              fecha_to: reprogVueltaFecha,
+              vuelta_from: p.vuelta,
+              vuelta_to: reprogVueltaNueva,
+              motivo: null,
+            },
+          })
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? `Error en pedido ${p.nv}`)
@@ -2906,7 +3006,17 @@ function ProgramacionInner() {
     const nota = `⚡ Reprogramado desde ${pedido.fecha_entrega} V${pedido.vuelta}${motivo ? ` — ${motivo}` : ''}`
     const notaFinal = pedido.notas ? `${pedido.notas} | ${nota}` : nota
     try {
-      await patchPedido(id, { fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal })
+      await patchPedido(id, {
+        fecha_entrega: fecha, vuelta, camion_id: null, orden_entrega: null, estado: 'pendiente', notas: notaFinal,
+        _reprogramacion: {
+          nv: pedido.nv,
+          fecha_from: pedido.fecha_entrega,
+          fecha_to: fecha,
+          vuelta_from: pedido.vuelta,
+          vuelta_to: vuelta,
+          motivo: motivo || null,
+        },
+      })
       const act = pedidos.filter(p => p.id !== id)
       setPedidos(act); construirColumnas(act, camiones)
       showToast(`Pedido de ${pedido.cliente} reprogramado para el ${fecha}`)
@@ -2935,8 +3045,12 @@ function ProgramacionInner() {
     } catch (e: any) { showToast(`Error: ${e.message}`, 'err') }
   }
 
-  const totalAsig = pedidos.filter(p => p.camion_id).length
-  const totalSin = pedidos.length - totalAsig
+  // Solo contabilizar pedidos editables (pendiente/programado) para los totales del confirm
+  const pedidosEditables = pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado')
+  const totalAsig = pedidosEditables.filter(p => p.camion_id).length
+  const totalSin = pedidosEditables.filter(p => !p.camion_id).length
+  // Pedidos con camión asignado pero en estado pendiente (asignados sin confirmar)
+  const asignadosSinConfirmar = pedidosEditables.filter(p => p.camion_id && p.estado === 'pendiente')
 
   const pesoAsig     = columnas.reduce((a, c) => a + c.pesoTotal, 0)
   const posAsig      = columnas.reduce((a, c) => a + c.posTotal, 0)
@@ -3037,7 +3151,7 @@ function ProgramacionInner() {
             </div>
           </div>
           <div className="flex gap-1.5 pb-3 flex-wrap items-center">
-            {VUELTAS.map(v => {
+            {VUELTAS.filter(v => userRol !== 'deposito' || v.num === VUELTA_TRANSFERENCIAS).map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
               const esTransferencias = v.num === VUELTA_TRANSFERENCIAS
@@ -3167,6 +3281,15 @@ function ProgramacionInner() {
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>
+              {asignadosSinConfirmar.length > 0 && (
+                <span
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold"
+                  style={{ background: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' }}
+                  title={`Pedidos con camión asignado pero sin confirmar: ${asignadosSinConfirmar.map(p => `NV ${p.nv}`).join(', ')}`}
+                >
+                  ⚠ {asignadosSinConfirmar.length} asignado{asignadosSinConfirmar.length > 1 ? 's' : ''} sin confirmar
+                </span>
+              )}
               <button onClick={handleConfirmar} disabled={cargando || guardando || totalAsig === 0}
                 className="px-4 py-2 text-sm font-semibold rounded-lg transition-colors disabled:opacity-40"
                 style={{ background: confirmado ? '#d1fae5' : '#254A96', color: confirmado ? '#065f46' : 'white' }}>
@@ -3425,13 +3548,20 @@ function ProgramacionInner() {
             {/* Camiones — scroll horizontal */}
             <div className="flex-1 overflow-x-auto overflow-y-hidden h-full">
               <div className="flex gap-2 h-full pr-2">
-                {columnas.map(col => (
+                {columnas.map(col => {
+                  const camEx: any = col.camion
+                  // Truck that leaves to another sucursal from vuelta X: block when vueltaActiva >= X
+                  // Truck that comes from another sucursal from vuelta X: block when vueltaActiva < X
+                  const noDisponible =
+                    (camEx._sale_desde_vuelta != null && vueltaActiva >= camEx._sale_desde_vuelta) ||
+                    (camEx._disponible_desde_vuelta != null && vueltaActiva < camEx._disponible_desde_vuelta)
+                  return (
                   <ColumnaCamion key={col.camion.codigo} columna={col}
-                    onDrop={handleDrop}
-                    onDragOver={(e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
+                    onDrop={noDisponible ? (e) => e.preventDefault() : handleDrop}
+                    onDragOver={noDisponible ? (e) => e.preventDefault() : (e, cod) => { e.preventDefault(); setDragOver(cod ?? 'sin_asignar') }}
                     onDragLeave={() => setDragOver(null)}
                     onDragStart={(e, p) => { dragPedido.current = p; e.dataTransfer.effectAllowed = 'move' }}
-                    isDragOver={dragOver === col.camion.codigo}
+                    isDragOver={!noDisponible && dragOver === col.camion.codigo}
                     onCancelar={handleCancelar}
                     onCambiarVuelta={handleCambiarVuelta}
                     onReprogramar={handleReprogramar}
@@ -3443,15 +3573,16 @@ function ProgramacionInner() {
                     onIncidenciaStock={handleIncidenciaStock}
                     onReprogramarCamion={codigo => { setCamionParaReprog(codigo); setModalReprogVuelta(true); setReprogVueltaFecha(''); setReprogVueltaNueva(1) }}
                     deposito={DEPOSITOS[sucursal]}
-                    soloVer={!puedeEditarProg}
-                    bloqueado={camionesBlockeados.has(col.camion.codigo)}
-                    onToggleLock={puedeEditarProg ? () => setCamionesBlockeados(prev => {
+                    soloVer={noDisponible || !puedeEditarProg}
+                    bloqueado={!noDisponible && camionesBlockeados.has(col.camion.codigo)}
+                    onToggleLock={!noDisponible && puedeEditarProg ? () => setCamionesBlockeados(prev => {
                       const s = new Set(prev)
                       s.has(col.camion.codigo) ? s.delete(col.camion.codigo) : s.add(col.camion.codigo)
                       try { localStorage.setItem('camionesBlockeados', JSON.stringify([...s])) } catch {}
                       return s
                     }) : undefined} />
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>

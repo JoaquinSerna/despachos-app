@@ -1939,6 +1939,9 @@ function ProgramacionInner() {
   const [contadorTransferencias, setContadorTransferencias] = useState(0)
   const [transferencias, setTransferencias] = useState<any[]>([])
   const [selTransfers, setSelTransfers] = useState<Set<string>>(new Set())
+  const [editTransfId, setEditTransfId] = useState<string | null>(null)
+  const [editTransfPeso, setEditTransfPeso] = useState(0)
+  const [editTransfPos, setEditTransfPos] = useState(0)
   const [camionesTransfer, setCamionesTransfer] = useState<Camion[]>([])
   const [recalculandoTodos, setRecalculandoTodos] = useState(false)
   const dragTransferRef = useRef<Pedido | null>(null)
@@ -2299,6 +2302,15 @@ function ProgramacionInner() {
     setContadorTransferencias(prev => Math.max(0, prev - reqIds.length))
     const label = vuelta === 5 ? 'DHora' : `V${vuelta}`
     showToast(`${reqIds.length} transferencia${reqIds.length !== 1 ? 's' : ''} asignada${reqIds.length !== 1 ? 's' : ''} a ${label}`)
+  }
+
+  async function guardarPesoTransfer(id: string, peso: number, pos: number) {
+    try {
+      await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, peso_total_kg: peso, volumen_total_m3: pos }) })
+      setTransferencias(prev => prev.map(r => r.id === id ? { ...r, peso_total_kg: peso, volumen_total_m3: pos } : r))
+      setEditTransfId(null)
+      showToast('Peso y posiciones actualizados')
+    } catch { showToast('Error al actualizar', 'err') }
   }
 
   async function asignarCamionTransfer(reqId: string, codigoCamion: string | null) {
@@ -3594,16 +3606,51 @@ function ProgramacionInner() {
                                 </span>
                               ))}
                             </div>
-                            {(req.peso_total_kg || req.volumen_total_m3) && (
-                              <p className="text-xs mt-0.5 font-medium" style={{ color: '#555' }}>
-                                {req.peso_total_kg
-                                  ? req.peso_total_kg >= 1000
-                                    ? `${(req.peso_total_kg / 1000).toFixed(2)} t`
-                                    : `${req.peso_total_kg} kg`
-                                  : ''}
-                                {req.peso_total_kg && req.volumen_total_m3 ? ' · ' : ''}
-                                {req.volumen_total_m3 ? `${req.volumen_total_m3} pos.` : ''}
-                              </p>
+                            {editTransfId === req.id ? (
+                              <div className="mt-1.5 p-2 rounded-lg flex items-end gap-2 flex-wrap" style={{ background: '#f4f4f3' }}>
+                                <div>
+                                  <label className="text-xs mb-0.5 block" style={{ color: '#666' }}>Peso (kg)</label>
+                                  <input type="number" min="0" value={editTransfPeso}
+                                    onChange={e => setEditTransfPeso(parseFloat(e.target.value) || 0)}
+                                    className="w-24 text-xs border rounded px-2 py-1" style={{ borderColor: '#d1d5db' }} />
+                                </div>
+                                <div>
+                                  <label className="text-xs mb-0.5 block" style={{ color: '#666' }}>Posiciones</label>
+                                  <input type="number" min="0" step="0.5" value={editTransfPos}
+                                    onChange={e => setEditTransfPos(parseFloat(e.target.value) || 0)}
+                                    className="w-20 text-xs border rounded px-2 py-1" style={{ borderColor: '#d1d5db' }} />
+                                </div>
+                                <button onClick={() => guardarPesoTransfer(req.id, editTransfPeso, editTransfPos)}
+                                  className="text-xs px-3 py-1.5 rounded font-medium text-white" style={{ background: '#254A96' }}>
+                                  Guardar
+                                </button>
+                                <button onClick={() => setEditTransfId(null)}
+                                  className="text-xs px-2 py-1.5 rounded" style={{ color: '#666', background: '#e5e7eb' }}>
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                {(req.peso_total_kg || req.volumen_total_m3) ? (
+                                  <span className="text-xs font-medium" style={{ color: '#555' }}>
+                                    {req.peso_total_kg
+                                      ? req.peso_total_kg >= 1000
+                                        ? `${(req.peso_total_kg / 1000).toFixed(2)} t`
+                                        : `${req.peso_total_kg} kg`
+                                      : ''}
+                                    {req.peso_total_kg && req.volumen_total_m3 ? ' · ' : ''}
+                                    {req.volumen_total_m3 ? `${req.volumen_total_m3} pos.` : ''}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs" style={{ color: '#f59e0b' }}>⚠ sin peso</span>
+                                )}
+                                {puedeEditarProg && (
+                                  <button onClick={() => { setEditTransfId(req.id); setEditTransfPeso(req.peso_total_kg ?? 0); setEditTransfPos(req.volumen_total_m3 ?? 0) }}
+                                    className="text-xs hover:underline" style={{ color: '#B9BBB7' }} title="Editar peso y posiciones">
+                                    ✎
+                                  </button>
+                                )}
+                              </div>
                             )}
                             {req.notas && (
                               <p className="text-xs mt-0.5 italic" style={{ color: '#B9BBB7' }}>{req.notas}</p>

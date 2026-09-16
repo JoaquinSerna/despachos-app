@@ -788,7 +788,7 @@ function TabVerificacion({ rol, userEmail, showToast, onIrATransferencia }: {
           body: JSON.stringify({
             tipo: 'abastecimiento', nv: String(sol.id_venta), cliente: sol.cliente,
             sucursal_origen: fromBranch, sucursal_destino: sol.sucursal,
-            estado: 'pendiente', fecha_req: hoy(), fecha_solicitada: fechaSolicitada || null,
+            estado: 'pendiente', vuelta: 0, fecha_req: hoy(), fecha_solicitada: fechaSolicitada || null,
             solicitado_por: userEmail, notas: `Generado desde SD #${sol.id} — despacho ${fmtFecha(sol.fecha_despacho)}`,
             items: grupo.items.map(it => ({ id_producto: it.id_producto, nombre_producto: it.nombre, cantidad_solicitada: it.cantidad })),
           }),
@@ -2416,6 +2416,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlight
           sucursal_origen: nfOrigen,
           sucursal_destino: nfDestino,
           estado: 'pendiente',
+          vuelta: 0,
           fecha_req: hoy(),
           fecha_solicitada: nfFecha || null,
           solicitado_por: userEmail,

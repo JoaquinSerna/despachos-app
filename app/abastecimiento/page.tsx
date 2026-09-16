@@ -307,7 +307,13 @@ export default function AbastecimientoPage() {
   const [rol, setRol] = useState('')
   const [userEmail, setUserEmail] = useState('')
   const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion'>('verificacion')
+  const [highlightNv, setHighlightNv] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
+
+  function irATransferencia(nv: string) {
+    setHighlightNv(nv)
+    setTab('transferencias')
+  }
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
@@ -374,10 +380,11 @@ export default function AbastecimientoPage() {
       {/* Contenido */}
       <div className="flex-1 overflow-auto">
         {tab === 'verificacion' && (
-          <TabVerificacion rol={rol} userEmail={userEmail} showToast={showToast} />
+          <TabVerificacion rol={rol} userEmail={userEmail} showToast={showToast} onIrATransferencia={irATransferencia} />
         )}
         {tab === 'transferencias' && (
-          <TabRequerimientos filtroEstados={['pendiente', 'conf_stock', 'preparacion']} rol={rol} showToast={showToast} userEmail={userEmail} />
+          <TabRequerimientos filtroEstados={['pendiente', 'conf_stock', 'preparacion']} rol={rol} showToast={showToast} userEmail={userEmail}
+            highlightNv={highlightNv} onHighlightConsumed={() => setHighlightNv(null)} />
         )}
         {tab === 'transito' && (
           <TabRequerimientos filtroEstados={['en_transito']} rol={rol} showToast={showToast} userEmail={userEmail} />
@@ -399,8 +406,9 @@ export default function AbastecimientoPage() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TAB: VERIFICACIÓN SD — vista Sugerencias de Transferencias
 // ═══════════════════════════════════════════════════════════════════════════════
-function TabVerificacion({ rol, userEmail, showToast }: {
+function TabVerificacion({ rol, userEmail, showToast, onIrATransferencia }: {
   rol: string; userEmail: string; showToast: (msg: string, tipo?: 'ok' | 'err') => void
+  onIrATransferencia?: (nv: string) => void
 }) {
   const [vistaSD, setVistaSD] = useState<'excel' | 'comercial'>('excel')
   const [fechaDesde, setFechaDesde] = useState('')
@@ -1402,7 +1410,13 @@ function ProductoRow({ row, showToast, userEmail, solicitudes }: {
                       </span>
                       <span className="font-semibold" style={{ color: '#92400e' }}>{item.cantidad_solicitada} u</span>
                       <span className="px-1.5 py-0.5 rounded font-medium" style={{ background: '#fde68a', color: '#92400e' }}>{estadoLabel[req.estado] ?? req.estado}</span>
-                      {req.nv && <span style={{ color: '#78350f' }}>NV {req.nv}</span>}
+                      {req.nv && (onIrATransferencia
+                        ? <button onClick={() => onIrATransferencia(req.nv)}
+                            className="underline font-semibold" style={{ color: '#92400e' }} title="Ver en pestaña Transferencias">
+                            NV {req.nv} →
+                          </button>
+                        : <span style={{ color: '#78350f' }}>NV {req.nv}</span>
+                      )}
                       {sdMatch && <span style={{ color: '#78350f' }}>SD #{sdMatch[1]}</span>}
                       <span className="font-bold px-1.5 py-0.5 rounded" style={{ background: esMisma ? '#fecaca' : '#e0e7ff', color: esMisma ? '#dc2626' : '#3730a3' }}>
                         {esMisma ? '↑ misma NV/SD' : '↑ NV/SD diferente'}
@@ -2274,11 +2288,13 @@ function HojaRuteo({ reqs, onClose }: { reqs: Requerimiento[]; onClose: () => vo
   )
 }
 
-function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
+function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlightNv, onHighlightConsumed }: {
   filtroEstados: string[]
   rol: string
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   userEmail: string
+  highlightNv?: string | null
+  onHighlightConsumed?: () => void
 }) {
   const [reqs, setReqs] = useState<Requerimiento[]>([])
   const [cargando, setCargando] = useState(false)
@@ -2294,8 +2310,24 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
   // Hoja de ruteo
   const [showHojaRuteo, setShowHojaRuteo] = useState(false)
 
+  const [flashNv, setFlashNv] = useState<string | null>(null)
+
   const tabKey = filtroEstados.join(',')
   useEffect(() => { cargarReqs() }, [tabKey, filtroOrigen, filtroDestino])
+
+  useEffect(() => {
+    if (!highlightNv) return
+    setFiltroNV(highlightNv)
+    setFlashNv(highlightNv)
+    onHighlightConsumed?.()
+    // Scroll después de que el DOM renderice
+    const t = setTimeout(() => {
+      const el = document.getElementById(`reqrow-${highlightNv}`)
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }) }
+      setTimeout(() => setFlashNv(null), 2000)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [highlightNv])
   useEffect(() => {
     supabase.from('camiones_flota').select('codigo').order('codigo')
       .then(({ data }) => setCamionCodigos((data ?? []).map((c: any) => c.codigo)))
@@ -2504,7 +2536,11 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail }: {
       ) : (
         <div className="space-y-2">
           {reqsFiltrados.map(req => (
-            <ReqRow key={req.id} req={req} rol={rol} showToast={showToast} userEmail={userEmail} onUpdated={cargarReqs} camionCodigos={camionCodigos} />
+            <div key={req.id} id={req.nv ? `reqrow-${req.nv}` : undefined}
+              className="rounded-xl transition-all duration-700"
+              style={flashNv && req.nv === flashNv ? { outline: '2px solid #ea580c', boxShadow: '0 0 0 4px #fed7aa' } : {}}>
+              <ReqRow req={req} rol={rol} showToast={showToast} userEmail={userEmail} onUpdated={cargarReqs} camionCodigos={camionCodigos} />
+            </div>
           ))}
         </div>
       )}

@@ -269,7 +269,7 @@ export default function GuardiaPage() {
   }: {
     fotos: FotoItem[]
     setter: React.Dispatch<React.SetStateAction<FotoItem[]>>
-    fileRef: React.RefObject<HTMLInputElement>
+    fileRef: React.RefObject<HTMLInputElement | null>
     color: string
   }) => (
     <div style={fieldStyle}>

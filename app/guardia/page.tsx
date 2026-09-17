@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
@@ -14,10 +14,20 @@ const CATEGORIAS: Record<string, string[]> = {
   'RETIRA CLIENTE':         ['Material sobrante en obra'],
 }
 
+const MAX_FOTOS = 5
+
 type Accion = 'home' | 'salida' | 'ingreso' | 'devolucion'
+
+interface FotoItem {
+  file: File
+  preview: string
+}
 
 function hoy() { return new Date().toISOString().split('T')[0] }
 function horaLocal() { return new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) }
+function genUUID() {
+  return crypto.randomUUID()
+}
 
 export default function GuardiaPage() {
   const router = useRouter()
@@ -32,6 +42,8 @@ export default function GuardiaPage() {
   // Salida
   const [salCamion, setSalCamion] = useState('')
   const [salCant, setSalCant] = useState('')
+  const [salFotos, setSalFotos] = useState<FotoItem[]>([])
+  const salFileRef = useRef<HTMLInputElement>(null)
 
   // Ingreso
   const [ingCamion, setIngCamion] = useState('')
@@ -46,6 +58,8 @@ export default function GuardiaPage() {
   const [devRemito, setDevRemito] = useState('')
   const [devNV, setDevNV] = useState('')
   const [devObs, setDevObs] = useState('')
+  const [devFotos, setDevFotos] = useState<FotoItem[]>([])
+  const devFileRef = useRef<HTMLInputElement>(null)
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo })
@@ -69,28 +83,73 @@ export default function GuardiaPage() {
     })
   }, [])
 
+  const agregarFotos = (files: FileList | null, setter: React.Dispatch<React.SetStateAction<FotoItem[]>>, current: FotoItem[]) => {
+    if (!files) return
+    const disponibles = MAX_FOTOS - current.length
+    if (disponibles <= 0) { showToast(`Máximo ${MAX_FOTOS} fotos`, 'err'); return }
+    const nuevas = Array.from(files).slice(0, disponibles).map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+    }))
+    setter(prev => [...prev, ...nuevas])
+  }
+
+  const quitarFoto = (index: number, setter: React.Dispatch<React.SetStateAction<FotoItem[]>>) => {
+    setter(prev => {
+      URL.revokeObjectURL(prev[index].preview)
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  const subirFotos = async (fotos: FotoItem[], eventoId: string): Promise<string[]> => {
+    const urls: string[] = []
+    for (let i = 0; i < fotos.length; i++) {
+      const ext = fotos[i].file.name.split('.').pop() ?? 'jpg'
+      const path = `${eventoId}/${i}.${ext}`
+      const { error } = await supabase.storage.from('guardia-fotos').upload(path, fotos[i].file, { upsert: true })
+      if (error) throw error
+      const { data } = supabase.storage.from('guardia-fotos').getPublicUrl(path)
+      urls.push(data.publicUrl)
+    }
+    return urls
+  }
+
   const resetForms = () => {
     setSalCamion(''); setSalCant('')
+    salFotos.forEach(f => URL.revokeObjectURL(f.preview))
+    setSalFotos([])
     setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
     setDevCamion(''); setDevChofer(''); setDevCategoria(''); setDevMotivo('')
     setDevRemito(''); setDevNV(''); setDevObs('')
+    devFotos.forEach(f => URL.revokeObjectURL(f.preview))
+    setDevFotos([])
   }
 
   const registrarSalida = async () => {
     if (!salCamion || !salCant) { showToast('Completá todos los campos', 'err'); return }
+    if (salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
     setGuardando(true)
-    const { error } = await supabase.from('guardia_eventos').insert({
-      fecha: hoy(),
-      tipo: 'salida',
-      camion_codigo: salCamion,
-      cant_pedidos: Number(salCant),
-      registrado_por: userId,
-    })
-    setGuardando(false)
-    if (error) { showToast('Error al guardar', 'err'); return }
-    setUltimoEvento(`✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`)
-    resetForms(); setAccion('home')
-    showToast(`Salida registrada — ${salCamion}`)
+    try {
+      const eventoId = genUUID()
+      const fotosUrls = await subirFotos(salFotos, eventoId)
+      const { error } = await supabase.from('guardia_eventos').insert({
+        id: eventoId,
+        fecha: hoy(),
+        tipo: 'salida',
+        camion_codigo: salCamion,
+        cant_pedidos: Number(salCant),
+        fotos_urls: fotosUrls,
+        registrado_por: userId,
+      })
+      if (error) throw error
+      setUltimoEvento(`✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`)
+      resetForms(); setAccion('home')
+      showToast(`Salida registrada — ${salCamion}`)
+    } catch {
+      showToast('Error al guardar', 'err')
+    } finally {
+      setGuardando(false)
+    }
   }
 
   const registrarIngreso = async () => {
@@ -117,24 +176,34 @@ export default function GuardiaPage() {
     if (!devCamion || !devChofer || !devCategoria || !devMotivo) {
       showToast('Completá camión, chofer, categoría y motivo', 'err'); return
     }
+    if (devFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
     setGuardando(true)
-    const { error } = await supabase.from('guardia_eventos').insert({
-      fecha: hoy(),
-      tipo: 'devolucion',
-      camion_codigo: devCamion,
-      chofer_apellido: devChofer,
-      categoria: devCategoria,
-      motivo: devMotivo,
-      remito: devRemito || null,
-      nv: devNV || null,
-      observacion: devObs || null,
-      registrado_por: userId,
-    })
-    setGuardando(false)
-    if (error) { showToast('Error al guardar', 'err'); return }
-    setUltimoEvento(`✅ Devolución ${devCamion} — ${devCategoria} — ${horaLocal()}`)
-    resetForms(); setAccion('home')
-    showToast(`Devolución registrada — ${devCamion}`)
+    try {
+      const eventoId = genUUID()
+      const fotosUrls = await subirFotos(devFotos, eventoId)
+      const { error } = await supabase.from('guardia_eventos').insert({
+        id: eventoId,
+        fecha: hoy(),
+        tipo: 'devolucion',
+        camion_codigo: devCamion,
+        chofer_apellido: devChofer,
+        categoria: devCategoria,
+        motivo: devMotivo,
+        remito: devRemito || null,
+        nv: devNV || null,
+        observacion: devObs || null,
+        fotos_urls: fotosUrls,
+        registrado_por: userId,
+      })
+      if (error) throw error
+      setUltimoEvento(`✅ Devolución ${devCamion} — ${devCategoria} — ${horaLocal()}`)
+      resetForms(); setAccion('home')
+      showToast(`Devolución registrada — ${devCamion}`)
+    } catch {
+      showToast('Error al guardar', 'err')
+    } finally {
+      setGuardando(false)
+    }
   }
 
   if (cargando) {
@@ -162,6 +231,76 @@ export default function GuardiaPage() {
     borderRadius: 14, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444',
     cursor: 'pointer', marginTop: 8,
   }
+
+  const FotoSection = ({
+    fotos,
+    setter,
+    fileRef,
+    color,
+  }: {
+    fotos: FotoItem[]
+    setter: React.Dispatch<React.SetStateAction<FotoItem[]>>
+    fileRef: React.RefObject<HTMLInputElement>
+    color: string
+  }) => (
+    <div style={fieldStyle}>
+      <label style={labelStyle}>
+        Fotos <span style={{ color: '#999' }}>({fotos.length}/{MAX_FOTOS}) — mín. 1 requerida</span>
+      </label>
+
+      {/* Thumbnails */}
+      {fotos.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          {fotos.map((f, i) => (
+            <div key={i} style={{ position: 'relative', width: 80, height: 80 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={f.preview}
+                alt={`foto ${i + 1}`}
+                style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 10, border: '1.5px solid #e0e0e0' }}
+              />
+              <button
+                onClick={() => quitarFoto(i, setter)}
+                style={{
+                  position: 'absolute', top: -6, right: -6,
+                  background: '#ef4444', color: '#fff', border: 'none',
+                  borderRadius: '50%', width: 22, height: 22, fontSize: 13,
+                  cursor: 'pointer', lineHeight: '22px', textAlign: 'center', padding: 0,
+                }}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add button */}
+      {fotos.length < MAX_FOTOS && (
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            multiple
+            style={{ display: 'none' }}
+            onChange={e => agregarFotos(e.target.files, setter, fotos)}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '12px 16px', borderRadius: 12, fontSize: 15, fontWeight: 600,
+              border: `2px dashed ${color}`, background: '#fafafa', color,
+              cursor: 'pointer', width: '100%', justifyContent: 'center',
+            }}
+          >
+            <span style={{ fontSize: 20 }}>📷</span>
+            {fotos.length === 0 ? 'Agregar foto' : 'Agregar otra foto'}
+          </button>
+        </>
+      )}
+    </div>
+  )
 
   return (
     <div style={{ minHeight: '100dvh', background: '#f4f4f3', fontFamily: 'system-ui, sans-serif' }}>
@@ -257,6 +396,8 @@ export default function GuardiaPage() {
                 placeholder="ej: 5" style={inputStyle}
               />
             </div>
+
+            <FotoSection fotos={salFotos} setter={setSalFotos} fileRef={salFileRef} color="#254A96" />
 
             <button onClick={registrarSalida} disabled={guardando} style={btnPrimary}>
               {guardando ? 'Guardando…' : 'Registrar salida'}
@@ -372,6 +513,8 @@ export default function GuardiaPage() {
                 style={{ ...inputStyle, resize: 'none' }}
               />
             </div>
+
+            <FotoSection fotos={devFotos} setter={setDevFotos} fileRef={devFileRef} color="#b45309" />
 
             <button onClick={registrarDevolucion} disabled={guardando} style={{ ...btnPrimary, background: '#b45309' }}>
               {guardando ? 'Guardando…' : 'Registrar devolución'}

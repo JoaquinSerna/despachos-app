@@ -22,7 +22,7 @@ const TODAS_LAS_CARDS = [
   { href: '/usuarios',       icon: '👥', titulo: 'Usuarios',           descripcion: 'Gestión de usuarios y permisos',             disponible: true, roles: ['gerencia'] },
   { href: '/stock',          icon: '🏷️', titulo: 'Stock',              descripcion: 'Consulta de stock por sucursal',             disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
   { href: '/pallets',        icon: '📦', titulo: 'Pallets',            descripcion: 'Devolución y reintegro de pallets',          disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
-  { href: '/guardia',        icon: '🔒', titulo: 'Guardia',            descripcion: 'Registro de movimientos y cargas',           disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito'] },
+  { href: '/guardia',        icon: '🔒', titulo: 'Guardia y Cargas',  descripcion: 'Registro de movimientos y cargas',           disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito'] },
   { href: '/ayuda',          icon: '📖', titulo: 'Manual de uso',      descripcion: 'Guía paso a paso y diagramas de flujo',      disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial','confirmador','chofer'] },
 ]
  

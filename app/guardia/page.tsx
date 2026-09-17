@@ -308,7 +308,7 @@ export default function GuardiaPage() {
   }
 
   const accionTitulo: Record<Accion, string> = {
-    home: '🔒 Guardia',
+    home: '🔒 Guardia y Cargas',
     salida: '🚛 Salida de camión',
     ingreso: '🏠 Ingreso de camión',
     devolucion: '📋 Devolución',

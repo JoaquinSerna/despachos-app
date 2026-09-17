@@ -26,6 +26,38 @@ interface FotoItem {
 function hoy() { return new Date().toISOString().split('T')[0] }
 function horaLocal() { return new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) }
 
+function toCSV(rows: any[]): string {
+  if (!rows.length) return ''
+  const cols = [
+    'fecha', 'hora', 'tipo', 'camion_codigo', 'cant_pedidos',
+    'tipo_ingreso', 'deposito_desde',
+    'chofer_apellido', 'categoria', 'motivo', 'remito', 'nv', 'observacion',
+    'cant_posiciones', 'paquetes_hierro',
+  ]
+  const header = cols.join(';')
+  const lines = rows.map(r => {
+    const hora = r.created_at
+      ? new Date(r.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+      : ''
+    const vals: Record<string, any> = { ...r, hora }
+    return cols.map(c => {
+      const v = vals[c] ?? ''
+      const s = String(v).replace(/"/g, '""')
+      return s.includes(';') || s.includes('\n') ? `"${s}"` : s
+    }).join(';')
+  })
+  return [header, ...lines].join('\n')
+}
+
+function descargarCSV(content: string, nombre: string) {
+  const bom = '﻿'
+  const blob = new Blob([bom + content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = nombre; a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function GuardiaPage() {
   const router = useRouter()
   const [userId, setUserId] = useState<string | null>(null)
@@ -35,6 +67,7 @@ export default function GuardiaPage() {
   const [tab, setTab] = useState<'guardia' | 'deposito'>('guardia')
   const [accion, setAccion] = useState<Accion>('home')
   const [guardando, setGuardando] = useState(false)
+  const [exportando, setExportando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [ultimoEvento, setUltimoEvento] = useState<string | null>(null)
 
@@ -135,6 +168,19 @@ export default function GuardiaPage() {
     setDevFotos([])
     setIcCamion(''); setIcPosiciones(''); setIcHierro('')
     setFcCamion('')
+  }
+
+  const exportarRegistros = async () => {
+    setExportando(true)
+    const { data, error } = await supabase
+      .from('guardia_eventos')
+      .select('*')
+      .order('created_at', { ascending: false })
+    setExportando(false)
+    if (error || !data?.length) { showToast('Sin registros para exportar', 'err'); return }
+    const csv = toCSV(data)
+    descargarCSV(csv, `guardia_${hoy()}.csv`)
+    showToast(`${data.length} registros exportados`)
   }
 
   const registrarSalida = async () => {
@@ -240,6 +286,8 @@ export default function GuardiaPage() {
 
   const esDeposito = rol === 'deposito'
   const verTabs = !['guardia', 'deposito'].includes(rol)
+  // Roles que tienen dashboard al que volver
+  const tieneDashboard = !['guardia', 'deposito'].includes(rol)
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '14px 12px', fontSize: 16, borderRadius: 12,
@@ -260,7 +308,7 @@ export default function GuardiaPage() {
   }
 
   const accionTitulo: Record<Accion, string> = {
-    home: '🏠 Guardia',
+    home: '🔒 Guardia',
     salida: '🚛 Salida de camión',
     ingreso: '🏠 Ingreso de camión',
     devolucion: '📋 Devolución',
@@ -321,22 +369,41 @@ export default function GuardiaPage() {
   return (
     <div style={{ minHeight: '100dvh', background: '#f4f4f3', fontFamily: 'system-ui, sans-serif' }}>
       {/* Header */}
-      <div style={{ background: '#254A96', padding: '20px 20px 16px', position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {accion !== 'home' && (
-            <button onClick={() => { setAccion('home'); resetForms() }}
-              style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', borderRadius: 10, padding: '6px 12px', fontSize: 18, cursor: 'pointer' }}>
-              ‹
+      <div style={{ background: '#254A96', padding: '16px 20px', position: 'sticky', top: 0, zIndex: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: 900, margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {accion !== 'home' ? (
+              <button onClick={() => { setAccion('home'); resetForms() }}
+                style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff', borderRadius: 10, padding: '6px 12px', fontSize: 18, cursor: 'pointer' }}>
+                ‹
+              </button>
+            ) : tieneDashboard ? (
+              <button onClick={() => router.push('/dashboard')}
+                style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 10, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                ← Dashboard
+              </button>
+            ) : null}
+            <div>
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, margin: 0 }}>
+                {new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}
+              </p>
+              <h1 style={{ color: '#fff', fontSize: 20, fontWeight: 700, margin: 0 }}>
+                {accionTitulo[accion]}
+              </h1>
+            </div>
+          </div>
+
+          {/* Exportar — solo en home y para roles con acceso completo */}
+          {accion === 'home' && tieneDashboard && (
+            <button onClick={exportarRegistros} disabled={exportando}
+              style={{
+                background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
+                color: '#fff', borderRadius: 10, padding: '8px 14px', fontSize: 13,
+                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: exportando ? 0.6 : 1,
+              }}>
+              {exportando ? 'Exportando…' : '↓ Exportar CSV'}
             </button>
           )}
-          <div>
-            <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, margin: 0 }}>
-              {new Date().toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })}
-            </p>
-            <h1 style={{ color: '#fff', fontSize: 20, fontWeight: 700, margin: 0 }}>
-              {accionTitulo[accion]}
-            </h1>
-          </div>
         </div>
       </div>
 

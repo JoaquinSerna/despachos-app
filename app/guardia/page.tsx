@@ -32,6 +32,7 @@ export default function GuardiaPage() {
   const [rol, setRol] = useState<string>('')
   const [cargando, setCargando] = useState(true)
   const [camiones, setCamiones] = useState<string[]>([])
+  const [tab, setTab] = useState<'guardia' | 'deposito'>('guardia')
   const [accion, setAccion] = useState<Accion>('home')
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
@@ -79,7 +80,9 @@ export default function GuardiaPage() {
       const rolesPermitidos = ['guardia', 'gerencia', 'admin_flota', 'ruteador', 'deposito']
       if (!rolesPermitidos.includes(perfil?.rol ?? '')) { router.push('/dashboard'); return }
       setUserId(user.id)
-      setRol(perfil?.rol ?? '')
+      const r = perfil?.rol ?? ''
+      setRol(r)
+      if (r === 'deposito') setTab('deposito')
 
       const { data: flota } = await supabase
         .from('camiones_flota')
@@ -236,6 +239,7 @@ export default function GuardiaPage() {
   }
 
   const esDeposito = rol === 'deposito'
+  const verTabs = !['guardia', 'deposito'].includes(rol)
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '14px 12px', fontSize: 16, borderRadius: 12,
@@ -353,37 +357,31 @@ export default function GuardiaPage() {
         {accion === 'home' && (
           <>
             {ultimoEvento && (
-              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '12px 16px', marginBottom: 20, fontSize: 14, color: '#166534' }}>
+              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '12px 16px', marginBottom: 16, fontSize: 14, color: '#166534' }}>
                 {ultimoEvento}
               </div>
             )}
 
+            {/* Tabs (solo para roles que ven ambos sectores) */}
+            {verTabs && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+                {(['guardia', 'deposito'] as const).map(t => (
+                  <button key={t} onClick={() => { setTab(t) }}
+                    style={{
+                      flex: 1, padding: '12px 8px', borderRadius: 12, fontSize: 15, fontWeight: 700,
+                      border: tab === t ? '2px solid #254A96' : '1.5px solid #e0e0e0',
+                      background: tab === t ? '#254A96' : '#fff',
+                      color: tab === t ? '#fff' : '#666', cursor: 'pointer',
+                    }}>
+                    {t === 'guardia' ? '🔒 Guardia' : '🏭 Depósito'}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {/* Carga (solo deposito y roles superiores) */}
-              {esDeposito && (
-                <>
-                  <button onClick={() => setAccion('inicio_carga')} style={{
-                    background: '#fff', border: '2px solid #0891b2', borderRadius: 16, padding: '22px 20px',
-                    textAlign: 'left', cursor: 'pointer',
-                  }}>
-                    <div style={{ fontSize: 32, marginBottom: 6 }}>📦</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#0891b2' }}>Inicio de carga</div>
-                    <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>Registrar inicio de carga de un camión</div>
-                  </button>
-
-                  <button onClick={() => setAccion('fin_carga')} style={{
-                    background: '#fff', border: '2px solid #059669', borderRadius: 16, padding: '22px 20px',
-                    textAlign: 'left', cursor: 'pointer',
-                  }}>
-                    <div style={{ fontSize: 32, marginBottom: 6 }}>✅</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: '#059669' }}>Fin de carga</div>
-                    <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>Registrar que el camión terminó de cargar</div>
-                  </button>
-                </>
-              )}
-
-              {/* Guardia (solo no-deposito, o roles superiores) */}
-              {!esDeposito && (
+              {/* Tab Guardia */}
+              {(tab === 'guardia' || !verTabs) && !esDeposito && (
                 <>
                   <button onClick={() => setAccion('salida')} style={{
                     background: '#fff', border: '2px solid #254A96', borderRadius: 16, padding: '22px 20px',
@@ -410,6 +408,29 @@ export default function GuardiaPage() {
                     <div style={{ fontSize: 32, marginBottom: 6 }}>📋</div>
                     <div style={{ fontSize: 18, fontWeight: 700, color: '#b45309' }}>Devolución</div>
                     <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>Registrar pedido devuelto</div>
+                  </button>
+                </>
+              )}
+
+              {/* Tab Depósito */}
+              {(tab === 'deposito' || esDeposito) && (
+                <>
+                  <button onClick={() => setAccion('inicio_carga')} style={{
+                    background: '#fff', border: '2px solid #0891b2', borderRadius: 16, padding: '22px 20px',
+                    textAlign: 'left', cursor: 'pointer',
+                  }}>
+                    <div style={{ fontSize: 32, marginBottom: 6 }}>📦</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#0891b2' }}>Inicio de carga</div>
+                    <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>Registrar inicio de carga de un camión</div>
+                  </button>
+
+                  <button onClick={() => setAccion('fin_carga')} style={{
+                    background: '#fff', border: '2px solid #059669', borderRadius: 16, padding: '22px 20px',
+                    textAlign: 'left', cursor: 'pointer',
+                  }}>
+                    <div style={{ fontSize: 32, marginBottom: 6 }}>✅</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: '#059669' }}>Fin de carga</div>
+                    <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>Registrar que el camión terminó de cargar</div>
                   </button>
                 </>
               )}

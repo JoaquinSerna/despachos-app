@@ -1162,6 +1162,7 @@ function TabVerificacion({ rol, userEmail, showToast, onIrATransferencia }: {
                   showToast={showToast}
                   userEmail={userEmail}
                   solicitudes={solicitudesParaSugerencias}
+                  onIrATransferencia={onIrATransferencia}
                 />
               ))}
           </div>
@@ -1173,9 +1174,10 @@ function TabVerificacion({ rol, userEmail, showToast, onIrATransferencia }: {
 }
 
 // ─── Grupo por sucursal ────────────────────────────────────────────────────────
-function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail, solicitudes }: {
+function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail, solicitudes, onIrATransferencia }: {
   sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
   showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string; solicitudes: SdSolicitud[]
+  onIrATransferencia?: (nv: string) => void
 }) {
   const sinStock    = rows.filter(r => r.cobertura === 'sin_stock' && r.id_producto > 0).length
   const parcial     = rows.filter(r => r.cobertura === 'parcial').length
@@ -1215,7 +1217,7 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
               const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
               return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
             })
-            .map(row => <ProductoRow key={row.id_producto > 0 ? String(row.id_producto) : `name:${row.nombre_producto}`} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} />)
+            .map(row => <ProductoRow key={row.id_producto > 0 ? String(row.id_producto) : `name:${row.nombre_producto}`} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} onIrATransferencia={onIrATransferencia} />)
           }
         </div>
       )}
@@ -1224,11 +1226,12 @@ function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmai
 }
 
 // ─── Fila de producto (vista agregada) ────────────────────────────────────────
-function ProductoRow({ row, showToast, userEmail, solicitudes }: {
+function ProductoRow({ row, showToast, userEmail, solicitudes, onIrATransferencia }: {
   row: SugerenciaRow
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   userEmail: string
   solicitudes: SdSolicitud[]
+  onIrATransferencia?: (nv: string) => void
 }) {
   const [formTransfer, setFormTransfer] = useState<null | { abierto: true }>(null)
   const [tfCantidad, setTfCantidad] = useState(row.deficit)

@@ -1980,8 +1980,8 @@ function ProgramacionInner() {
         setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
         setUserNombre(data.nombre ?? '')
         setUserRol(data.rol ?? '')
-        // Deposito: forzar tab de transferencias
-        if (data.rol === 'deposito') setVueltaActiva(VUELTA_TRANSFERENCIAS)
+        // Deposito: arrancar en V1 (puede ver vueltas en solo lectura)
+        if (data.rol === 'deposito') setVueltaActiva(1)
         // Pre-seleccionar sucursal del usuario si no viene por URL param
         if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
@@ -3245,7 +3245,7 @@ function ProgramacionInner() {
             </div>
           </div>
           <div className="flex gap-1.5 pb-3 flex-wrap items-center">
-            {VUELTAS.filter(v => userRol !== 'deposito' || v.num === VUELTA_TRANSFERENCIAS).map(v => {
+            {VUELTAS.map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
               const esTransferencias = v.num === VUELTA_TRANSFERENCIAS

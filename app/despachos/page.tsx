@@ -1202,6 +1202,7 @@ export default function NuevoDespacho() {
                 <div>
                   <label className="block text-xs font-medium mb-1.5" style={{ color: '#254A96' }}>Franja horaria</label>
                   <select name="vuelta" value={form.vuelta}
+                    onFocus={() => { if (form.sucursal && form.fecha_entrega) verificarCupos() }}
                     onChange={e => {
                       handleChange(e)
                       const v = parseInt(e.target.value)

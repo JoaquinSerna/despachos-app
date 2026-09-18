@@ -249,14 +249,18 @@ export default function NuevoDespacho() {
     // Si todas las vueltas cerraron, auto-seleccionar "fuera de prog" solo si no está cerrada también
     if (cerradas.length === FRANJAS.length && !fueraCerrada) {
       setForm(prev => ({ ...prev, vuelta: 'fuera_prog' }))
-    } else if (fueraCerrada && form.vuelta === 'fuera_prog') {
-      setForm(prev => ({ ...prev, vuelta: '' }))
-    } else if (form.vuelta && form.vuelta !== 'fuera_prog') {
-      // Si la vuelta ya seleccionada quedó cerrada, resetearla
-      const vueltaSeleccionada = parseInt(form.vuelta)
-      if (!isNaN(vueltaSeleccionada) && cerradas.includes(vueltaSeleccionada)) {
-        setForm(prev => ({ ...prev, vuelta: '' }))
-      }
+    } else {
+      // Usar la forma funcional de setState para leer el estado ACTUAL (evitar stale closure en async)
+      setForm(prev => {
+        if (fueraCerrada && prev.vuelta === 'fuera_prog') return { ...prev, vuelta: '' }
+        if (prev.vuelta && prev.vuelta !== 'fuera_prog') {
+          const vueltaSeleccionada = parseInt(prev.vuelta)
+          if (!isNaN(vueltaSeleccionada) && cerradas.includes(vueltaSeleccionada)) {
+            return { ...prev, vuelta: '' }
+          }
+        }
+        return prev
+      })
     }
 
     const { data: flotaData } = await supabase
@@ -1294,7 +1298,7 @@ export default function NuevoDespacho() {
               </div>
             )}
 
-            <button type="submit" disabled={loading || !form.vuelta}
+            <button type="submit" disabled={loading || !form.vuelta || (form.vuelta !== 'fuera_prog' && vueltasCerradas.includes(parseInt(form.vuelta)))}
               className="w-full py-3 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50"
               style={{ background: loading ? '#7a90be' : '#254A96' }}>
               {loading ? 'Guardando...' : 'Confirmar solicitud de despacho'}

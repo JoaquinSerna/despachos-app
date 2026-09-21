@@ -56,10 +56,11 @@ export default function PalletsPage() {
   const [daniados, setDaniados] = useState('')
   const [rotos, setRotos]       = useState('')
   const [notas, setNotas]       = useState('')
-  const [foto, setFoto]         = useState<File | null>(null)
-  const [fotoPreview, setFotoPreview] = useState<string | null>(null)
-  const [guardando, setGuardando]     = useState(false)
+  const [fotos, setFotos]               = useState<File[]>([])
+  const [fotosPreviews, setFotosPreviews] = useState<string[]>([])
+  const [guardando, setGuardando]         = useState(false)
   const fotoInputRef = useRef<HTMLInputElement>(null)
+  const MAX_FOTOS = 5
 
   // autocomplete cliente
   const [sugerencias, setSugerencias] = useState<string[]>([])
@@ -144,18 +145,29 @@ export default function PalletsPage() {
     return () => clearTimeout(t)
   }, [cliente])
 
-  // ── Manejo de foto ──
+  // ── Manejo de fotos (hasta MAX_FOTOS) ──
   function handleFotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setFoto(file)
-    const url = URL.createObjectURL(file)
-    setFotoPreview(url)
+    const files = Array.from(e.target.files ?? [])
+    if (!files.length) return
+    setFotos(prev => {
+      const nuevas = [...prev, ...files].slice(0, MAX_FOTOS)
+      return nuevas
+    })
+    setFotosPreviews(prev => {
+      const nuevasPrev = files.map(f => URL.createObjectURL(f))
+      return [...prev, ...nuevasPrev].slice(0, MAX_FOTOS)
+    })
+    if (fotoInputRef.current) fotoInputRef.current.value = ''
   }
 
-  function limpiarFoto() {
-    setFoto(null)
-    setFotoPreview(null)
+  function eliminarFoto(idx: number) {
+    setFotos(prev => prev.filter((_, i) => i !== idx))
+    setFotosPreviews(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function limpiarFotos() {
+    setFotos([])
+    setFotosPreviews([])
     if (fotoInputRef.current) fotoInputRef.current.value = ''
   }
 
@@ -217,28 +229,32 @@ export default function PalletsPage() {
     const r = parseInt(rotos) || 0
     if (s + d + r === 0) { showToast('Ingresá al menos un pallet (sano, dañado o roto)', 'err'); return }
 
-    // Si hay cliente, la foto es obligatoria
+    // Si hay cliente, al menos una foto es obligatoria
     const clienteTrimmed = cliente.trim()
-    if (clienteTrimmed && !foto) {
+    if (clienteTrimmed && fotos.length === 0) {
       showToast('Si cargás un cliente, la foto es obligatoria', 'err'); return
     }
 
     setGuardando(true)
 
-    // Subir foto si corresponde
+    // Subir fotos si corresponde
     let foto_url: string | null = null
-    if (foto && clienteTrimmed) {
-      const ext = foto.name.split('.').pop() ?? 'jpg'
-      const path = `${fecha}/${Date.now()}_${chofer.replace(/\s+/g, '_')}.${ext}`
-      const { error: uploadErr } = await supabase.storage
-        .from('pallets-fotos')
-        .upload(path, foto, { upsert: false })
-      if (uploadErr) {
-        showToast(`Error al subir foto: ${uploadErr.message}`, 'err')
-        setGuardando(false); return
+    if (fotos.length > 0 && clienteTrimmed) {
+      const urls: string[] = []
+      for (const foto of fotos) {
+        const ext = foto.name.split('.').pop() ?? 'jpg'
+        const path = `${fecha}/${Date.now()}_${chofer.replace(/\s+/g, '_')}_${urls.length}.${ext}`
+        const { error: uploadErr } = await supabase.storage
+          .from('pallets-fotos')
+          .upload(path, foto, { upsert: false })
+        if (uploadErr) {
+          showToast(`Error al subir foto: ${uploadErr.message}`, 'err')
+          setGuardando(false); return
+        }
+        const { data: urlData } = supabase.storage.from('pallets-fotos').getPublicUrl(path)
+        urls.push(urlData.publicUrl)
       }
-      const { data: urlData } = supabase.storage.from('pallets-fotos').getPublicUrl(path)
-      foto_url = urlData.publicUrl
+      foto_url = JSON.stringify(urls)
     }
 
     const { error } = await supabase.from('devoluciones_pallets').insert({
@@ -261,7 +277,7 @@ export default function PalletsPage() {
       { cliente: clienteTrimmed || 'sin cliente', chofer, sanos: s, daniados: d, rotos: r })
 
     showToast(`✓ Pallets registrados${clienteTrimmed ? ` — ${clienteTrimmed}` : ''}`)
-    setCliente(''); setSanos(''); setDaniados(''); setRotos(''); setNotas(''); limpiarFoto()
+    setCliente(''); setSanos(''); setDaniados(''); setRotos(''); setNotas(''); limpiarFotos()
     cargarRegistros()
     setGuardando(false)
   }
@@ -275,6 +291,16 @@ export default function PalletsPage() {
   const fmtFecha = (iso: string) => {
     const [y, m, d] = iso.split('-')
     return `${d}/${m}/${y}`
+  }
+
+  // Backward compat: registros viejos tienen URL plana, nuevos tienen JSON array
+  function parseFotoUrls(foto_url: string | null): string[] {
+    if (!foto_url) return []
+    try {
+      const parsed = JSON.parse(foto_url)
+      if (Array.isArray(parsed)) return parsed
+    } catch {}
+    return [foto_url]
   }
 
   // ── Exportar ──────────────────────────────────────────────────────────────────
@@ -470,28 +496,50 @@ export default function PalletsPage() {
                   )}
                 </div>
 
-                {/* Foto — solo aparece si hay cliente */}
+                {/* Fotos — solo aparece si hay cliente */}
                 {clienteObligatorio && (
                   <div className="rounded-xl p-4 space-y-3" style={{ background: '#f9f9f9', border: '1px dashed #e8edf8' }}>
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-semibold" style={{ color: foto ? '#1a7a3c' : '#E52322' }}>
-                        📷 Foto del pallet {foto ? '✓' : '(obligatoria)'}
+                      <label className="text-xs font-semibold" style={{ color: fotos.length > 0 ? '#1a7a3c' : '#E52322' }}>
+                        📷 Fotos del pallet {fotos.length > 0 ? `(${fotos.length}/${MAX_FOTOS})` : '(obligatoria)'}
                       </label>
-                      {foto && (
-                        <button onClick={limpiarFoto} className="text-xs px-2 py-1 rounded" style={{ color: '#E52322', background: '#fde8e8' }}>
-                          Cambiar foto
-                        </button>
-                      )}
                     </div>
 
-                    {fotoPreview ? (
-                      <img
-                        src={fotoPreview}
-                        alt="Vista previa"
-                        className="w-full max-h-48 object-cover rounded-lg cursor-pointer"
-                        onClick={() => setFotoAmpliada(fotoPreview)}
-                      />
-                    ) : (
+                    {/* Grilla de previews */}
+                    {fotosPreviews.length > 0 && (
+                      <div className="grid grid-cols-3 gap-2">
+                        {fotosPreviews.map((prev, idx) => (
+                          <div key={idx} className="relative">
+                            <img
+                              src={prev}
+                              alt={`Foto ${idx + 1}`}
+                              className="w-full h-24 object-cover rounded-lg cursor-pointer border"
+                              style={{ borderColor: '#e8edf8' }}
+                              onClick={() => setFotoAmpliada(prev)}
+                            />
+                            <button
+                              onClick={() => eliminarFoto(idx)}
+                              className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
+                              style={{ background: '#E52322', color: '#fff' }}>
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        {/* Botón agregar si hay menos de MAX_FOTOS */}
+                        {fotos.length < MAX_FOTOS && (
+                          <button
+                            onClick={() => fotoInputRef.current?.click()}
+                            className="h-24 rounded-lg text-sm font-medium flex flex-col items-center justify-center gap-1 transition-colors"
+                            style={{ background: '#e8edf8', color: '#254A96', border: '1.5px dashed #254A96' }}>
+                            <span style={{ fontSize: 20 }}>+</span>
+                            <span className="text-xs">Agregar</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Botón inicial si no hay fotos */}
+                    {fotosPreviews.length === 0 && (
                       <button
                         onClick={() => fotoInputRef.current?.click()}
                         className="w-full py-8 rounded-lg text-sm font-medium flex flex-col items-center gap-2 transition-colors"
@@ -505,7 +553,7 @@ export default function PalletsPage() {
                       ref={fotoInputRef}
                       type="file"
                       accept="image/*"
-                      capture="environment"
+                      multiple
                       hidden
                       onChange={handleFotoChange}
                     />
@@ -600,9 +648,18 @@ export default function PalletsPage() {
                             {r.rotos > 0 ? r.rotos : '—'}
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            {r.foto_url
-                              ? <img src={r.foto_url} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer inline-block border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(r.foto_url!)} />
-                              : <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>}
+                            {(() => {
+                              const urls = parseFotoUrls(r.foto_url)
+                              if (urls.length === 0) return <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>
+                              return (
+                                <div className="flex items-center justify-center gap-1">
+                                  <img src={urls[0]} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(urls[0])} />
+                                  {urls.length > 1 && (
+                                    <span className="text-xs font-semibold px-1 py-0.5 rounded" style={{ background: '#e8edf8', color: '#254A96' }}>+{urls.length - 1}</span>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           </td>
                           <td className="px-4 py-2.5 text-xs" style={{ color: '#888', maxWidth: 140 }}>
                             <span className="block truncate">{r.notas ?? '—'}</span>
@@ -683,9 +740,18 @@ export default function PalletsPage() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            {r.foto_url
-                              ? <img src={r.foto_url} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer inline-block border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(r.foto_url!)} />
-                              : <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>}
+                            {(() => {
+                              const urls = parseFotoUrls(r.foto_url)
+                              if (urls.length === 0) return <span style={{ color: '#B9BBB7', fontSize: 11 }}>—</span>
+                              return (
+                                <div className="flex items-center justify-center gap-1">
+                                  <img src={urls[0]} alt="foto" className="w-10 h-10 object-cover rounded-lg cursor-pointer border" style={{ borderColor: '#e8edf8' }} onClick={() => setFotoAmpliada(urls[0])} />
+                                  {urls.length > 1 && (
+                                    <span className="text-xs font-semibold px-1 py-0.5 rounded" style={{ background: '#e8edf8', color: '#254A96' }}>+{urls.length - 1}</span>
+                                  )}
+                                </div>
+                              )
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-xs" style={{ color: '#555' }}>{r.chofer_nombre}</td>
                           <td className="px-4 py-3 text-xs" style={{ color: '#888' }}>{r.sucursal}</td>

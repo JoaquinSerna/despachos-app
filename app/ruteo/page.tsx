@@ -36,6 +36,7 @@ interface CamionDisponible {
   tipo_unidad: string
   sucursal: string
   sucursales: string[]
+  vueltasSucursal: Record<number, string>
 }
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -63,6 +64,7 @@ export default function RuteoPage() {
   const [datosUsuario, setDatosUsuario] = useState<{ nombre: string; rol: string } | null>(null)
   const [camionSeleccionado, setCamionSeleccionado] = useState<string | null>(null)
   const [sucursalVista, setSucursalVista] = useState<string | null>(null)
+  const [vueltasVista, setVueltasVista] = useState<number[] | null>(null)
   const [camionesDisponibles, setCamionesDisponibles] = useState<CamionDisponible[]>([])
   const [filtroSucursal, setFiltroSucursal] = useState<string>('')
   const [pedidos, setPedidos] = useState<Pedido[]>([])
@@ -178,10 +180,10 @@ export default function RuteoPage() {
   }
 
   const cargarCamionesDisponibles = async () => {
-    // Traer camiones que tienen pedidos programados para esta fecha (con sucursal para filtrado multi-depósito)
+    // Traer camiones con pedidos programados, incluyendo vuelta para mapear depósito por vuelta
     const { data: pedidosData } = await supabase
       .from('pedidos')
-      .select('camion_id, sucursal')
+      .select('camion_id, sucursal, vuelta')
       .eq('fecha_entrega', fecha)
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .not('camion_id', 'is', null)
@@ -194,11 +196,16 @@ export default function RuteoPage() {
       .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
       .not('cod_vehiculo', 'is', null)
 
-    // Build map of camion → sucursales from actual pedidos (supports multi-depot trucks like CA76)
+    // Build map of camion → sucursales and camion → vuelta → sucursal from actual pedidos
     const camionSucursalesMap: Record<string, Set<string>> = {}
+    const camionVueltaSucursalMap: Record<string, Record<number, string>> = {}
     for (const p of (pedidosData ?? [])) {
       if (!camionSucursalesMap[p.camion_id]) camionSucursalesMap[p.camion_id] = new Set()
-      if (p.sucursal) camionSucursalesMap[p.camion_id].add(p.sucursal)
+      if (!camionVueltaSucursalMap[p.camion_id]) camionVueltaSucursalMap[p.camion_id] = {}
+      if (p.sucursal) {
+        camionSucursalesMap[p.camion_id].add(p.sucursal)
+        if (p.vuelta) camionVueltaSucursalMap[p.camion_id][p.vuelta] = p.sucursal
+      }
     }
 
     const codigosSet = new Set([
@@ -237,7 +244,8 @@ export default function RuteoPage() {
       const sucursales = sucursalesSet && sucursalesSet.size > 0
         ? [...sucursalesSet]
         : [baseSucursal]
-      return { ...c, sucursal: baseSucursal, sucursales }
+      const vueltasSucursal = camionVueltaSucursalMap[c.codigo] ?? {}
+      return { ...c, sucursal: baseSucursal, sucursales, vueltasSucursal }
     })
 
     setCamionesDisponibles(camiones)
@@ -476,8 +484,9 @@ export default function RuteoPage() {
     setCargandoPedidos(false)
   }
 
-  const seleccionarCamion = (codigo: string, sucursal?: string) => {
+  const seleccionarCamion = (codigo: string, sucursal?: string, vueltas?: number[]) => {
     setSucursalVista(sucursal ?? null)
+    setVueltasVista(vueltas ?? null)
     setCamionSeleccionado(codigo)
   }
 
@@ -732,7 +741,7 @@ export default function RuteoPage() {
 
   const esDeposito = datosUsuario?.rol === 'deposito'
 
-  const pedidosSucursal = sucursalVista ? pedidos.filter(p => p.sucursal === sucursalVista) : pedidos
+  const pedidosSucursal = vueltasVista ? pedidos.filter(p => vueltasVista.includes(p.vuelta)) : pedidos
   const pedidosVuelta = pedidosSucursal.filter(p => p.vuelta === vueltaActiva)
   const vueltas = [...new Set(pedidosSucursal.map(p => p.vuelta))].sort()
   const finalizadosVuelta = pedidosVuelta.filter(p => ['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado)).length
@@ -1496,7 +1505,7 @@ export default function RuteoPage() {
               </span>
               {/* Solo roles no-chofer pueden deseleccionar el camión */}
               {camionSeleccionado && datosUsuario?.rol !== 'chofer' && (
-                <button onClick={() => { setCamionSeleccionado(null); setSucursalVista(null) }}
+                <button onClick={() => { setCamionSeleccionado(null); setSucursalVista(null); setVueltasVista(null) }}
                   className="text-xs ml-2 px-2 py-0.5 rounded-full"
                   style={{ background: '#e8edf8', color: '#254A96' }}>
                   {camionSeleccionado} ✕
@@ -1584,7 +1593,16 @@ export default function RuteoPage() {
                         const esMultiDeposito = c.sucursales.length > 1
                         const depositoVisible = filtroSucursal || c.sucursal
                         return (
-                          <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo, filtroSucursal || undefined)}
+                          <button key={c.codigo} onClick={() => {
+                            if (filtroSucursal && esMultiDeposito) {
+                              const vs = Object.entries(c.vueltasSucursal)
+                                .filter(([, s]) => s === filtroSucursal)
+                                .map(([v]) => Number(v))
+                              seleccionarCamion(c.codigo, filtroSucursal, vs.length > 0 ? vs : undefined)
+                            } else {
+                              seleccionarCamion(c.codigo)
+                            }
+                          }}
                             className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
                             style={{ borderColor: '#e8edf8' }}
                             onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}

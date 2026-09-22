@@ -31,6 +31,7 @@ function toCSV(rows: any[]): string {
   const cols = [
     'fecha', 'hora', 'tipo', 'camion_codigo', 'cant_pedidos',
     'tipo_ingreso', 'deposito_desde',
+    'lleva_transferencia', 'deposito_destino',
     'chofer_apellido', 'categoria', 'motivo', 'remito', 'nv', 'observacion',
     'cant_posiciones', 'paquetes_hierro',
   ]
@@ -80,6 +81,8 @@ export default function GuardiaPage() {
   const [salCamion, setSalCamion] = useState('')
   const [salCant, setSalCant] = useState('')
   const [salVacio, setSalVacio] = useState(false)
+  const [salConTransferencia, setSalConTransferencia] = useState(false)
+  const [salDepositoDestino, setSalDepositoDestino] = useState('')
   const [salFotos, setSalFotos] = useState<FotoItem[]>([])
   const salFileRef = useRef<HTMLInputElement>(null)
 
@@ -165,6 +168,7 @@ export default function GuardiaPage() {
 
   const resetForms = () => {
     setSalCamion(''); setSalCant(''); setSalVacio(false)
+    setSalConTransferencia(false); setSalDepositoDestino('')
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
     setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
@@ -193,7 +197,7 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro')
+      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
@@ -208,6 +212,7 @@ export default function GuardiaPage() {
     if (!salCamion) { showToast('Seleccioná el camión', 'err'); return }
     if (!salVacio && !salCant) { showToast('Ingresá la cantidad de pedidos', 'err'); return }
     if (!salVacio && salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
+    if (salConTransferencia && !salDepositoDestino) { showToast('Seleccioná el depósito destino de la transferencia', 'err'); return }
     setGuardando(true)
     try {
       const eventoId = crypto.randomUUID()
@@ -215,13 +220,16 @@ export default function GuardiaPage() {
       const { error } = await supabase.from('guardia_eventos').insert({
         id: eventoId, fecha: hoy(), tipo: 'salida',
         camion_codigo: salCamion, cant_pedidos: salVacio ? 0 : Number(salCant),
+        lleva_transferencia: salConTransferencia,
+        deposito_destino: salConTransferencia ? salDepositoDestino : null,
         fotos_urls: fotosUrls, registrado_por: userId,
       })
       if (error) throw error
+      const transferLabel = salConTransferencia ? ` + transferencia → ${salDepositoDestino}` : ''
       setUltimoEvento(
         salVacio
-          ? `✅ ${salCamion} salió vacío — ${horaLocal()}`
-          : `✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`
+          ? `✅ ${salCamion} salió vacío${transferLabel} — ${horaLocal()}`
+          : `✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''}${transferLabel} — ${horaLocal()}`
       )
       resetForms(); setAccion('home')
       showToast(`Salida registrada — ${salCamion}`)
@@ -604,7 +612,11 @@ export default function GuardiaPage() {
                                   <td key={t.key} style={{ padding: '8px 12px', textAlign: 'center' }}>
                                     {evs.map((ev: any, i: number) => {
                                       let detalle = ''
-                                      if (ev.tipo === 'salida') detalle = ev.cant_pedidos > 0 ? `${ev.cant_pedidos} ped.` : 'vacío'
+                                      if (ev.tipo === 'salida') {
+                                        const base = ev.cant_pedidos > 0 ? `${ev.cant_pedidos} ped.` : 'vacío'
+                                        const transf = ev.lleva_transferencia ? ` 🔀${ev.deposito_destino ? ' → ' + ev.deposito_destino : ''}` : ''
+                                        detalle = base + transf
+                                      }
                                       if (ev.tipo === 'inicio_carga') {
                                         const parts = [ev.cant_posiciones && `${ev.cant_posiciones} pos`, ev.paquetes_hierro && `${ev.paquetes_hierro} H`].filter(Boolean)
                                         detalle = parts.join(' · ')
@@ -647,7 +659,7 @@ export default function GuardiaPage() {
             <button
               onClick={() => { setSalVacio(v => !v); setSalCant('') }}
               style={{
-                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 16,
+                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 10,
                 border: salVacio ? '2px solid #059669' : '2px solid #e0e0e0',
                 background: salVacio ? '#f0fdf4' : '#fafafa',
                 color: salVacio ? '#059669' : '#888',
@@ -657,6 +669,31 @@ export default function GuardiaPage() {
               <span style={{ fontSize: 20 }}>{salVacio ? '☑️' : '☐'}</span>
               Salida vacío <span style={{ fontWeight: 400, fontSize: 13 }}>(sin pedidos)</span>
             </button>
+
+            {/* Toggle con transferencia */}
+            <button
+              onClick={() => { setSalConTransferencia(v => !v); setSalDepositoDestino('') }}
+              style={{
+                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 16,
+                border: salConTransferencia ? '2px solid #7c3aed' : '2px solid #e0e0e0',
+                background: salConTransferencia ? '#f5f3ff' : '#fafafa',
+                color: salConTransferencia ? '#7c3aed' : '#888',
+                fontWeight: 700, fontSize: 15, textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+              <span style={{ fontSize: 20 }}>{salConTransferencia ? '☑️' : '☐'}</span>
+              Sale con transferencia <span style={{ fontWeight: 400, fontSize: 13 }}>(lleva material a otro depósito)</span>
+            </button>
+
+            {salConTransferencia && (
+              <div style={fieldStyle}>
+                <label style={labelStyle}>Depósito destino</label>
+                <select value={salDepositoDestino} onChange={e => setSalDepositoDestino(e.target.value)} style={inputStyle}>
+                  <option value="">Seleccioná el depósito</option>
+                  {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
 
             {!salVacio && (
               <>
@@ -671,7 +708,7 @@ export default function GuardiaPage() {
             )}
 
             <button onClick={registrarSalida} disabled={guardando} style={btnPrimary}>
-              {guardando ? 'Guardando…' : salVacio ? 'Registrar salida vacío' : 'Registrar salida'}
+              {guardando ? 'Guardando…' : salVacio && salConTransferencia ? 'Registrar salida vacío + transferencia' : salConTransferencia ? 'Registrar salida con transferencia' : salVacio ? 'Registrar salida vacío' : 'Registrar salida'}
             </button>
             <button onClick={() => { setAccion('home'); resetForms() }} style={btnSecondary}>Cancelar</button>
           </div>

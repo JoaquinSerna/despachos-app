@@ -62,6 +62,7 @@ export default function RuteoPage() {
   const [usuario, setUsuario] = useState<any>(null)
   const [datosUsuario, setDatosUsuario] = useState<{ nombre: string; rol: string } | null>(null)
   const [camionSeleccionado, setCamionSeleccionado] = useState<string | null>(null)
+  const [sucursalVista, setSucursalVista] = useState<string | null>(null)
   const [camionesDisponibles, setCamionesDisponibles] = useState<CamionDisponible[]>([])
   const [filtroSucursal, setFiltroSucursal] = useState<string>('')
   const [pedidos, setPedidos] = useState<Pedido[]>([])
@@ -475,9 +476,8 @@ export default function RuteoPage() {
     setCargandoPedidos(false)
   }
 
-  const seleccionarCamion = (codigo: string) => {
-    // Solo los choferes tienen un camión fijo; gerencia/ruteador seleccionan para monitoreo
-    // sin modificar su perfil en la base de datos
+  const seleccionarCamion = (codigo: string, sucursal?: string) => {
+    setSucursalVista(sucursal ?? null)
     setCamionSeleccionado(codigo)
   }
 
@@ -732,8 +732,9 @@ export default function RuteoPage() {
 
   const esDeposito = datosUsuario?.rol === 'deposito'
 
-  const pedidosVuelta = pedidos.filter(p => p.vuelta === vueltaActiva)
-  const vueltas = [...new Set(pedidos.map(p => p.vuelta))].sort()
+  const pedidosSucursal = sucursalVista ? pedidos.filter(p => p.sucursal === sucursalVista) : pedidos
+  const pedidosVuelta = pedidosSucursal.filter(p => p.vuelta === vueltaActiva)
+  const vueltas = [...new Set(pedidosSucursal.map(p => p.vuelta))].sort()
   const finalizadosVuelta = pedidosVuelta.filter(p => ['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado)).length
   const entregadosVuelta = finalizadosVuelta
   const totalVuelta = pedidosVuelta.length
@@ -1495,7 +1496,7 @@ export default function RuteoPage() {
               </span>
               {/* Solo roles no-chofer pueden deseleccionar el camión */}
               {camionSeleccionado && datosUsuario?.rol !== 'chofer' && (
-                <button onClick={() => setCamionSeleccionado(null)}
+                <button onClick={() => { setCamionSeleccionado(null); setSucursalVista(null) }}
                   className="text-xs ml-2 px-2 py-0.5 rounded-full"
                   style={{ background: '#e8edf8', color: '#254A96' }}>
                   {camionSeleccionado} ✕
@@ -1579,25 +1580,44 @@ export default function RuteoPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {filtrados.map(c => (
-                        <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
-                          className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
-                          style={{ borderColor: '#e8edf8' }}
-                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
-                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
-                              style={{ background: '#254A96' }}>
-                              🚛
+                      {filtrados.map(c => {
+                        const esMultiDeposito = c.sucursales.length > 1
+                        const depositoVisible = filtroSucursal || c.sucursal
+                        return (
+                          <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo, filtroSucursal || undefined)}
+                            className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
+                            style={{ borderColor: '#e8edf8' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
+                                style={{ background: '#254A96' }}>
+                                🚛
+                              </div>
+                              <div>
+                                <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
+                                <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad}</p>
+                                {esMultiDeposito && (
+                                  <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-bold text-white"
+                                    style={{ background: '#0891b2' }}>
+                                    📦 Dep. {depositoVisible}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
-                              <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
+                            <div className="flex items-center gap-2">
+                              {!filtroSucursal && esMultiDeposito && (
+                                <div className="text-right">
+                                  {c.sucursales.map(s => (
+                                    <span key={s} className="block text-xs font-medium" style={{ color: '#0891b2' }}>{s}</span>
+                                  ))}
+                                </div>
+                              )}
+                              <span style={{ color: '#B9BBB7' }}>›</span>
                             </div>
-                          </div>
-                          <span style={{ color: '#B9BBB7' }}>›</span>
-                        </button>
-                      ))}
+                          </button>
+                        )
+                      })}
                     </div>
                   )
                 })()}
@@ -1609,6 +1629,17 @@ export default function RuteoPage() {
         {/* Vista de pedidos */}
         {camionSeleccionado && (
           <>
+            {/* Banner depósito para camiones multi-depósito */}
+            {sucursalVista && (
+              <div className="mb-4 px-4 py-3 rounded-xl flex items-center gap-3"
+                style={{ background: '#0891b2', color: 'white' }}>
+                <span className="text-xl">🏭</span>
+                <div>
+                  <p className="text-xs opacity-80 font-medium uppercase tracking-wide">Depósito de salida</p>
+                  <p className="font-bold text-lg leading-tight">{sucursalVista}</p>
+                </div>
+              </div>
+            )}
             {cargandoPedidos ? (
               <div className="flex justify-center py-20">
                 <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />

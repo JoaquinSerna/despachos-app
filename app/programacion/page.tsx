@@ -2555,19 +2555,13 @@ function ProgramacionInner() {
     const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
     const ya = pedidos.filter(p => p.camion_id)
 
-    const useGoogleRoute = process.env.NEXT_PUBLIC_USE_GOOGLE_ROUTE_OPT === 'true'
-
-    // Capa 1 solo cuando NO está Google activo
-    let asigs: Record<string, string | null> = {}
-    if (!useGoogleRoute) {
-      // Mostrar clusters detectados para feedback visual
-      const clusters = buildClusters(sin).filter(c => c.length > 1)
-      if (clusters.length > 0) {
-        const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
-        showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
-      }
-      asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
+    // Capa 1: algoritmo geográfico siempre corre como base (fallback para pedidos sin coords)
+    const clusters = buildClusters(sin).filter(c => c.length > 1)
+    if (clusters.length > 0) {
+      const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
+      showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
     }
+    let asigs: Record<string, string | null> = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
 
     // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)

@@ -79,6 +79,7 @@ export default function GuardiaPage() {
   // Salida
   const [salCamion, setSalCamion] = useState('')
   const [salCant, setSalCant] = useState('')
+  const [salVacio, setSalVacio] = useState(false)
   const [salFotos, setSalFotos] = useState<FotoItem[]>([])
   const salFileRef = useRef<HTMLInputElement>(null)
 
@@ -163,7 +164,7 @@ export default function GuardiaPage() {
   }
 
   const resetForms = () => {
-    setSalCamion(''); setSalCant('')
+    setSalCamion(''); setSalCant(''); setSalVacio(false)
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
     setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
@@ -204,19 +205,24 @@ export default function GuardiaPage() {
   }, [accion, matrizFecha])
 
   const registrarSalida = async () => {
-    if (!salCamion || !salCant) { showToast('Completá todos los campos', 'err'); return }
-    if (salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
+    if (!salCamion) { showToast('Seleccioná el camión', 'err'); return }
+    if (!salVacio && !salCant) { showToast('Ingresá la cantidad de pedidos', 'err'); return }
+    if (!salVacio && salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
     setGuardando(true)
     try {
       const eventoId = crypto.randomUUID()
-      const fotosUrls = await subirFotos(salFotos, eventoId)
+      const fotosUrls = salFotos.length > 0 ? await subirFotos(salFotos, eventoId) : []
       const { error } = await supabase.from('guardia_eventos').insert({
         id: eventoId, fecha: hoy(), tipo: 'salida',
-        camion_codigo: salCamion, cant_pedidos: Number(salCant),
+        camion_codigo: salCamion, cant_pedidos: salVacio ? 0 : Number(salCant),
         fotos_urls: fotosUrls, registrado_por: userId,
       })
       if (error) throw error
-      setUltimoEvento(`✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`)
+      setUltimoEvento(
+        salVacio
+          ? `✅ ${salCamion} salió vacío — ${horaLocal()}`
+          : `✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`
+      )
       resetForms(); setAccion('home')
       showToast(`Salida registrada — ${salCamion}`)
     } catch { showToast('Error al guardar', 'err') }
@@ -598,7 +604,7 @@ export default function GuardiaPage() {
                                   <td key={t.key} style={{ padding: '8px 12px', textAlign: 'center' }}>
                                     {evs.map((ev: any, i: number) => {
                                       let detalle = ''
-                                      if (ev.tipo === 'salida' && ev.cant_pedidos) detalle = `${ev.cant_pedidos} ped.`
+                                      if (ev.tipo === 'salida') detalle = ev.cant_pedidos > 0 ? `${ev.cant_pedidos} ped.` : 'vacío'
                                       if (ev.tipo === 'inicio_carga') {
                                         const parts = [ev.cant_posiciones && `${ev.cant_posiciones} pos`, ev.paquetes_hierro && `${ev.paquetes_hierro} H`].filter(Boolean)
                                         detalle = parts.join(' · ')
@@ -636,15 +642,36 @@ export default function GuardiaPage() {
                 {camiones.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Cantidad de pedidos</label>
-              <input type="number" inputMode="numeric" min={0}
-                value={salCant} onChange={e => setSalCant(e.target.value)}
-                placeholder="ej: 5" style={inputStyle} />
-            </div>
-            <FotoSection fotos={salFotos} setter={setSalFotos} fileRef={salFileRef} color="#254A96" />
+
+            {/* Toggle salida vacío */}
+            <button
+              onClick={() => { setSalVacio(v => !v); setSalCant('') }}
+              style={{
+                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 16,
+                border: salVacio ? '2px solid #059669' : '2px solid #e0e0e0',
+                background: salVacio ? '#f0fdf4' : '#fafafa',
+                color: salVacio ? '#059669' : '#888',
+                fontWeight: 700, fontSize: 15, textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+              <span style={{ fontSize: 20 }}>{salVacio ? '☑️' : '☐'}</span>
+              Salida vacío <span style={{ fontWeight: 400, fontSize: 13 }}>(sin pedidos)</span>
+            </button>
+
+            {!salVacio && (
+              <>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Cantidad de pedidos</label>
+                  <input type="number" inputMode="numeric" min={0}
+                    value={salCant} onChange={e => setSalCant(e.target.value)}
+                    placeholder="ej: 5" style={inputStyle} />
+                </div>
+                <FotoSection fotos={salFotos} setter={setSalFotos} fileRef={salFileRef} color="#254A96" />
+              </>
+            )}
+
             <button onClick={registrarSalida} disabled={guardando} style={btnPrimary}>
-              {guardando ? 'Guardando…' : 'Registrar salida'}
+              {guardando ? 'Guardando…' : salVacio ? 'Registrar salida vacío' : 'Registrar salida'}
             </button>
             <button onClick={() => { setAccion('home'); resetForms() }} style={btnSecondary}>Cancelar</button>
           </div>

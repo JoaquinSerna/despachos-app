@@ -427,7 +427,7 @@ export default function GuardiaPage() {
         </div>
       </div>
 
-      <div style={{ padding: '20px 16px', maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ padding: '20px 16px', maxWidth: accion === 'home' ? 1100 : 480, margin: '0 auto' }}>
         {/* Toast */}
         {toast && (
           <div style={{
@@ -466,7 +466,7 @@ export default function GuardiaPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
               {/* Tab Guardia */}
               {(tab === 'guardia' || !verTabs) && !esDeposito && (
                 <>

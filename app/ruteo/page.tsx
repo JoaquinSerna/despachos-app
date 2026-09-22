@@ -476,9 +476,12 @@ export default function RuteoPage() {
     )
     setVueltasIniciadas(iniciadas)
 
-    const vueltas = [...new Set(todosPedidos.map(p => p.vuelta))].sort()
+    const pedidosParaVuelta = vueltasVista
+      ? todosPedidos.filter(p => vueltasVista.includes(p.vuelta))
+      : todosPedidos
+    const vueltas = [...new Set(pedidosParaVuelta.map(p => p.vuelta))].sort()
     const vueltaPendiente = vueltas.find(v =>
-      todosPedidos.some(p => p.vuelta === v && p.estado !== 'entregado' && p.estado !== 'rechazado')
+      pedidosParaVuelta.some(p => p.vuelta === v && p.estado !== 'entregado' && p.estado !== 'rechazado')
     )
     setVueltaActiva(vueltaPendiente ?? vueltas[0] ?? null)
     setCargandoPedidos(false)

@@ -35,6 +35,7 @@ interface CamionDisponible {
   codigo: string
   tipo_unidad: string
   sucursal: string
+  sucursales: string[]
 }
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -176,10 +177,10 @@ export default function RuteoPage() {
   }
 
   const cargarCamionesDisponibles = async () => {
-    // Traer camiones que tienen pedidos programados para esta fecha
+    // Traer camiones que tienen pedidos programados para esta fecha (con sucursal para filtrado multi-depósito)
     const { data: pedidosData } = await supabase
       .from('pedidos')
-      .select('camion_id')
+      .select('camion_id, sucursal')
       .eq('fecha_entrega', fecha)
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .not('camion_id', 'is', null)
@@ -191,6 +192,13 @@ export default function RuteoPage() {
       .or(`fecha_solicitada.eq.${fecha},and(fecha_solicitada.is.null,fecha_req.eq.${fecha})`)
       .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
       .not('cod_vehiculo', 'is', null)
+
+    // Build map of camion → sucursales from actual pedidos (supports multi-depot trucks like CA76)
+    const camionSucursalesMap: Record<string, Set<string>> = {}
+    for (const p of (pedidosData ?? [])) {
+      if (!camionSucursalesMap[p.camion_id]) camionSucursalesMap[p.camion_id] = new Set()
+      if (p.sucursal) camionSucursalesMap[p.camion_id].add(p.sucursal)
+    }
 
     const codigosSet = new Set([
       ...(pedidosData ?? []).map((p: any) => p.camion_id),
@@ -222,10 +230,14 @@ export default function RuteoPage() {
       if (fd.sucursal) flotaDiaSuc[fd.camion_codigo] = fd.sucursal
     }
 
-    const camiones = (camionesData ?? []).map(c => ({
-      ...c,
-      sucursal: flotaDiaSuc[c.codigo] || c.sucursal,
-    }))
+    const camiones = (camionesData ?? []).map(c => {
+      const baseSucursal = flotaDiaSuc[c.codigo] || c.sucursal
+      const sucursalesSet = camionSucursalesMap[c.codigo]
+      const sucursales = sucursalesSet && sucursalesSet.size > 0
+        ? [...sucursalesSet]
+        : [baseSucursal]
+      return { ...c, sucursal: baseSucursal, sucursales }
+    })
 
     setCamionesDisponibles(camiones)
   }
@@ -1543,7 +1555,7 @@ export default function RuteoPage() {
                     style={{ background: filtroSucursal === '' ? '#254A96' : '#e8edf8', color: filtroSucursal === '' ? 'white' : '#254A96' }}>
                     Todas
                   </button>
-                  {SUCURSALES.filter(s => camionesDisponibles.some(c => c.sucursal === s)).map(s => (
+                  {SUCURSALES.filter(s => camionesDisponibles.some(c => c.sucursales.includes(s))).map(s => (
                     <button key={s} onClick={() => setFiltroSucursal(s)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
                       style={{ background: filtroSucursal === s ? '#254A96' : '#e8edf8', color: filtroSucursal === s ? 'white' : '#254A96' }}>
@@ -1558,7 +1570,7 @@ export default function RuteoPage() {
                   </div>
                 ) : (() => {
                   const filtrados = filtroSucursal
-                    ? camionesDisponibles.filter(c => c.sucursal === filtroSucursal)
+                    ? camionesDisponibles.filter(c => c.sucursales.includes(filtroSucursal))
                     : camionesDisponibles
                   return filtrados.length === 0 ? (
                     <div className="text-center py-8" style={{ color: '#B9BBB7' }}>

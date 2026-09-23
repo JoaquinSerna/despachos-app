@@ -76,6 +76,7 @@ export default function GuardiaPage() {
   const [matrizFecha, setMatrizFecha] = useState(hoy())
   const [matrizData, setMatrizData] = useState<any[]>([])
   const [matrizLoading, setMatrizLoading] = useState(false)
+  const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
 
   // Salida
   const [salCamion, setSalCamion] = useState('')
@@ -197,10 +198,19 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino')
+      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
+
+    const ids = [...new Set((data ?? []).map((e: any) => e.registrado_por).filter(Boolean))]
+    if (ids.length > 0) {
+      const { data: usuarios } = await supabase.from('usuarios').select('id, nombre').in('id', ids)
+      const mapa: Record<string, string> = {}
+      for (const u of (usuarios ?? [])) mapa[u.id] = u.nombre
+      setUsuariosMap(mapa)
+    }
+
     setMatrizLoading(false)
   }
 
@@ -626,6 +636,11 @@ export default function GuardiaPage() {
                                           <span style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
                                             {fmt(ev.created_at)}{detalle ? ` · ${detalle}` : ''}
                                           </span>
+                                          {ev.registrado_por && usuariosMap[ev.registrado_por] && (
+                                            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                                              👤 {usuariosMap[ev.registrado_por]}
+                                            </div>
+                                          )}
                                         </div>
                                       )
                                     })}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
@@ -372,6 +372,63 @@ export default function GuardiaPage() {
     fin_carga: '✅ Fin de carga',
   }
 
+  const SearchSelect = ({
+    value, onChange, options, placeholder,
+  }: {
+    value: string
+    onChange: (v: string) => void
+    options: string[]
+    placeholder: string
+  }) => {
+    const [query, setQuery] = useState(value)
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+    const filtered = options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
+
+    useEffect(() => { setQuery(value) }, [value])
+
+    useEffect(() => {
+      const handler = (e: MouseEvent) => {
+        if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      }
+      document.addEventListener('mousedown', handler)
+      return () => document.removeEventListener('mousedown', handler)
+    }, [])
+
+    return (
+      <div ref={ref} style={{ position: 'relative' }}>
+        <input
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true); if (!e.target.value) onChange('') }}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+          style={{ ...inputStyle, paddingRight: 36 }}
+          autoComplete="off"
+        />
+        <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 16, pointerEvents: 'none', color: '#aaa' }}>▼</span>
+        {open && filtered.length > 0 && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+            background: '#fff', border: '1.5px solid #e0e0e0', borderRadius: 10,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.10)', maxHeight: 220, overflowY: 'auto', marginTop: 2,
+          }}>
+            {filtered.map(o => (
+              <div key={o}
+                onMouseDown={() => { onChange(o); setQuery(o); setOpen(false) }}
+                style={{
+                  padding: '12px 14px', fontSize: 15, cursor: 'pointer',
+                  borderBottom: '1px solid #f5f5f5', color: '#1a1a1a',
+                  background: o === value ? '#eef2fb' : '#fff',
+                }}>
+                {o}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const FotoSection = ({
     fotos, setter, fileRef, color,
   }: {
@@ -681,21 +738,16 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Chofer</label>
-              <select value={salChofer} onChange={e => {
-                setSalChofer(e.target.value)
-                const c = choferes.find(ch => ch.nombre === e.target.value)
-                if (c?.camion_codigo) setSalCamion(c.camion_codigo)
-              }} style={inputStyle}>
-                <option value="">Seleccioná el chofer</option>
-                {choferes.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
+              <SearchSelect
+                value={salChofer}
+                onChange={v => { setSalChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setSalCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión {salChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
-              <select value={salCamion} onChange={e => setSalCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={salCamion} onChange={setSalCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
 
             {/* Toggle salida vacío */}
@@ -762,21 +814,16 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Chofer</label>
-              <select value={ingChofer} onChange={e => {
-                setIngChofer(e.target.value)
-                const c = choferes.find(ch => ch.nombre === e.target.value)
-                if (c?.camion_codigo) setIngCamion(c.camion_codigo)
-              }} style={inputStyle}>
-                <option value="">Seleccioná el chofer</option>
-                {choferes.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
+              <SearchSelect
+                value={ingChofer}
+                onChange={v => { setIngChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setIngCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión {ingChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
-              <select value={ingCamion} onChange={e => setIngCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={ingCamion} onChange={setIngCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Tipo de ingreso</label>
@@ -815,10 +862,7 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión</label>
-              <select value={devCamion} onChange={e => setDevCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={devCamion} onChange={setDevCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Apellido del chofer</label>
@@ -870,21 +914,16 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Chofer</label>
-              <select value={icChofer} onChange={e => {
-                setIcChofer(e.target.value)
-                const c = choferes.find(ch => ch.nombre === e.target.value)
-                if (c?.camion_codigo) setIcCamion(c.camion_codigo)
-              }} style={inputStyle}>
-                <option value="">Seleccioná el chofer</option>
-                {choferes.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
+              <SearchSelect
+                value={icChofer}
+                onChange={v => { setIcChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setIcCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión {icChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
-              <select value={icCamion} onChange={e => setIcCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={icCamion} onChange={setIcCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Cantidad de posiciones <span style={{ color: '#999' }}>(opcional si hay hierro)</span></label>
@@ -910,21 +949,16 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Chofer</label>
-              <select value={fcChofer} onChange={e => {
-                setFcChofer(e.target.value)
-                const c = choferes.find(ch => ch.nombre === e.target.value)
-                if (c?.camion_codigo) setFcCamion(c.camion_codigo)
-              }} style={inputStyle}>
-                <option value="">Seleccioná el chofer</option>
-                {choferes.map(c => <option key={c.id} value={c.nombre}>{c.nombre}</option>)}
-              </select>
+              <SearchSelect
+                value={fcChofer}
+                onChange={v => { setFcChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setFcCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión {fcChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
-              <select value={fcCamion} onChange={e => setFcCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={fcCamion} onChange={setFcCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <button onClick={registrarFinCarga} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>
               {guardando ? 'Guardando…' : 'Registrar fin de carga'}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 
@@ -31,6 +31,7 @@ function toCSV(rows: any[]): string {
   const cols = [
     'fecha', 'hora', 'tipo', 'camion_codigo', 'cant_pedidos',
     'tipo_ingreso', 'deposito_desde',
+    'lleva_transferencia', 'deposito_destino',
     'chofer_apellido', 'categoria', 'motivo', 'remito', 'nv', 'observacion',
     'cant_posiciones', 'paquetes_hierro',
   ]
@@ -71,13 +72,27 @@ export default function GuardiaPage() {
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [ultimoEvento, setUltimoEvento] = useState<string | null>(null)
 
+  // Matriz de actividad
+  const [matrizFecha, setMatrizFecha] = useState(hoy())
+  const [matrizData, setMatrizData] = useState<any[]>([])
+  const [matrizLoading, setMatrizLoading] = useState(false)
+  const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
+
+  // Choferes
+  const [choferes, setChoferes] = useState<{id: string, nombre: string, camion_codigo: string | null}[]>([])
+
   // Salida
+  const [salChofer, setSalChofer] = useState('')
   const [salCamion, setSalCamion] = useState('')
   const [salCant, setSalCant] = useState('')
+  const [salVacio, setSalVacio] = useState(false)
+  const [salConTransferencia, setSalConTransferencia] = useState(false)
+  const [salDepositoDestino, setSalDepositoDestino] = useState('')
   const [salFotos, setSalFotos] = useState<FotoItem[]>([])
   const salFileRef = useRef<HTMLInputElement>(null)
 
   // Ingreso
+  const [ingChofer, setIngChofer] = useState('')
   const [ingCamion, setIngCamion] = useState('')
   const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia'>('directo')
   const [ingDeposito, setIngDeposito] = useState('')
@@ -94,11 +109,13 @@ export default function GuardiaPage() {
   const devFileRef = useRef<HTMLInputElement>(null)
 
   // Inicio de carga
+  const [icChofer, setIcChofer] = useState('')
   const [icCamion, setIcCamion] = useState('')
   const [icPosiciones, setIcPosiciones] = useState('')
   const [icHierro, setIcHierro] = useState('')
 
   // Fin de carga
+  const [fcChofer, setFcChofer] = useState('')
   const [fcCamion, setFcCamion] = useState('')
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
@@ -117,11 +134,12 @@ export default function GuardiaPage() {
       setRol(r)
       if (r === 'deposito') setTab('deposito')
 
-      const { data: flota } = await supabase
-        .from('camiones_flota')
-        .select('codigo')
-        .order('codigo')
+      const [{ data: flota }, { data: choferesData }] = await Promise.all([
+        supabase.from('camiones_flota').select('codigo').order('codigo'),
+        supabase.from('usuarios').select('id, nombre, camion_codigo').eq('rol', 'chofer').eq('activo', true).order('nombre'),
+      ])
       setCamiones((flota ?? []).map((c: any) => c.codigo))
+      setChoferes(choferesData ?? [])
       setCargando(false)
     })
   }, [])
@@ -158,16 +176,17 @@ export default function GuardiaPage() {
   }
 
   const resetForms = () => {
-    setSalCamion(''); setSalCant('')
+    setSalChofer(''); setSalCamion(''); setSalCant(''); setSalVacio(false)
+    setSalConTransferencia(false); setSalDepositoDestino('')
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
-    setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
+    setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
     setDevCamion(''); setDevChofer(''); setDevCategoria(''); setDevMotivo('')
     setDevRemito(''); setDevNV(''); setDevObs('')
     devFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setDevFotos([])
-    setIcCamion(''); setIcPosiciones(''); setIcHierro('')
-    setFcCamion('')
+    setIcChofer(''); setIcCamion(''); setIcPosiciones(''); setIcHierro('')
+    setFcChofer(''); setFcCamion('')
   }
 
   const exportarRegistros = async () => {
@@ -183,20 +202,54 @@ export default function GuardiaPage() {
     showToast(`${data.length} registros exportados`)
   }
 
+  const cargarMatriz = async (fecha: string) => {
+    setMatrizLoading(true)
+    const { data } = await supabase
+      .from('guardia_eventos')
+      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido')
+      .eq('fecha', fecha)
+      .order('created_at', { ascending: true })
+    setMatrizData(data ?? [])
+
+    const ids = [...new Set((data ?? []).map((e: any) => e.registrado_por).filter(Boolean))]
+    if (ids.length > 0) {
+      const { data: usuarios } = await supabase.from('usuarios').select('id, nombre').in('id', ids)
+      const mapa: Record<string, string> = {}
+      for (const u of (usuarios ?? [])) mapa[u.id] = u.nombre
+      setUsuariosMap(mapa)
+    }
+
+    setMatrizLoading(false)
+  }
+
+  useEffect(() => {
+    if (accion === 'home') cargarMatriz(matrizFecha)
+  }, [accion, matrizFecha])
+
   const registrarSalida = async () => {
-    if (!salCamion || !salCant) { showToast('Completá todos los campos', 'err'); return }
-    if (salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
+    if (!salCamion) { showToast('Seleccioná el camión', 'err'); return }
+    if (!salVacio && !salCant) { showToast('Ingresá la cantidad de pedidos', 'err'); return }
+    if (!salVacio && salFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
+    if (salConTransferencia && !salDepositoDestino) { showToast('Seleccioná el depósito destino de la transferencia', 'err'); return }
     setGuardando(true)
     try {
       const eventoId = crypto.randomUUID()
-      const fotosUrls = await subirFotos(salFotos, eventoId)
+      const fotosUrls = salFotos.length > 0 ? await subirFotos(salFotos, eventoId) : []
       const { error } = await supabase.from('guardia_eventos').insert({
         id: eventoId, fecha: hoy(), tipo: 'salida',
-        camion_codigo: salCamion, cant_pedidos: Number(salCant),
+        camion_codigo: salCamion, chofer_apellido: salChofer || null,
+        cant_pedidos: salVacio ? 0 : Number(salCant),
+        lleva_transferencia: salConTransferencia,
+        deposito_destino: salConTransferencia ? salDepositoDestino : null,
         fotos_urls: fotosUrls, registrado_por: userId,
       })
       if (error) throw error
-      setUltimoEvento(`✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''} — ${horaLocal()}`)
+      const transferLabel = salConTransferencia ? ` + transferencia → ${salDepositoDestino}` : ''
+      setUltimoEvento(
+        salVacio
+          ? `✅ ${salCamion} salió vacío${transferLabel} — ${horaLocal()}`
+          : `✅ ${salCamion} salió con ${salCant} pedido${Number(salCant) !== 1 ? 's' : ''}${transferLabel} — ${horaLocal()}`
+      )
       resetForms(); setAccion('home')
       showToast(`Salida registrada — ${salCamion}`)
     } catch { showToast('Error al guardar', 'err') }
@@ -209,6 +262,7 @@ export default function GuardiaPage() {
     setGuardando(true)
     const { error } = await supabase.from('guardia_eventos').insert({
       fecha: hoy(), tipo: 'ingreso', camion_codigo: ingCamion,
+      chofer_apellido: ingChofer || null,
       tipo_ingreso: ingTipo, deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : null,
       registrado_por: userId,
     })
@@ -250,6 +304,7 @@ export default function GuardiaPage() {
     setGuardando(true)
     const { error } = await supabase.from('guardia_eventos').insert({
       fecha: hoy(), tipo: 'inicio_carga', camion_codigo: icCamion,
+      chofer_apellido: icChofer || null,
       cant_posiciones: icPosiciones ? Number(icPosiciones) : null,
       paquetes_hierro: icHierro ? Number(icHierro) : null,
       registrado_por: userId,
@@ -267,6 +322,7 @@ export default function GuardiaPage() {
     setGuardando(true)
     const { error } = await supabase.from('guardia_eventos').insert({
       fecha: hoy(), tipo: 'fin_carga', camion_codigo: fcCamion,
+      chofer_apellido: fcChofer || null,
       registrado_por: userId,
     })
     setGuardando(false)
@@ -314,6 +370,63 @@ export default function GuardiaPage() {
     devolucion: '📋 Devolución',
     inicio_carga: '📦 Inicio de carga',
     fin_carga: '✅ Fin de carga',
+  }
+
+  const SearchSelect = ({
+    value, onChange, options, placeholder,
+  }: {
+    value: string
+    onChange: (v: string) => void
+    options: string[]
+    placeholder: string
+  }) => {
+    const [query, setQuery] = useState(value)
+    const [open, setOpen] = useState(false)
+    const ref = useRef<HTMLDivElement>(null)
+    const filtered = options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
+
+    useEffect(() => { setQuery(value) }, [value])
+
+    useEffect(() => {
+      const handler = (e: MouseEvent) => {
+        if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      }
+      document.addEventListener('mousedown', handler)
+      return () => document.removeEventListener('mousedown', handler)
+    }, [])
+
+    return (
+      <div ref={ref} style={{ position: 'relative' }}>
+        <input
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true); if (!e.target.value) onChange('') }}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+          style={{ ...inputStyle, paddingRight: 36 }}
+          autoComplete="off"
+        />
+        <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 16, pointerEvents: 'none', color: '#aaa' }}>▼</span>
+        {open && filtered.length > 0 && (
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+            background: '#fff', border: '1.5px solid #e0e0e0', borderRadius: 10,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.10)', maxHeight: 220, overflowY: 'auto', marginTop: 2,
+          }}>
+            {filtered.map(o => (
+              <div key={o}
+                onMouseDown={() => { onChange(o); setQuery(o); setOpen(false) }}
+                style={{
+                  padding: '12px 14px', fontSize: 15, cursor: 'pointer',
+                  borderBottom: '1px solid #f5f5f5', color: '#1a1a1a',
+                  background: o === value ? '#eef2fb' : '#fff',
+                }}>
+                {o}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
 
   const FotoSection = ({
@@ -407,7 +520,7 @@ export default function GuardiaPage() {
         </div>
       </div>
 
-      <div style={{ padding: '20px 16px', maxWidth: 480, margin: '0 auto' }}>
+      <div style={{ padding: '20px 16px', maxWidth: accion === 'home' ? 1100 : 480, margin: '0 auto' }}>
         {/* Toast */}
         {toast && (
           <div style={{
@@ -446,7 +559,7 @@ export default function GuardiaPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 14 }}>
               {/* Tab Guardia */}
               {(tab === 'guardia' || !verTabs) && !esDeposito && (
                 <>
@@ -502,6 +615,121 @@ export default function GuardiaPage() {
                 </>
               )}
             </div>
+
+            {/* ── MATRIZ DE ACTIVIDAD ── */}
+            {(() => {
+              const TIPOS = [
+                { key: 'inicio_carga', label: 'Inicio carga', emoji: '📦', color: '#0891b2' },
+                { key: 'fin_carga',    label: 'Fin carga',    emoji: '✅', color: '#059669' },
+                { key: 'salida',       label: 'Salida',       emoji: '🚛', color: '#254A96' },
+                { key: 'ingreso',      label: 'Ingreso',      emoji: '🏠', color: '#059669' },
+                { key: 'devolucion',   label: 'Devolución',   emoji: '📋', color: '#b45309' },
+              ]
+              const fmt = (iso: string) =>
+                new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+
+              // Agrupar eventos por camion → tipo
+              const byKey: Record<string, Record<string, any[]>> = {}
+              for (const ev of matrizData) {
+                if (!ev.camion_codigo) continue
+                if (!byKey[ev.camion_codigo]) byKey[ev.camion_codigo] = {}
+                if (!byKey[ev.camion_codigo][ev.tipo]) byKey[ev.camion_codigo][ev.tipo] = []
+                byKey[ev.camion_codigo][ev.tipo].push(ev)
+              }
+              const camionesConActividad = Object.keys(byKey).sort()
+
+              return (
+                <div style={{ marginTop: 24, background: '#fff', borderRadius: 16, border: '1px solid #e8edf8', overflow: 'hidden' }}>
+                  {/* Header con fecha */}
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 700, fontSize: 14, color: '#254A96' }}>📊 Actividad del día</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {matrizLoading && (
+                        <div className="animate-spin" style={{ width: 16, height: 16, border: '2px solid #254A96', borderTopColor: 'transparent', borderRadius: '50%' }} />
+                      )}
+                      <input
+                        type="date" value={matrizFecha}
+                        onChange={e => setMatrizFecha(e.target.value)}
+                        style={{ border: '1px solid #e8edf8', borderRadius: 8, padding: '5px 8px', fontSize: 13, color: '#254A96', fontWeight: 600 }}
+                      />
+                    </div>
+                  </div>
+
+                  {camionesConActividad.length === 0 ? (
+                    <p style={{ textAlign: 'center', padding: '28px 16px', fontSize: 13, color: '#B9BBB7' }}>
+                      {matrizLoading ? 'Cargando…' : 'Sin registros para esta fecha'}
+                    </p>
+                  ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                        <thead>
+                          <tr style={{ background: '#f9f9f9' }}>
+                            <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: '#254A96', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: '#f9f9f9', zIndex: 1, borderRight: '1px solid #e8edf8' }}>
+                              Camión
+                            </th>
+                            {TIPOS.map(t => (
+                              <th key={t.key} style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 600, color: t.color, whiteSpace: 'nowrap', minWidth: 100 }}>
+                                {t.emoji} {t.label}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {camionesConActividad.map((camion, idx) => (
+                            <tr key={camion} style={{ borderTop: '1px solid #f5f5f5', background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
+                              <td style={{ padding: '10px 14px', fontWeight: 700, color: '#1a1a1a', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: idx % 2 === 0 ? '#fff' : '#fafafa', borderRight: '1px solid #e8edf8', zIndex: 1 }}>
+                                {camion}
+                              </td>
+                              {TIPOS.map(t => {
+                                const evs = byKey[camion]?.[t.key] ?? []
+                                if (evs.length === 0) {
+                                  return (
+                                    <td key={t.key} style={{ padding: '10px 12px', textAlign: 'center', color: '#d0d0d0', fontSize: 16 }}>—</td>
+                                  )
+                                }
+                                return (
+                                  <td key={t.key} style={{ padding: '8px 12px', textAlign: 'center' }}>
+                                    {evs.map((ev: any, i: number) => {
+                                      let detalle = ''
+                                      if (ev.tipo === 'salida') {
+                                        const base = ev.cant_pedidos > 0 ? `${ev.cant_pedidos} ped.` : 'vacío'
+                                        const transf = ev.lleva_transferencia ? ` 🔀${ev.deposito_destino ? ' → ' + ev.deposito_destino : ''}` : ''
+                                        detalle = base + transf
+                                      }
+                                      if (ev.tipo === 'inicio_carga') {
+                                        const parts = [ev.cant_posiciones && `${ev.cant_posiciones} pos`, ev.paquetes_hierro && `${ev.paquetes_hierro} H`].filter(Boolean)
+                                        detalle = parts.join(' · ')
+                                      }
+                                      return (
+                                        <div key={i} style={{ marginBottom: i < evs.length - 1 ? 4 : 0 }}>
+                                          <span style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
+                                            {fmt(ev.created_at)}{detalle ? ` · ${detalle}` : ''}
+                                          </span>
+                                          {ev.chofer_apellido && (
+                                            <div style={{ fontSize: 10, color: '#254A96', marginTop: 2, fontWeight: 600 }}>
+                                              🚛 {ev.chofer_apellido}
+                                            </div>
+                                          )}
+                                          {ev.registrado_por && usuariosMap[ev.registrado_por] && (
+                                            <div style={{ fontSize: 10, color: '#888', marginTop: 1 }}>
+                                              👤 {usuariosMap[ev.registrado_por]}
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                    })}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </>
         )}
 
@@ -509,21 +737,73 @@ export default function GuardiaPage() {
         {accion === 'salida' && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Camión</label>
-              <select value={salCamion} onChange={e => setSalCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <label style={labelStyle}>Chofer</label>
+              <SearchSelect
+                value={salChofer}
+                onChange={v => { setSalChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setSalCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
             </div>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Cantidad de pedidos</label>
-              <input type="number" inputMode="numeric" min={0}
-                value={salCant} onChange={e => setSalCant(e.target.value)}
-                placeholder="ej: 5" style={inputStyle} />
+              <label style={labelStyle}>Camión {salChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
+              <SearchSelect value={salCamion} onChange={setSalCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
-            <FotoSection fotos={salFotos} setter={setSalFotos} fileRef={salFileRef} color="#254A96" />
+
+            {/* Toggle salida vacío */}
+            <button
+              onClick={() => { setSalVacio(v => !v); setSalCant('') }}
+              style={{
+                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 10,
+                border: salVacio ? '2px solid #059669' : '2px solid #e0e0e0',
+                background: salVacio ? '#f0fdf4' : '#fafafa',
+                color: salVacio ? '#059669' : '#888',
+                fontWeight: 700, fontSize: 15, textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+              <span style={{ fontSize: 20 }}>{salVacio ? '☑️' : '☐'}</span>
+              Salida vacío <span style={{ fontWeight: 400, fontSize: 13 }}>(sin pedidos)</span>
+            </button>
+
+            {/* Toggle con transferencia */}
+            <button
+              onClick={() => { setSalConTransferencia(v => !v); setSalDepositoDestino('') }}
+              style={{
+                width: '100%', padding: '14px 16px', borderRadius: 12, marginBottom: 16,
+                border: salConTransferencia ? '2px solid #7c3aed' : '2px solid #e0e0e0',
+                background: salConTransferencia ? '#f5f3ff' : '#fafafa',
+                color: salConTransferencia ? '#7c3aed' : '#888',
+                fontWeight: 700, fontSize: 15, textAlign: 'left', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 10,
+              }}>
+              <span style={{ fontSize: 20 }}>{salConTransferencia ? '☑️' : '☐'}</span>
+              Sale con transferencia <span style={{ fontWeight: 400, fontSize: 13 }}>(lleva material a otro depósito)</span>
+            </button>
+
+            {salConTransferencia && (
+              <div style={fieldStyle}>
+                <label style={labelStyle}>Depósito destino</label>
+                <select value={salDepositoDestino} onChange={e => setSalDepositoDestino(e.target.value)} style={inputStyle}>
+                  <option value="">Seleccioná el depósito</option>
+                  {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            )}
+
+            {!salVacio && (
+              <>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Cantidad de pedidos</label>
+                  <input type="number" inputMode="numeric" min={0}
+                    value={salCant} onChange={e => setSalCant(e.target.value)}
+                    placeholder="ej: 5" style={inputStyle} />
+                </div>
+                <FotoSection fotos={salFotos} setter={setSalFotos} fileRef={salFileRef} color="#254A96" />
+              </>
+            )}
+
             <button onClick={registrarSalida} disabled={guardando} style={btnPrimary}>
-              {guardando ? 'Guardando…' : 'Registrar salida'}
+              {guardando ? 'Guardando…' : salVacio && salConTransferencia ? 'Registrar salida vacío + transferencia' : salConTransferencia ? 'Registrar salida con transferencia' : salVacio ? 'Registrar salida vacío' : 'Registrar salida'}
             </button>
             <button onClick={() => { setAccion('home'); resetForms() }} style={btnSecondary}>Cancelar</button>
           </div>
@@ -533,11 +813,17 @@ export default function GuardiaPage() {
         {accion === 'ingreso' && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Camión</label>
-              <select value={ingCamion} onChange={e => setIngCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <label style={labelStyle}>Chofer</label>
+              <SearchSelect
+                value={ingChofer}
+                onChange={v => { setIngChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setIngCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Camión {ingChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
+              <SearchSelect value={ingCamion} onChange={setIngCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Tipo de ingreso</label>
@@ -576,10 +862,7 @@ export default function GuardiaPage() {
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión</label>
-              <select value={devCamion} onChange={e => setDevCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SearchSelect value={devCamion} onChange={setDevCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Apellido del chofer</label>
@@ -630,11 +913,17 @@ export default function GuardiaPage() {
         {accion === 'inicio_carga' && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Camión</label>
-              <select value={icCamion} onChange={e => setIcCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <label style={labelStyle}>Chofer</label>
+              <SearchSelect
+                value={icChofer}
+                onChange={v => { setIcChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setIcCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Camión {icChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
+              <SearchSelect value={icCamion} onChange={setIcCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Cantidad de posiciones <span style={{ color: '#999' }}>(opcional si hay hierro)</span></label>
@@ -659,11 +948,17 @@ export default function GuardiaPage() {
         {accion === 'fin_carga' && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Camión</label>
-              <select value={fcCamion} onChange={e => setFcCamion(e.target.value)} style={inputStyle}>
-                <option value="">Seleccioná el camión</option>
-                {camiones.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <label style={labelStyle}>Chofer</label>
+              <SearchSelect
+                value={fcChofer}
+                onChange={v => { setFcChofer(v); const c = choferes.find(ch => ch.nombre === v); if (c?.camion_codigo) setFcCamion(c.camion_codigo) }}
+                options={choferes.map(c => c.nombre)}
+                placeholder="Buscar chofer…"
+              />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Camión {fcChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
+              <SearchSelect value={fcCamion} onChange={setFcCamion} options={camiones} placeholder="Buscar camión…" />
             </div>
             <button onClick={registrarFinCarga} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>
               {guardando ? 'Guardando…' : 'Registrar fin de carga'}

@@ -35,6 +35,8 @@ interface CamionDisponible {
   codigo: string
   tipo_unidad: string
   sucursal: string
+  sucursales: string[]
+  vueltasSucursal: Record<number, string>
 }
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -61,6 +63,8 @@ export default function RuteoPage() {
   const [usuario, setUsuario] = useState<any>(null)
   const [datosUsuario, setDatosUsuario] = useState<{ nombre: string; rol: string } | null>(null)
   const [camionSeleccionado, setCamionSeleccionado] = useState<string | null>(null)
+  const [sucursalVista, setSucursalVista] = useState<string | null>(null)
+  const [vueltasVista, setVueltasVista] = useState<number[] | null>(null)
   const [camionesDisponibles, setCamionesDisponibles] = useState<CamionDisponible[]>([])
   const [filtroSucursal, setFiltroSucursal] = useState<string>('')
   const [pedidos, setPedidos] = useState<Pedido[]>([])
@@ -176,10 +180,10 @@ export default function RuteoPage() {
   }
 
   const cargarCamionesDisponibles = async () => {
-    // Traer camiones que tienen pedidos programados para esta fecha
+    // Traer camiones con pedidos programados, incluyendo vuelta para mapear depósito por vuelta
     const { data: pedidosData } = await supabase
       .from('pedidos')
-      .select('camion_id')
+      .select('camion_id, sucursal, vuelta')
       .eq('fecha_entrega', fecha)
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .not('camion_id', 'is', null)
@@ -191,6 +195,18 @@ export default function RuteoPage() {
       .or(`fecha_solicitada.eq.${fecha},and(fecha_solicitada.is.null,fecha_req.eq.${fecha})`)
       .in('estado', ['conf_stock', 'preparacion', 'en_transito', 'entregado', 'rechazado'])
       .not('cod_vehiculo', 'is', null)
+
+    // Build map of camion → sucursales and camion → vuelta → sucursal from actual pedidos
+    const camionSucursalesMap: Record<string, Set<string>> = {}
+    const camionVueltaSucursalMap: Record<string, Record<number, string>> = {}
+    for (const p of (pedidosData ?? [])) {
+      if (!camionSucursalesMap[p.camion_id]) camionSucursalesMap[p.camion_id] = new Set()
+      if (!camionVueltaSucursalMap[p.camion_id]) camionVueltaSucursalMap[p.camion_id] = {}
+      if (p.sucursal) {
+        camionSucursalesMap[p.camion_id].add(p.sucursal)
+        if (p.vuelta) camionVueltaSucursalMap[p.camion_id][p.vuelta] = p.sucursal
+      }
+    }
 
     const codigosSet = new Set([
       ...(pedidosData ?? []).map((p: any) => p.camion_id),
@@ -222,10 +238,15 @@ export default function RuteoPage() {
       if (fd.sucursal) flotaDiaSuc[fd.camion_codigo] = fd.sucursal
     }
 
-    const camiones = (camionesData ?? []).map(c => ({
-      ...c,
-      sucursal: flotaDiaSuc[c.codigo] || c.sucursal,
-    }))
+    const camiones = (camionesData ?? []).map(c => {
+      const baseSucursal = flotaDiaSuc[c.codigo] || c.sucursal
+      const sucursalesSet = camionSucursalesMap[c.codigo]
+      const sucursales = sucursalesSet && sucursalesSet.size > 0
+        ? [...sucursalesSet]
+        : [baseSucursal]
+      const vueltasSucursal = camionVueltaSucursalMap[c.codigo] ?? {}
+      return { ...c, sucursal: baseSucursal, sucursales, vueltasSucursal }
+    })
 
     setCamionesDisponibles(camiones)
   }
@@ -455,17 +476,20 @@ export default function RuteoPage() {
     )
     setVueltasIniciadas(iniciadas)
 
-    const vueltas = [...new Set(todosPedidos.map(p => p.vuelta))].sort()
+    const pedidosParaVuelta = vueltasVista
+      ? todosPedidos.filter(p => vueltasVista.includes(p.vuelta))
+      : todosPedidos
+    const vueltas = [...new Set(pedidosParaVuelta.map(p => p.vuelta))].sort()
     const vueltaPendiente = vueltas.find(v =>
-      todosPedidos.some(p => p.vuelta === v && p.estado !== 'entregado' && p.estado !== 'rechazado')
+      pedidosParaVuelta.some(p => p.vuelta === v && p.estado !== 'entregado' && p.estado !== 'rechazado')
     )
     setVueltaActiva(vueltaPendiente ?? vueltas[0] ?? null)
     setCargandoPedidos(false)
   }
 
-  const seleccionarCamion = (codigo: string) => {
-    // Solo los choferes tienen un camión fijo; gerencia/ruteador seleccionan para monitoreo
-    // sin modificar su perfil en la base de datos
+  const seleccionarCamion = (codigo: string, sucursal?: string, vueltas?: number[]) => {
+    setSucursalVista(sucursal ?? null)
+    setVueltasVista(vueltas ?? null)
     setCamionSeleccionado(codigo)
   }
 
@@ -720,8 +744,9 @@ export default function RuteoPage() {
 
   const esDeposito = datosUsuario?.rol === 'deposito'
 
-  const pedidosVuelta = pedidos.filter(p => p.vuelta === vueltaActiva)
-  const vueltas = [...new Set(pedidos.map(p => p.vuelta))].sort()
+  const pedidosSucursal = vueltasVista ? pedidos.filter(p => vueltasVista.includes(p.vuelta)) : pedidos
+  const pedidosVuelta = pedidosSucursal.filter(p => p.vuelta === vueltaActiva)
+  const vueltas = [...new Set(pedidosSucursal.map(p => p.vuelta))].sort()
   const finalizadosVuelta = pedidosVuelta.filter(p => ['entregado', 'rechazado', 'entregado_parcial'].includes(p.estado)).length
   const entregadosVuelta = finalizadosVuelta
   const totalVuelta = pedidosVuelta.length
@@ -1483,7 +1508,7 @@ export default function RuteoPage() {
               </span>
               {/* Solo roles no-chofer pueden deseleccionar el camión */}
               {camionSeleccionado && datosUsuario?.rol !== 'chofer' && (
-                <button onClick={() => setCamionSeleccionado(null)}
+                <button onClick={() => { setCamionSeleccionado(null); setSucursalVista(null); setVueltasVista(null) }}
                   className="text-xs ml-2 px-2 py-0.5 rounded-full"
                   style={{ background: '#e8edf8', color: '#254A96' }}>
                   {camionSeleccionado} ✕
@@ -1543,7 +1568,7 @@ export default function RuteoPage() {
                     style={{ background: filtroSucursal === '' ? '#254A96' : '#e8edf8', color: filtroSucursal === '' ? 'white' : '#254A96' }}>
                     Todas
                   </button>
-                  {SUCURSALES.filter(s => camionesDisponibles.some(c => c.sucursal === s)).map(s => (
+                  {SUCURSALES.filter(s => camionesDisponibles.some(c => c.sucursales.includes(s))).map(s => (
                     <button key={s} onClick={() => setFiltroSucursal(s)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
                       style={{ background: filtroSucursal === s ? '#254A96' : '#e8edf8', color: filtroSucursal === s ? 'white' : '#254A96' }}>
@@ -1558,7 +1583,7 @@ export default function RuteoPage() {
                   </div>
                 ) : (() => {
                   const filtrados = filtroSucursal
-                    ? camionesDisponibles.filter(c => c.sucursal === filtroSucursal)
+                    ? camionesDisponibles.filter(c => c.sucursales.includes(filtroSucursal))
                     : camionesDisponibles
                   return filtrados.length === 0 ? (
                     <div className="text-center py-8" style={{ color: '#B9BBB7' }}>
@@ -1567,25 +1592,53 @@ export default function RuteoPage() {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {filtrados.map(c => (
-                        <button key={c.codigo} onClick={() => seleccionarCamion(c.codigo)}
-                          className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
-                          style={{ borderColor: '#e8edf8' }}
-                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
-                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
-                              style={{ background: '#254A96' }}>
-                              🚛
+                      {filtrados.map(c => {
+                        const esMultiDeposito = c.sucursales.length > 1
+                        const depositoVisible = filtroSucursal || c.sucursal
+                        return (
+                          <button key={c.codigo} onClick={() => {
+                            if (filtroSucursal && esMultiDeposito) {
+                              const vs = Object.entries(c.vueltasSucursal)
+                                .filter(([, s]) => s === filtroSucursal)
+                                .map(([v]) => Number(v))
+                              seleccionarCamion(c.codigo, filtroSucursal, vs.length > 0 ? vs : undefined)
+                            } else {
+                              seleccionarCamion(c.codigo)
+                            }
+                          }}
+                            className="w-full flex items-center justify-between p-4 rounded-xl border-2 transition-all text-left"
+                            style={{ borderColor: '#e8edf8' }}
+                            onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = '#254A96'}
+                            onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = '#e8edf8'}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm"
+                                style={{ background: '#254A96' }}>
+                                🚛
+                              </div>
+                              <div>
+                                <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
+                                <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad}</p>
+                                {esMultiDeposito && (
+                                  <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-bold text-white"
+                                    style={{ background: '#0891b2' }}>
+                                    📦 Dep. {depositoVisible}
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div>
-                              <p className="font-bold text-sm" style={{ color: '#254A96' }}>{c.codigo}</p>
-                              <p className="text-xs" style={{ color: '#B9BBB7' }}>{c.tipo_unidad} · {c.sucursal}</p>
+                            <div className="flex items-center gap-2">
+                              {!filtroSucursal && esMultiDeposito && (
+                                <div className="text-right">
+                                  {c.sucursales.map(s => (
+                                    <span key={s} className="block text-xs font-medium" style={{ color: '#0891b2' }}>{s}</span>
+                                  ))}
+                                </div>
+                              )}
+                              <span style={{ color: '#B9BBB7' }}>›</span>
                             </div>
-                          </div>
-                          <span style={{ color: '#B9BBB7' }}>›</span>
-                        </button>
-                      ))}
+                          </button>
+                        )
+                      })}
                     </div>
                   )
                 })()}
@@ -1597,6 +1650,17 @@ export default function RuteoPage() {
         {/* Vista de pedidos */}
         {camionSeleccionado && (
           <>
+            {/* Banner depósito para camiones multi-depósito */}
+            {sucursalVista && (
+              <div className="mb-4 px-4 py-3 rounded-xl flex items-center gap-3"
+                style={{ background: '#0891b2', color: 'white' }}>
+                <span className="text-xl">🏭</span>
+                <div>
+                  <p className="text-xs opacity-80 font-medium uppercase tracking-wide">Depósito de salida</p>
+                  <p className="font-bold text-lg leading-tight">{sucursalVista}</p>
+                </div>
+              </div>
+            )}
             {cargandoPedidos ? (
               <div className="flex justify-center py-20">
                 <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { GoogleAuth } from 'google-auth-library'
 
+export const maxDuration = 300
+
 const client = new Anthropic()
 
 // Obtiene un Bearer token usando el Service Account JSON
@@ -365,7 +367,7 @@ async function sugerirConRouteOptimization(
       vehicles,
       shipmentTypeIncompatibilities,
     },
-    searchMode: 'CONSUME_ALL_AVAILABLE_TIME',
+    searchMode: 'RETURN_FAST',
     considerRoadTraffic: false,
   }
 
@@ -650,7 +652,7 @@ La "asignacion" debe incluir TODOS los ids de la lista.`
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 4096,
+    max_tokens: 8192,
     messages: [{ role: 'user', content: prompt }],
   })
 

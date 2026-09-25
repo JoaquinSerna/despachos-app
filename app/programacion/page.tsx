@@ -670,7 +670,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             className="text-xs border rounded px-2 py-1 flex-1 focus:outline-none"
             style={{ borderColor: '#e8edf8' }}>
             <option value="" disabled>Mover a vuelta...</option>
-            {[1, 2, 3, 4].filter(v => v !== pedido.vuelta).map(v => (
+            {[1, 2, 3, 4].filter(v => v !== pedido.vuelta && vueltasDisponibles(pedido.fecha_entrega).includes(v)).map(v => (
               <option key={v} value={v}>Vuelta {v}</option>
             ))}
           </select>
@@ -1980,8 +1980,8 @@ function ProgramacionInner() {
         setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
         setUserNombre(data.nombre ?? '')
         setUserRol(data.rol ?? '')
-        // Deposito: forzar tab de transferencias
-        if (data.rol === 'deposito') setVueltaActiva(VUELTA_TRANSFERENCIAS)
+        // Deposito: arrancar en V1 (puede ver vueltas en solo lectura)
+        if (data.rol === 'deposito') setVueltaActiva(1)
         // Pre-seleccionar sucursal del usuario si no viene por URL param
         if (data.sucursal && !params.get('sucursal')) setSucursal(data.sucursal)
       })
@@ -2555,19 +2555,13 @@ function ProgramacionInner() {
     const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
     const ya = pedidos.filter(p => p.camion_id)
 
-    const useGoogleRoute = process.env.NEXT_PUBLIC_USE_GOOGLE_ROUTE_OPT === 'true'
-
-    // Capa 1 solo cuando NO está Google activo
-    let asigs: Record<string, string | null> = {}
-    if (!useGoogleRoute) {
-      // Mostrar clusters detectados para feedback visual
-      const clusters = buildClusters(sin).filter(c => c.length > 1)
-      if (clusters.length > 0) {
-        const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
-        showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
-      }
-      asigs = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
+    // Capa 1: algoritmo geográfico siempre corre como base (fallback para pedidos sin coords)
+    const clusters = buildClusters(sin).filter(c => c.length > 1)
+    if (clusters.length > 0) {
+      const desc = clusters.map(c => c.map(p => p.cliente.split(' ')[0]).join('+') ).join(' | ')
+      showToast(`🗂️ ${clusters.length} grupo${clusters.length > 1 ? 's' : ''} detectado${clusters.length > 1 ? 's' : ''}: ${desc}`)
     }
+    let asigs: Record<string, string | null> = sugerirAsignacion(sin, camionesLibres, ya, sucursal)
 
     // Capa 2: Google Route Optimization o Claude Haiku
     setCargando(true)
@@ -3039,6 +3033,10 @@ function ProgramacionInner() {
 
   async function handleReprogramarVuelta() {
     if (!reprogVueltaFecha) return
+    if (!vueltasDisponibles(reprogVueltaFecha).includes(reprogVueltaNueva)) {
+      showToast('Esa vuelta no está disponible para la fecha seleccionada', 'err')
+      return
+    }
 
     // Solo reprogramar pedidos activos (excluir finalizados: en_camino, entregado, etc.)
     const activos = pedidos.filter(p => p.tipo !== 'transferencia' && (p.estado === 'pendiente' || p.estado === 'programado'))
@@ -3087,6 +3085,10 @@ function ProgramacionInner() {
   async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = pedidos.find(p => p.id === id)
     if (!pedido) return
+    if (!vueltasDisponibles(fecha).includes(vuelta)) {
+      showToast('Esa vuelta no está disponible para la fecha seleccionada', 'err')
+      return
+    }
     if (pedido.tipo === 'transferencia') {
       try {
         await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, fecha_solicitada: fecha, vuelta: 0, cod_vehiculo: null }) })
@@ -3245,7 +3247,7 @@ function ProgramacionInner() {
             </div>
           </div>
           <div className="flex gap-1.5 pb-3 flex-wrap items-center">
-            {VUELTAS.filter(v => userRol !== 'deposito' || v.num === VUELTA_TRANSFERENCIAS).map(v => {
+            {VUELTAS.map(v => {
               const activo = vueltaActiva === v.num
               const esFuera = v.num === VUELTA_FUERA
               const esTransferencias = v.num === VUELTA_TRANSFERENCIAS

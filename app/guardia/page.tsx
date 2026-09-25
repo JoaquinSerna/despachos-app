@@ -77,6 +77,8 @@ export default function GuardiaPage() {
   const [matrizData, setMatrizData] = useState<any[]>([])
   const [matrizLoading, setMatrizLoading] = useState(false)
   const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string; fotosUrls?: string[] } | null>(null)
+  const [eliminando, setEliminando] = useState(false)
 
   // Choferes
   const [choferes, setChoferes] = useState<{id: string, nombre: string, camion_codigo: string | null}[]>([])
@@ -189,6 +191,26 @@ export default function GuardiaPage() {
     setFcChofer(''); setFcCamion('')
   }
 
+  const eliminarEvento = async () => {
+    if (!confirmDelete) return
+    setEliminando(true)
+    try {
+      if (confirmDelete.fotosUrls?.length) {
+        const paths = confirmDelete.fotosUrls.map(url => {
+          const parts = url.split('/guardia-fotos/')
+          return parts[1] ?? ''
+        }).filter(Boolean)
+        if (paths.length) await supabase.storage.from('guardia-fotos').remove(paths)
+      }
+      const { error } = await supabase.from('guardia_eventos').delete().eq('id', confirmDelete.id)
+      if (error) throw error
+      setMatrizData(prev => prev.filter(e => e.id !== confirmDelete.id))
+      setConfirmDelete(null)
+      showToast('Registro eliminado')
+    } catch { showToast('Error al eliminar', 'err') }
+    finally { setEliminando(false) }
+  }
+
   const exportarRegistros = async () => {
     setExportando(true)
     const { data, error } = await supabase
@@ -206,7 +228,7 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido')
+      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
@@ -700,11 +722,23 @@ export default function GuardiaPage() {
                                         const parts = [ev.cant_posiciones && `${ev.cant_posiciones} pos`, ev.paquetes_hierro && `${ev.paquetes_hierro} H`].filter(Boolean)
                                         detalle = parts.join(' · ')
                                       }
+                                      const label = `${camion} · ${t.label} · ${fmt(ev.created_at)}`
                                       return (
                                         <div key={i} style={{ marginBottom: i < evs.length - 1 ? 4 : 0 }}>
-                                          <span style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
-                                            {fmt(ev.created_at)}{detalle ? ` · ${detalle}` : ''}
-                                          </span>
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+                                            <span style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
+                                              {fmt(ev.created_at)}{detalle ? ` · ${detalle}` : ''}
+                                            </span>
+                                            {rol === 'gerencia' && (
+                                              <button
+                                                onClick={() => setConfirmDelete({ id: ev.id, label, fotosUrls: ev.fotos_urls })}
+                                                title="Eliminar registro"
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 14, padding: '2px 4px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
+                                                onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                                                onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
+                                              >×</button>
+                                            )}
+                                          </div>
                                           {ev.chofer_apellido && (
                                             <div style={{ fontSize: 10, color: '#254A96', marginTop: 2, fontWeight: 600 }}>
                                               🚛 {ev.chofer_apellido}
@@ -967,6 +1001,34 @@ export default function GuardiaPage() {
           </div>
         )}
       </div>
+
+      {/* Modal eliminar — solo gerencia */}
+      {confirmDelete && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20,
+        }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 360, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 8 }}>¿Eliminar este registro?</p>
+            <p style={{ fontSize: 13, color: '#666', marginBottom: 20 }}>{confirmDelete.label}</p>
+            <p style={{ fontSize: 12, color: '#999', marginBottom: 20 }}>Esta acción no se puede deshacer.</p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                disabled={eliminando}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button
+                onClick={eliminarEvento}
+                disabled={eliminando}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: eliminando ? 0.7 : 1 }}>
+                {eliminando ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

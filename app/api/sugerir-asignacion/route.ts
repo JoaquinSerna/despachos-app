@@ -435,11 +435,10 @@ async function sugerirConRouteOptimization(
     }
   }
 
-  // ── Post-proceso: corregir splits de mismo destino ───────────────────────
-  // Google a veces divide pedidos colocados (< 300m) en camiones distintos cuando
-  // optimiza rutas. Lo corregimos moviendo el pedido más liviano al camión del más pesado.
+  // ── Post-proceso: consolidar pedidos mismo destino / mismo cliente ────────
+  // Google puede distribuir pedidos co-localizados en camiones distintos.
+  // Múltiples pasadas bidireccionales garantizan la máxima consolidación posible.
   {
-    // Calcular carga resultante por camión (ya_asignados + asignados por Google)
     const cargaFinal: Record<string, { kg: number; pos: number }> = {}
     camiones.forEach(c => {
       cargaFinal[c.codigo] = {
@@ -454,31 +453,57 @@ async function sugerirConRouteOptimization(
         cargaFinal[cam].pos += p.volumen_total_m3 ?? 0
       }
     })
-    for (let i = 0; i < conCoords.length; i++) {
-      for (let j = i + 1; j < conCoords.length; j++) {
-        const a = conCoords[i], b = conCoords[j]
-        const camA = asignacion[a.id], camB = asignacion[b.id]
-        if (!camA || !camB || camA === camB) continue
-        if (distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) > 0.3) continue
-        const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
-        if ((tipoA === 'hierro_largo') !== (tipoB === 'hierro_largo')) continue
-        // Intentar mover b → camA
-        const truckA = camiones.find(c => c.codigo === camA)
-        if (truckA) {
-          const libreKg = truckA.tonelaje_max_kg - cargaFinal[camA].kg
-          const librePos = truckA.posiciones_total - cargaFinal[camA].pos
-          const entraKg = libreKg + (a.peso_total_kg ?? 0) >= (a.peso_total_kg ?? 0) + (b.peso_total_kg ?? 0)
-          const entraPos = truckA.posiciones_total === 0 || librePos + (a.volumen_total_m3 ?? 0) >= (a.volumen_total_m3 ?? 0) + (b.volumen_total_m3 ?? 0)
-          if (entraKg && entraPos) {
-            // Mover b a camA
-            cargaFinal[camB].kg -= b.peso_total_kg ?? 0
-            cargaFinal[camB].pos -= b.volumen_total_m3 ?? 0
-            cargaFinal[camA].kg += b.peso_total_kg ?? 0
-            cargaFinal[camA].pos += b.volumen_total_m3 ?? 0
-            asignacion[b.id] = camA
+
+    const cabePedido = (p: PedidoInput, camCod: string): boolean => {
+      const truck = camiones.find(c => c.codigo === camCod)
+      if (!truck) return false
+      const libreKg = truck.tonelaje_max_kg - cargaFinal[camCod].kg
+      const librePos = truck.posiciones_total - cargaFinal[camCod].pos
+      return libreKg >= (p.peso_total_kg ?? 0) &&
+        (truck.posiciones_total === 0 || librePos >= (p.volumen_total_m3 ?? 0))
+    }
+
+    const moverPedido = (p: PedidoInput, desde: string, hasta: string) => {
+      cargaFinal[desde].kg -= p.peso_total_kg ?? 0
+      cargaFinal[desde].pos -= p.volumen_total_m3 ?? 0
+      cargaFinal[hasta].kg += p.peso_total_kg ?? 0
+      cargaFinal[hasta].pos += p.volumen_total_m3 ?? 0
+      asignacion[p.id] = hasta
+    }
+
+    // Hasta 4 pasadas para convergencia (cubre grupos de 3+ camiones)
+    for (let pass = 0; pass < 4; pass++) {
+      let changed = false
+      for (let i = 0; i < conCoords.length; i++) {
+        for (let j = i + 1; j < conCoords.length; j++) {
+          const a = conCoords[i], b = conCoords[j]
+          const camA = asignacion[a.id], camB = asignacion[b.id]
+          if (!camA || !camB || camA === camB) continue
+
+          const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
+          if ((tipoA === 'hierro_largo') !== (tipoB === 'hierro_largo')) continue
+
+          const dist = distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!)
+          const mismoCli = normCliente(a.cliente) === normCliente(b.cliente)
+          // Mismo destino (< 300m) o mismo cliente (< 2km) → deben ir juntos si entra
+          if (dist > 0.3 && !(mismoCli && dist <= 2)) continue
+
+          // Preferir consolidar en el camión con más capacidad libre
+          const libreA = camiones.find(c => c.codigo === camA)!.tonelaje_max_kg - cargaFinal[camA].kg
+          const libreB = camiones.find(c => c.codigo === camB)!.tonelaje_max_kg - cargaFinal[camB].kg
+
+          if (libreA >= libreB) {
+            // Mover b → camA
+            if (cabePedido(b, camA)) { moverPedido(b, camB, camA); changed = true }
+            else if (cabePedido(a, camB)) { moverPedido(a, camA, camB); changed = true }
+          } else {
+            // Mover a → camB (camB tiene más espacio)
+            if (cabePedido(a, camB)) { moverPedido(a, camA, camB); changed = true }
+            else if (cabePedido(b, camA)) { moverPedido(b, camB, camA); changed = true }
           }
         }
       }
+      if (!changed) break
     }
   }
 

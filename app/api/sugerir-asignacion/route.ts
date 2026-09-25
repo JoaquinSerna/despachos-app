@@ -183,13 +183,16 @@ async function sugerirConRouteOptimization(
       const a = conCoords[i], b = conCoords[j]
       const mismoCli = normCliente(a.cliente) === normCliente(b.cliente)
       const dist = distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!)
+      const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
+      // hierro_largo es incompatible con general y granel — nunca agrupar entre sí
+      const sonIncompatibles = (tipoA === 'hierro_largo') !== (tipoB === 'hierro_largo')
+      if (sonIncompatibles) continue
       // Mismo cliente a menos de 2km → mismo camión (hard)
-      if (mismoCli && dist <= 2) unionG(a.id, b.id)
-      // Distinto cliente pero a menos de 1km → mismo camión (soft: solo si mismo tipo de carga)
-      else if (!mismoCli && dist <= 1) {
-        const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
-        if (tipoA === tipoB && tipoA !== 'granel') unionG(a.id, b.id)
-      }
+      if (mismoCli && dist <= 2) { unionG(a.id, b.id); continue }
+      // Mismo destino (< 300m) → siempre mismo camión, sin importar tipo de carga
+      if (dist <= 0.3) { unionG(a.id, b.id); continue }
+      // Distinto cliente pero a menos de 1km → mismo camión si mismo tipo
+      if (!mismoCli && dist <= 1 && tipoA === tipoB && tipoA !== 'granel') unionG(a.id, b.id)
     }
   }
   // Grupos con >1 pedido
@@ -428,6 +431,53 @@ async function sugerirConRouteOptimization(
         const reason = skipped.reasons?.[0]?.code ?? 'UNKNOWN'
         const p = conCoords.find(x => x.id === pedidoId)
         pedidosSinAsignar[pedidoId] = traducirMotivo(reason, p)
+      }
+    }
+  }
+
+  // ── Post-proceso: corregir splits de mismo destino ───────────────────────
+  // Google a veces divide pedidos colocados (< 300m) en camiones distintos cuando
+  // optimiza rutas. Lo corregimos moviendo el pedido más liviano al camión del más pesado.
+  {
+    // Calcular carga resultante por camión (ya_asignados + asignados por Google)
+    const cargaFinal: Record<string, { kg: number; pos: number }> = {}
+    camiones.forEach(c => {
+      cargaFinal[c.codigo] = {
+        kg: ya_asignados.filter(p => p.camion_id === c.codigo).reduce((s, p) => s + (p.peso_total_kg ?? 0), 0),
+        pos: ya_asignados.filter(p => p.camion_id === c.codigo).reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0),
+      }
+    })
+    conCoords.forEach(p => {
+      const cam = asignacion[p.id]
+      if (cam && cargaFinal[cam]) {
+        cargaFinal[cam].kg += p.peso_total_kg ?? 0
+        cargaFinal[cam].pos += p.volumen_total_m3 ?? 0
+      }
+    })
+    for (let i = 0; i < conCoords.length; i++) {
+      for (let j = i + 1; j < conCoords.length; j++) {
+        const a = conCoords[i], b = conCoords[j]
+        const camA = asignacion[a.id], camB = asignacion[b.id]
+        if (!camA || !camB || camA === camB) continue
+        if (distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!) > 0.3) continue
+        const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
+        if ((tipoA === 'hierro_largo') !== (tipoB === 'hierro_largo')) continue
+        // Intentar mover b → camA
+        const truckA = camiones.find(c => c.codigo === camA)
+        if (truckA) {
+          const libreKg = truckA.tonelaje_max_kg - cargaFinal[camA].kg
+          const librePos = truckA.posiciones_total - cargaFinal[camA].pos
+          const entraKg = libreKg + (a.peso_total_kg ?? 0) >= (a.peso_total_kg ?? 0) + (b.peso_total_kg ?? 0)
+          const entraPos = truckA.posiciones_total === 0 || librePos + (a.volumen_total_m3 ?? 0) >= (a.volumen_total_m3 ?? 0) + (b.volumen_total_m3 ?? 0)
+          if (entraKg && entraPos) {
+            // Mover b a camA
+            cargaFinal[camB].kg -= b.peso_total_kg ?? 0
+            cargaFinal[camB].pos -= b.volumen_total_m3 ?? 0
+            cargaFinal[camA].kg += b.peso_total_kg ?? 0
+            cargaFinal[camA].pos += b.volumen_total_m3 ?? 0
+            asignacion[b.id] = camA
+          }
+        }
       }
     }
   }

@@ -229,8 +229,8 @@ export default function NuevoDespacho() {
     const disponibles: number[] = []
     const sinCupoConFlota: number[] = []
 
-    // Calcular vueltas cerradas por horario
-    const cerradasHorario = FRANJAS.filter(f => vultaCerrada(form.fecha_entrega, f)).map(f => f.vuelta)
+    // Calcular vueltas cerradas por horario y por día de semana (sábados: V3/V4 bloqueadas)
+    const cerradasHorario = vueltasCerradasPara(form.fecha_entrega)
 
     // También verificar cierres manuales del programador
     const { data: vcmData } = await supabase
@@ -496,13 +496,14 @@ export default function NuevoDespacho() {
       return
     }
 
-    // Validar que la vuelta seleccionada no esté cerrada (por horario o manualmente)
+    // Validar que la vuelta seleccionada no esté cerrada (por horario, sábado o manualmente)
     if (form.vuelta && form.vuelta !== 'fuera_prog') {
       const vueltaNum = parseInt(form.vuelta)
       const franja = FRANJAS.find(f => f.vuelta === vueltaNum)
       const cerradaPorHorario = franja && vultaCerrada(form.fecha_entrega, franja)
       const cerradaManualmente = cerradasFresh.includes(vueltaNum)
-      if (cerradaPorHorario || cerradaManualmente) {
+      const cerradaPorSabado = vueltasCerradasPara(form.fecha_entrega).includes(vueltaNum)
+      if (cerradaPorHorario || cerradaManualmente || cerradaPorSabado) {
         setError('Esta vuelta ya cerró. Seleccioná "Fuera de programación" para que el ruteador lo asigne a la franja disponible.')
         setLoading(false)
         return

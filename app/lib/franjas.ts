@@ -25,8 +25,19 @@ export function vultaCerrada(fechaEntrega: string, franja: Franja): boolean {
   return ahora >= cutoff
 }
 
+/** Devuelve true si la fecha cae en sábado */
+export function esSabado(fechaEntrega: string): boolean {
+  if (!fechaEntrega) return false
+  return new Date(fechaEntrega + 'T12:00:00').getDay() === 6
+}
+
+// V3 y V4 no están disponibles los sábados
+const VUELTAS_BLOQUEADAS_SABADO = [3, 4]
+
 /** Devuelve qué números de vuelta están cerrados para una fecha dada */
 export function vueltasCerradasPara(fechaEntrega: string): number[] {
   if (!fechaEntrega) return []
-  return FRANJAS.filter(f => vultaCerrada(fechaEntrega, f)).map(f => f.vuelta)
+  const cerradasHorario = FRANJAS.filter(f => vultaCerrada(fechaEntrega, f)).map(f => f.vuelta)
+  const cerradasSabado = esSabado(fechaEntrega) ? VUELTAS_BLOQUEADAS_SABADO : []
+  return [...new Set([...cerradasHorario, ...cerradasSabado])]
 }

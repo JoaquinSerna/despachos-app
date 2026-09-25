@@ -670,7 +670,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             className="text-xs border rounded px-2 py-1 flex-1 focus:outline-none"
             style={{ borderColor: '#e8edf8' }}>
             <option value="" disabled>Mover a vuelta...</option>
-            {[1, 2, 3, 4].filter(v => v !== pedido.vuelta).map(v => (
+            {[1, 2, 3, 4].filter(v => v !== pedido.vuelta && vueltasDisponibles(pedido.fecha_entrega).includes(v)).map(v => (
               <option key={v} value={v}>Vuelta {v}</option>
             ))}
           </select>
@@ -3033,6 +3033,10 @@ function ProgramacionInner() {
 
   async function handleReprogramarVuelta() {
     if (!reprogVueltaFecha) return
+    if (!vueltasDisponibles(reprogVueltaFecha).includes(reprogVueltaNueva)) {
+      showToast('Esa vuelta no está disponible para la fecha seleccionada', 'err')
+      return
+    }
 
     // Solo reprogramar pedidos activos (excluir finalizados: en_camino, entregado, etc.)
     const activos = pedidos.filter(p => p.tipo !== 'transferencia' && (p.estado === 'pendiente' || p.estado === 'programado'))
@@ -3081,6 +3085,10 @@ function ProgramacionInner() {
   async function handleReprogramar(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = pedidos.find(p => p.id === id)
     if (!pedido) return
+    if (!vueltasDisponibles(fecha).includes(vuelta)) {
+      showToast('Esa vuelta no está disponible para la fecha seleccionada', 'err')
+      return
+    }
     if (pedido.tipo === 'transferencia') {
       try {
         await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, fecha_solicitada: fecha, vuelta: 0, cod_vehiculo: null }) })

@@ -172,64 +172,6 @@ async function sugerirConRouteOptimization(
     .replace(/\b(s\.?a\.?|s\.?r\.?l\.?|sas|sa|srl)\b/g, '')
     .replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
 
-  const parentG: Record<string, string> = {}
-  conCoords.forEach(p => { parentG[p.id] = p.id })
-  const findG = (id: string): string => parentG[id] === id ? id : (parentG[id] = findG(parentG[id]))
-  const unionG = (a: string, b: string) => { parentG[findG(a)] = findG(b) }
-
-  for (let i = 0; i < conCoords.length; i++) {
-    for (let j = i + 1; j < conCoords.length; j++) {
-      const a = conCoords[i], b = conCoords[j]
-      const mismoCli = normCliente(a.cliente) === normCliente(b.cliente)
-      const dist = distKm(a.latitud!, a.longitud!, b.latitud!, b.longitud!)
-      const tipoA = getShipmentType(a), tipoB = getShipmentType(b)
-      // hierro_largo es incompatible con general y granel — nunca agrupar entre sí
-      const sonIncompatibles = (tipoA === 'hierro_largo') !== (tipoB === 'hierro_largo')
-      if (sonIncompatibles) continue
-      // Mismo cliente a menos de 2km → mismo camión (hard)
-      if (mismoCli && dist <= 2) { unionG(a.id, b.id); continue }
-      // Mismo destino (< 300m) → siempre mismo camión, sin importar tipo de carga
-      if (dist <= 0.3) { unionG(a.id, b.id); continue }
-      // Distinto cliente pero a menos de 1km → mismo camión si mismo tipo
-      if (!mismoCli && dist <= 1 && tipoA === tipoB && tipoA !== 'granel') unionG(a.id, b.id)
-    }
-  }
-  // Grupos con >1 pedido
-  const gruposCliente = new Map<string, PedidoInput[]>()
-  conCoords.forEach(p => {
-    const root = findG(p.id)
-    if (!gruposCliente.has(root)) gruposCliente.set(root, [])
-    gruposCliente.get(root)!.push(p)
-  })
-  // Para cada grupo, calcular qué camiones tienen capacidad combinada suficiente
-  const allowedByPedido: Record<string, number[]> = {}
-  for (const [, grupoPedidos] of gruposCliente) {
-    if (grupoPedidos.length <= 1) continue
-    const totalKg = grupoPedidos.reduce((s, p) => s + (p.peso_total_kg ?? 0), 0)
-    const totalPos = grupoPedidos.reduce((s, p) => s + (p.volumen_total_m3 ?? 0), 0)
-    const eligibles = camiones
-      .map((c, i) => ({ c, i }))
-      .filter(({ c }) => {
-        const libreKg = c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0)
-        const librePos = c.posiciones_total - (cargaActual[c.codigo]?.pos ?? 0)
-        return libreKg >= totalKg && (c.posiciones_total === 0 || librePos >= totalPos)
-      })
-      .map(({ i }) => i)
-    // Si hay camiones que aguantan el grupo completo → forzar (restricción dura)
-    // Si ningún camión aguanta el grupo → al menos forzar que cada pedido vaya
-    // a alguno de los camiones con más capacidad libre (soft: top 3 por capacidad)
-    if (eligibles.length > 0) {
-      grupoPedidos.forEach(p => { allowedByPedido[p.id] = eligibles })
-    } else {
-      const top3 = camiones
-        .map((c, i) => ({ c, i, libre: c.tonelaje_max_kg - (cargaActual[c.codigo]?.kg ?? 0) }))
-        .sort((a, b) => b.libre - a.libre)
-        .slice(0, 3)
-        .map(({ i }) => i)
-      if (top3.length > 0) grupoPedidos.forEach(p => { allowedByPedido[p.id] = top3 })
-    }
-  }
-
   // ── Construir shipments ordenados: grandes primero (FFD) ────────────────────
   // Pedidos que caben sólo en UN camión (por capacidad de posiciones) → forzar ese camión
   const buildShipment = (p: PedidoInput) => {
@@ -279,23 +221,7 @@ async function sugerirConRouteOptimization(
         }
       }
     }
-    // 2. Mismo cliente
-    // Si ya hay una restricción dura (ej: volcador), la intersección puede quedar vacía porque
-    // el grupo combinado no cabe en el camión requerido → en ese caso NO borrar la restricción dura,
-    // simplemente ignorar el agrupamiento para este pedido (Google puede separar el grupo con penalty).
-    if (allowedByPedido[p.id]) {
-      if (finalAllowed !== null) {
-        // Hay restricción dura previa (volcador) → intersectar solo si el resultado no queda vacío
-        const inter = finalAllowed.filter(i => allowedByPedido[p.id].includes(i))
-        if (inter.length > 0) finalAllowed = inter
-        // Si inter es vacío: el grupo mismo-cliente no puede ir junto (volcador no tiene tonelaje)
-        // → mantener la restricción volcador y dejar que Google decida con penalty
-      } else {
-        finalAllowed = allowedByPedido[p.id]
-        if (finalAllowed.length === 0) finalAllowed = null
-      }
-    }
-    // 3. Único camión elegible por capacidad → forzarlo (pedido grande que sólo cabe en uno)
+    // 2. Único camión elegible por capacidad → forzarlo (pedido grande que sólo cabe en uno)
     if (!finalAllowed && elegiblesPorCapacidad.length === 1) {
       finalAllowed = elegiblesPorCapacidad
     }

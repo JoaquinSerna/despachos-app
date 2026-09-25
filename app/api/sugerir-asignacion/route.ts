@@ -165,7 +165,6 @@ async function sugerirConRouteOptimization(
 
   // Fecha de hoy para ventanas horarias
   const dateStr = new Date().toISOString().split('T')[0]
-  const vuelta = conCoords[0]?.vuelta ?? 1
 
   // ── Detectar grupos de mismo cliente (fuzzy) dentro de 2km ───────────────
   const normCliente = (s: string) => s.toLowerCase()
@@ -234,12 +233,10 @@ async function sugerirConRouteOptimization(
   // ── Construir shipments ordenados: grandes primero (FFD) ────────────────────
   // Pedidos que caben sólo en UN camión (por capacidad de posiciones) → forzar ese camión
   const buildShipment = (p: PedidoInput) => {
-    const tw = getTimeWindow(vuelta, dateStr)
     const delivery: any = {
       arrivalLocation: { latitude: p.latitud!, longitude: p.longitud! },
       duration: '600s',
     }
-    if (tw) delivery.timeWindows = [tw]
 
     // Camiones elegibles por capacidad individual
     const elegiblesPorCapacidad = camiones

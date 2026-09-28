@@ -94,18 +94,27 @@ export async function POST(req: NextRequest) {
       : Array.isArray(body.requerimiento_ids) ? body.requerimiento_ids : []
 
     if (reqIds.length > 0) {
-      const { data: materiales, error: matErr } = await admin.from('materiales').select('*')
+      const [{ data: materiales, error: matErr }, { data: aliases, error: aliasErr }] = await Promise.all([
+        admin.from('materiales').select('*'),
+        admin.from('material_aliases').select('descripcion_pdf, material_id').eq('resuelto', true),
+      ])
       if (matErr) return NextResponse.json({ error: matErr.message }, { status: 500 })
+      if (aliasErr) return NextResponse.json({ error: aliasErr.message }, { status: 500 })
 
       const materialMap: Record<number, any> = {}
       for (const m of materiales ?? []) materialMap[m.id] = m
+
+      const aliasMap: Record<string, number> = {}
+      for (const a of aliases ?? []) {
+        if (a.material_id) aliasMap[normalizar(a.descripcion_pdf)] = a.material_id
+      }
 
       const resultados: { id: string; posiciones: number; peso_kg: number }[] = []
 
       for (const reqId of reqIds) {
         const { data: items, error: itemsErr } = await admin
           .from('requerimiento_items')
-          .select('id_producto, cantidad, cantidad_aprobada')
+          .select('id_producto, nombre_producto, cantidad_solicitada, cantidad_aprobada')
           .eq('requerimiento_id', reqId)
 
         if (itemsErr || !items?.length) {
@@ -113,10 +122,14 @@ export async function POST(req: NextRequest) {
           continue
         }
 
-        const mapped = items.map((it: any) => ({
-          cantidad: it.cantidad_aprobada ?? it.cantidad,
-          material: materialMap[it.id_producto],
-        }))
+        const mapped = items.map((it: any) => {
+          const cantidad = it.cantidad_aprobada ?? it.cantidad_solicitada
+          // lookup directo si tiene id_producto, fuzzy fallback si vino como texto libre
+          const material = it.id_producto
+            ? materialMap[it.id_producto]
+            : matchMaterial(it.nombre_producto ?? '', materiales ?? [], aliasMap)
+          return { cantidad, material }
+        })
 
         const { posicionesTotal, pesoTotal } = calcularPesoYPosiciones(mapped)
 

@@ -100,21 +100,21 @@ export async function GET(req: NextRequest) {
     // ── 2. ENTREGA_DETALLE ────────────────────────────────────────────────────
     const { data: entregas, error: eEntregas } = await admin
       .from('entrega_detalle')
-      .select('id, pedido_id, camion_codigo, chofer_id, fecha_entrega_real, resultado, motivo_devolucion, observacion, created_at')
+      .select('id, pedido_id, id_despacho, nv, nombre_item, cantidad_solicitada, cantidad_entregada, unidad, motivo, created_at')
       .order('created_at', { ascending: false })
     if (eEntregas) throw new Error('entrega_detalle: ' + eEntregas.message)
 
-    const headersEntregas = ['id', 'pedido_id', 'camion_codigo', 'chofer_id', 'fecha_entrega_real', 'resultado', 'motivo_devolucion', 'observacion', 'created_at']
+    const headersEntregas = ['id', 'pedido_id', 'id_despacho', 'nv', 'nombre_item', 'cantidad_solicitada', 'cantidad_entregada', 'unidad', 'motivo', 'created_at']
     await upsertSheet(token, 'entrega_detalle', headersEntregas, toRows(entregas ?? [], headersEntregas))
 
     // ── 3. REPROGRAMACIONES ───────────────────────────────────────────────────
     const { data: repros, error: eRepros } = await admin
       .from('reprogramaciones')
-      .select('id, pedido_id, fecha_from, fecha_to, motivo, responsable, usuario_id, created_at')
+      .select('id, pedido_id, nv, fecha_from, fecha_to, vuelta_from, vuelta_to, motivo, adelanta, delta_dias, reprogramado_at, created_at')
       .order('created_at', { ascending: false })
     if (eRepros) throw new Error('reprogramaciones: ' + eRepros.message)
 
-    const headersRepros = ['id', 'pedido_id', 'fecha_from', 'fecha_to', 'motivo', 'responsable', 'usuario_id', 'created_at']
+    const headersRepros = ['id', 'pedido_id', 'nv', 'fecha_from', 'fecha_to', 'vuelta_from', 'vuelta_to', 'motivo', 'adelanta', 'delta_dias', 'reprogramado_at', 'created_at']
     await upsertSheet(token, 'reprogramaciones', headersRepros, toRows(repros ?? [], headersRepros))
 
     // ── 4. Hoja de control ────────────────────────────────────────────────────

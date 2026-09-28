@@ -37,9 +37,11 @@ function toCSV(rows: any[]): string {
   ]
   const header = cols.join(';')
   const lines = rows.map(r => {
-    const hora = r.created_at
-      ? new Date(r.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
-      : ''
+    const hora = r.hora_evento
+      ? r.hora_evento.slice(0, 5)
+      : r.created_at
+        ? new Date(r.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+        : ''
     const vals: Record<string, any> = { ...r, hora }
     return cols.map(c => {
       const v = vals[c] ?? ''
@@ -79,6 +81,10 @@ export default function GuardiaPage() {
   const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string; fotosUrls?: string[] } | null>(null)
   const [eliminando, setEliminando] = useState(false)
+  const [editHora, setEditHora] = useState<{ id: string; label: string; horaActual: string } | null>(null)
+  const [editHoraVal, setEditHoraVal] = useState('')
+  const [guardandoHora, setGuardandoHora] = useState(false)
+  const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string } | null>(null)
 
   // Choferes
   const [choferes, setChoferes] = useState<{id: string, nombre: string, camion_codigo: string | null}[]>([])
@@ -211,6 +217,22 @@ export default function GuardiaPage() {
     finally { setEliminando(false) }
   }
 
+  const guardarHoraEvento = async () => {
+    if (!editHora || !editHoraVal) return
+    setGuardandoHora(true)
+    const { error } = await supabase
+      .from('guardia_eventos')
+      .update({ hora_evento: editHoraVal })
+      .eq('id', editHora.id)
+    if (error) { showToast('Error al guardar hora', 'err') }
+    else {
+      setMatrizData(prev => prev.map(e => e.id === editHora.id ? { ...e, hora_evento: editHoraVal } : e))
+      setEditHora(null)
+      showToast('Hora actualizada')
+    }
+    setGuardandoHora(false)
+  }
+
   const exportarRegistros = async () => {
     setExportando(true)
     const { data, error } = await supabase
@@ -238,7 +260,7 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls')
+      .select('id, camion_codigo, tipo, created_at, hora_evento, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
@@ -657,8 +679,10 @@ export default function GuardiaPage() {
                 { key: 'ingreso',      label: 'Ingreso',      emoji: '🏠', color: '#059669' },
                 { key: 'devolucion',   label: 'Devolución',   emoji: '📋', color: '#b45309' },
               ]
-              const fmt = (iso: string) =>
-                new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+              const fmtEv = (ev: any) =>
+                ev.hora_evento
+                  ? ev.hora_evento.slice(0, 5)
+                  : new Date(ev.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 
               // Agrupar eventos por camion → tipo
               const byKey: Record<string, Record<string, any[]>> = {}
@@ -732,21 +756,37 @@ export default function GuardiaPage() {
                                         const parts = [ev.cant_posiciones && `${ev.cant_posiciones} pos`, ev.paquetes_hierro && `${ev.paquetes_hierro} H`].filter(Boolean)
                                         detalle = parts.join(' · ')
                                       }
-                                      const label = `${camion} · ${t.label} · ${fmt(ev.created_at)}`
+                                      const horaDisplay = fmtEv(ev)
+                                      const label = `${camion} · ${t.label} · ${horaDisplay}`
+                                      const tieneFotos = ev.fotos_urls?.length > 0
                                       return (
                                         <div key={i} style={{ marginBottom: i < evs.length - 1 ? 4 : 0 }}>
                                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                                            <span style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap' }}>
-                                              {fmt(ev.created_at)}{detalle ? ` · ${detalle}` : ''}
+                                            <span
+                                              onClick={tieneFotos ? () => setVisorFotos({ urls: ev.fotos_urls, titulo: label }) : undefined}
+                                              style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap', cursor: tieneFotos ? 'pointer' : 'default' }}
+                                              title={tieneFotos ? `Ver ${ev.fotos_urls.length} foto${ev.fotos_urls.length > 1 ? 's' : ''}` : undefined}
+                                            >
+                                              {tieneFotos ? '📷 ' : ''}{horaDisplay}{detalle ? ` · ${detalle}` : ''}
+                                              {ev.hora_evento && <span style={{ fontSize: 10, opacity: 0.7 }}> ✎</span>}
                                             </span>
                                             {rol === 'gerencia' && (
-                                              <button
-                                                onClick={() => setConfirmDelete({ id: ev.id, label, fotosUrls: ev.fotos_urls })}
-                                                title="Eliminar registro"
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 14, padding: '2px 4px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
-                                                onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
-                                                onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
-                                              >×</button>
+                                              <>
+                                                <button
+                                                  onClick={() => { setEditHora({ id: ev.id, label, horaActual: horaDisplay }); setEditHoraVal(horaDisplay) }}
+                                                  title="Editar hora"
+                                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
+                                                  onMouseEnter={e => (e.currentTarget.style.color = '#254A96')}
+                                                  onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
+                                                >✎</button>
+                                                <button
+                                                  onClick={() => setConfirmDelete({ id: ev.id, label, fotosUrls: ev.fotos_urls })}
+                                                  title="Eliminar registro"
+                                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 14, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
+                                                  onMouseEnter={e => (e.currentTarget.style.color = '#ef4444')}
+                                                  onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
+                                                >×</button>
+                                              </>
                                             )}
                                           </div>
                                           {ev.chofer_apellido && (
@@ -1011,6 +1051,53 @@ export default function GuardiaPage() {
           </div>
         )}
       </div>
+
+      {/* Modal visor de fotos */}
+      {visorFotos && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}
+          onClick={() => setVisorFotos(null)}
+        >
+          <p style={{ color: '#fff', fontWeight: 700, fontSize: 14, marginBottom: 12, textAlign: 'center' }}>{visorFotos.titulo}</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+            {visorFotos.urls.map((url, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={i} src={url} alt={`foto ${i + 1}`}
+                style={{ maxWidth: 260, maxHeight: 360, objectFit: 'contain', borderRadius: 12, border: '2px solid rgba(255,255,255,0.2)' }} />
+            ))}
+          </div>
+          <button onClick={() => setVisorFotos(null)}
+            style={{ marginTop: 20, padding: '10px 28px', borderRadius: 12, border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>
+            Cerrar
+          </button>
+        </div>
+      )}
+
+      {/* Modal editar hora — solo gerencia */}
+      {editHora && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 340, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 4 }}>Corregir hora del evento</p>
+            <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>{editHora.label}</p>
+            <input
+              type="time"
+              value={editHoraVal}
+              onChange={e => setEditHoraVal(e.target.value)}
+              style={{ width: '100%', padding: '12px', fontSize: 20, borderRadius: 10, border: '1.5px solid #e0e0e0', textAlign: 'center', boxSizing: 'border-box', marginBottom: 16 }}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setEditHora(null)} disabled={guardandoHora}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button onClick={guardarHoraEvento} disabled={guardandoHora || !editHoraVal}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoHora ? 0.7 : 1 }}>
+                {guardandoHora ? 'Guardando…' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal eliminar — solo gerencia */}
       {confirmDelete && (

@@ -33,7 +33,7 @@ function toCSV(rows: any[]): string {
     'tipo_ingreso', 'deposito_desde',
     'lleva_transferencia', 'deposito_destino',
     'chofer_apellido', 'categoria', 'motivo', 'remito', 'nv', 'observacion',
-    'cant_posiciones', 'paquetes_hierro',
+    'cant_posiciones', 'paquetes_hierro', 'registrado_por_nombre',
   ]
   const header = cols.join(';')
   const lines = rows.map(r => {
@@ -217,9 +217,19 @@ export default function GuardiaPage() {
       .from('guardia_eventos')
       .select('*')
       .order('created_at', { ascending: false })
+    if (error || !data?.length) { setExportando(false); showToast('Sin registros para exportar', 'err'); return }
+
+    // Resolver UUIDs → nombres
+    const uids = [...new Set(data.map((e: any) => e.registrado_por).filter(Boolean))]
+    let nombresMap: Record<string, string> = {}
+    if (uids.length) {
+      const { data: usuarios } = await supabase.from('usuarios').select('id, nombre').in('id', uids)
+      for (const u of (usuarios ?? [])) nombresMap[u.id] = u.nombre
+    }
+    const rows = data.map((e: any) => ({ ...e, registrado_por_nombre: nombresMap[e.registrado_por] ?? '' }))
+
     setExportando(false)
-    if (error || !data?.length) { showToast('Sin registros para exportar', 'err'); return }
-    const csv = toCSV(data)
+    const csv = toCSV(rows)
     descargarCSV(csv, `guardia_${hoy()}.csv`)
     showToast(`${data.length} registros exportados`)
   }

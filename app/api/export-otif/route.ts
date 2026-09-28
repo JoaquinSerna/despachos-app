@@ -90,11 +90,11 @@ export async function GET(req: NextRequest) {
     // ── 1. PEDIDOS ────────────────────────────────────────────────────────────
     const { data: pedidos, error: ePedidos } = await admin
       .from('pedidos')
-      .select('id, nv, cliente, direccion, localidad, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, requiere_volcador, created_at')
+      .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, requiere_volcador, created_at')
       .order('fecha_entrega', { ascending: false })
     if (ePedidos) throw new Error('pedidos: ' + ePedidos.message)
 
-    const headersPedidos = ['id', 'nv', 'cliente', 'direccion', 'localidad', 'sucursal', 'fecha_entrega', 'vuelta', 'estado', 'peso_total_kg', 'volumen_total_m3', 'requiere_volcador', 'created_at']
+    const headersPedidos = ['id', 'nv', 'cliente', 'direccion', 'sucursal', 'fecha_entrega', 'vuelta', 'estado', 'peso_total_kg', 'volumen_total_m3', 'requiere_volcador', 'created_at']
     await upsertSheet(token, 'pedidos', headersPedidos, toRows(pedidos ?? [], headersPedidos))
 
     // ── 2. ENTREGA_DETALLE ────────────────────────────────────────────────────

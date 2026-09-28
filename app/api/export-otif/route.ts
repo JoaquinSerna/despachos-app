@@ -27,6 +27,21 @@ async function getSheetsToken(): Promise<string> {
   return token
 }
 
+async function fetchAll(admin: ReturnType<typeof getAdmin>, table: string, select: string, orderCol: string): Promise<any[]> {
+  const PAGE = 1000
+  let all: any[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await admin.from(table).select(select).order(orderCol, { ascending: false }).range(from, from + PAGE - 1)
+    if (error) throw new Error(`${table}: ${error.message}`)
+    if (!data || data.length === 0) break
+    all = all.concat(data)
+    if (data.length < PAGE) break
+    from += PAGE
+  }
+  return all
+}
+
 async function sheetsRequest(token: string, method: string, path: string, body?: any) {
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}${path}`, {
     method,
@@ -88,50 +103,35 @@ export async function GET(req: NextRequest) {
     const token = await getSheetsToken()
 
     // ── 1. PEDIDOS ────────────────────────────────────────────────────────────
-    const { data: pedidos, error: ePedidos } = await admin
-      .from('pedidos')
-      .select('id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, requiere_volcador, created_at')
-      .order('fecha_entrega', { ascending: false })
-    if (ePedidos) throw new Error('pedidos: ' + ePedidos.message)
-
+    const pedidos = await fetchAll(admin, 'pedidos', 'id, nv, cliente, direccion, sucursal, fecha_entrega, vuelta, estado, peso_total_kg, volumen_total_m3, requiere_volcador, created_at', 'fecha_entrega')
     const headersPedidos = ['id', 'nv', 'cliente', 'direccion', 'sucursal', 'fecha_entrega', 'vuelta', 'estado', 'peso_total_kg', 'volumen_total_m3', 'requiere_volcador', 'created_at']
-    await upsertSheet(token, 'pedidos', headersPedidos, toRows(pedidos ?? [], headersPedidos))
+    await upsertSheet(token, 'pedidos', headersPedidos, toRows(pedidos, headersPedidos))
 
     // ── 2. ENTREGA_DETALLE ────────────────────────────────────────────────────
-    const { data: entregas, error: eEntregas } = await admin
-      .from('entrega_detalle')
-      .select('id, pedido_id, id_despacho, nv, nombre_item, cantidad_solicitada, cantidad_entregada, unidad, motivo, created_at')
-      .order('created_at', { ascending: false })
-    if (eEntregas) throw new Error('entrega_detalle: ' + eEntregas.message)
-
+    const entregas = await fetchAll(admin, 'entrega_detalle', 'id, pedido_id, id_despacho, nv, nombre_item, cantidad_solicitada, cantidad_entregada, unidad, motivo, created_at', 'created_at')
     const headersEntregas = ['id', 'pedido_id', 'id_despacho', 'nv', 'nombre_item', 'cantidad_solicitada', 'cantidad_entregada', 'unidad', 'motivo', 'created_at']
-    await upsertSheet(token, 'entrega_detalle', headersEntregas, toRows(entregas ?? [], headersEntregas))
+    await upsertSheet(token, 'entrega_detalle', headersEntregas, toRows(entregas, headersEntregas))
 
     // ── 3. REPROGRAMACIONES ───────────────────────────────────────────────────
-    const { data: repros, error: eRepros } = await admin
-      .from('reprogramaciones')
-      .select('id, pedido_id, nv, fecha_from, fecha_to, vuelta_from, vuelta_to, motivo, adelanta, delta_dias, reprogramado_at, created_at')
-      .order('created_at', { ascending: false })
-    if (eRepros) throw new Error('reprogramaciones: ' + eRepros.message)
-
+    const repros = await fetchAll(admin, 'reprogramaciones', 'id, pedido_id, nv, fecha_from, fecha_to, vuelta_from, vuelta_to, motivo, adelanta, delta_dias, reprogramado_at, created_at', 'created_at')
     const headersRepros = ['id', 'pedido_id', 'nv', 'fecha_from', 'fecha_to', 'vuelta_from', 'vuelta_to', 'motivo', 'adelanta', 'delta_dias', 'reprogramado_at', 'created_at']
-    await upsertSheet(token, 'reprogramaciones', headersRepros, toRows(repros ?? [], headersRepros))
+    await upsertSheet(token, 'reprogramaciones', headersRepros, toRows(repros, headersRepros))
 
     // ── 4. Hoja de control ────────────────────────────────────────────────────
     const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' })
     await upsertSheet(token, 'ultimo_export', ['campo', 'valor'], [
       ['fecha_export', ahora],
-      ['pedidos', String(pedidos?.length ?? 0)],
-      ['entrega_detalle', String(entregas?.length ?? 0)],
-      ['reprogramaciones', String(repros?.length ?? 0)],
+      ['pedidos', String(pedidos.length)],
+      ['entrega_detalle', String(entregas.length)],
+      ['reprogramaciones', String(repros.length)],
     ])
 
     return NextResponse.json({
       ok: true,
       exportado: ahora,
-      pedidos: pedidos?.length,
-      entregas: entregas?.length,
-      reprogramaciones: repros?.length,
+      pedidos: pedidos.length,
+      entregas: entregas.length,
+      reprogramaciones: repros.length,
     })
   } catch (e: any) {
     console.error('[export-otif]', e)

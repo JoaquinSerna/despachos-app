@@ -81,13 +81,9 @@ export default function GuardiaPage() {
   const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string; fotosUrls?: string[] } | null>(null)
   const [eliminando, setEliminando] = useState(false)
-  const [editHora, setEditHora] = useState<{ id: string; label: string; horaActual: string } | null>(null)
-  const [editHoraVal, setEditHoraVal] = useState('')
-  const [guardandoHora, setGuardandoHora] = useState(false)
-  const [editCamion, setEditCamion] = useState<{ id: string; label: string; camionActual: string; choferActual: string } | null>(null)
-  const [editCamionVal, setEditCamionVal] = useState('')
-  const [editChoferVal, setEditChoferVal] = useState('')
-  const [guardandoCamion, setGuardandoCamion] = useState(false)
+  const [editEvento, setEditEvento] = useState<{ id: string; label: string; tipo: string } | null>(null)
+  const [editEventoVals, setEditEventoVals] = useState<Record<string, any>>({})
+  const [guardandoEvento, setGuardandoEvento] = useState(false)
   const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string; ev: any } | null>(null)
 
   // Choferes
@@ -221,38 +217,41 @@ export default function GuardiaPage() {
     finally { setEliminando(false) }
   }
 
-  const guardarHoraEvento = async () => {
-    if (!editHora || !editHoraVal) return
-    setGuardandoHora(true)
-    const { error } = await supabase
-      .from('guardia_eventos')
-      .update({ hora_evento: editHoraVal })
-      .eq('id', editHora.id)
-    if (error) { showToast('Error al guardar hora', 'err') }
-    else {
-      setMatrizData(prev => prev.map(e => e.id === editHora.id ? { ...e, hora_evento: editHoraVal } : e))
-      setEditHora(null)
-      showToast('Hora actualizada')
-    }
-    setGuardandoHora(false)
+  const abrirEditEvento = (ev: any, label: string) => {
+    setEditEvento({ id: ev.id, label, tipo: ev.tipo })
+    setEditEventoVals({
+      hora_evento: ev.hora_evento?.slice(0, 5) ?? '',
+      camion_codigo: ev.camion_codigo ?? '',
+      chofer_apellido: ev.chofer_apellido ?? '',
+      cant_pedidos: ev.cant_pedidos ?? '',
+      cant_posiciones: ev.cant_posiciones ?? '',
+      paquetes_hierro: ev.paquetes_hierro ?? '',
+      observacion: ev.observacion ?? '',
+      motivo: ev.motivo ?? '',
+    })
   }
 
-  const guardarCamionEvento = async () => {
-    if (!editCamion || !editCamionVal.trim()) return
-    setGuardandoCamion(true)
-    const updates: any = { camion_codigo: editCamionVal.trim().toUpperCase() }
-    if (editChoferVal.trim()) updates.chofer_apellido = editChoferVal.trim()
-    const { error } = await supabase
-      .from('guardia_eventos')
-      .update(updates)
-      .eq('id', editCamion.id)
-    if (error) { showToast('Error al guardar camión', 'err') }
+  const guardarEvento = async () => {
+    if (!editEvento) return
+    setGuardandoEvento(true)
+    const updates: any = {}
+    const v = editEventoVals
+    if (v.hora_evento) updates.hora_evento = v.hora_evento
+    if (v.camion_codigo?.trim()) updates.camion_codigo = v.camion_codigo.trim().toUpperCase()
+    if (v.chofer_apellido?.trim()) updates.chofer_apellido = v.chofer_apellido.trim()
+    if (v.cant_pedidos !== '') updates.cant_pedidos = Number(v.cant_pedidos)
+    if (v.cant_posiciones !== '') updates.cant_posiciones = Number(v.cant_posiciones)
+    if (v.paquetes_hierro !== '') updates.paquetes_hierro = Number(v.paquetes_hierro)
+    updates.observacion = v.observacion
+    updates.motivo = v.motivo
+    const { error } = await supabase.from('guardia_eventos').update(updates).eq('id', editEvento.id)
+    if (error) { showToast('Error al guardar', 'err') }
     else {
-      setMatrizData(prev => prev.map(e => e.id === editCamion.id ? { ...e, ...updates } : e))
-      setEditCamion(null)
-      showToast('Camión actualizado')
+      setMatrizData(prev => prev.map(e => e.id === editEvento.id ? { ...e, ...updates } : e))
+      setEditEvento(null)
+      showToast('Evento actualizado')
     }
-    setGuardandoCamion(false)
+    setGuardandoEvento(false)
   }
 
   const exportarRegistros = async () => {
@@ -795,19 +794,12 @@ export default function GuardiaPage() {
                                             {rol === 'gerencia' && (
                                               <>
                                                 <button
-                                                  onClick={() => { setEditHora({ id: ev.id, label, horaActual: horaDisplay }); setEditHoraVal(horaDisplay) }}
-                                                  title="Editar hora"
+                                                  onClick={() => abrirEditEvento(ev, label)}
+                                                  title="Editar evento"
                                                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
                                                   onMouseEnter={e => (e.currentTarget.style.color = '#254A96')}
                                                   onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
                                                 >✎</button>
-                                                <button
-                                                  onClick={() => { setEditCamion({ id: ev.id, label, camionActual: ev.camion_codigo, choferActual: ev.chofer_apellido ?? '' }); setEditCamionVal(ev.camion_codigo); setEditChoferVal(ev.chofer_apellido ?? '') }}
-                                                  title="Editar camión / chofer"
-                                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
-                                                  onMouseEnter={e => (e.currentTarget.style.color = '#059669')}
-                                                  onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
-                                                >🚛</button>
                                                 <button
                                                   onClick={() => setConfirmDelete({ id: ev.id, label, fotosUrls: ev.fotos_urls })}
                                                   title="Eliminar registro"
@@ -1134,62 +1126,40 @@ export default function GuardiaPage() {
         </div>
       )}
 
-      {/* Modal editar hora — solo gerencia */}
-      {editHora && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 340, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 4 }}>Corregir hora del evento</p>
-            <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>{editHora.label}</p>
-            <input
-              type="time"
-              value={editHoraVal}
-              onChange={e => setEditHoraVal(e.target.value)}
-              style={{ width: '100%', padding: '12px', fontSize: 20, borderRadius: 10, border: '1.5px solid #e0e0e0', textAlign: 'center', boxSizing: 'border-box', marginBottom: 16 }}
-            />
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setEditHora(null)} disabled={guardandoHora}
+      {/* Modal editar evento — solo gerencia */}
+      {editEvento && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20, overflowY: 'auto' }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 360, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)', margin: 'auto' }}>
+            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 4 }}>Editar evento</p>
+            <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>{editEvento.label}</p>
+            {([
+              { key: 'hora_evento', label: 'Hora', type: 'time' },
+              { key: 'camion_codigo', label: 'Camión', type: 'text', upper: true },
+              { key: 'chofer_apellido', label: 'Chofer', type: 'text' },
+              { key: 'cant_pedidos', label: 'Cant. pedidos', type: 'number', show: editEvento.tipo === 'salida' },
+              { key: 'cant_posiciones', label: 'Cant. posiciones', type: 'number', show: editEvento.tipo === 'inicio_carga' },
+              { key: 'paquetes_hierro', label: 'Paquetes hierro', type: 'number', show: editEvento.tipo === 'inicio_carga' },
+              { key: 'motivo', label: 'Motivo', type: 'text' },
+              { key: 'observacion', label: 'Observación', type: 'text' },
+            ] as any[]).filter(f => f.show !== false).map(f => (
+              <div key={f.key} style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>{f.label}</label>
+                <input
+                  type={f.type}
+                  value={editEventoVals[f.key] ?? ''}
+                  onChange={e => setEditEventoVals(prev => ({ ...prev, [f.key]: f.upper ? e.target.value.toUpperCase() : e.target.value }))}
+                  style={{ width: '100%', padding: '10px 12px', fontSize: 15, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box', ...(f.upper ? { textTransform: 'uppercase', fontWeight: 700 } : {}) }}
+                />
+              </div>
+            ))}
+            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+              <button onClick={() => setEditEvento(null)} disabled={guardandoEvento}
                 style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
                 Cancelar
               </button>
-              <button onClick={guardarHoraEvento} disabled={guardandoHora || !editHoraVal}
-                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoHora ? 0.7 : 1 }}>
-                {guardandoHora ? 'Guardando…' : 'Guardar'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal editar camión — solo gerencia */}
-      {editCamion && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 340, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
-            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 4 }}>Corregir camión / chofer</p>
-            <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>{editCamion.label}</p>
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Código de camión</label>
-            <input
-              type="text"
-              value={editCamionVal}
-              onChange={e => setEditCamionVal(e.target.value.toUpperCase())}
-              placeholder={editCamion.camionActual}
-              style={{ width: '100%', padding: '10px 12px', fontSize: 16, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box', marginBottom: 12, textTransform: 'uppercase', fontWeight: 700 }}
-            />
-            <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Chofer (apellido)</label>
-            <input
-              type="text"
-              value={editChoferVal}
-              onChange={e => setEditChoferVal(e.target.value)}
-              placeholder={editCamion.choferActual || 'Opcional'}
-              style={{ width: '100%', padding: '10px 12px', fontSize: 15, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box', marginBottom: 16 }}
-            />
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setEditCamion(null)} disabled={guardandoCamion}
-                style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
-                Cancelar
-              </button>
-              <button onClick={guardarCamionEvento} disabled={guardandoCamion || !editCamionVal.trim()}
-                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoCamion ? 0.7 : 1 }}>
-                {guardandoCamion ? 'Guardando…' : 'Guardar'}
+              <button onClick={guardarEvento} disabled={guardandoEvento}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoEvento ? 0.7 : 1 }}>
+                {guardandoEvento ? 'Guardando…' : 'Guardar'}
               </button>
             </div>
           </div>

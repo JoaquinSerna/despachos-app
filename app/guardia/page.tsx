@@ -88,7 +88,7 @@ export default function GuardiaPage() {
   const [editCamionVal, setEditCamionVal] = useState('')
   const [editChoferVal, setEditChoferVal] = useState('')
   const [guardandoCamion, setGuardandoCamion] = useState(false)
-  const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string } | null>(null)
+  const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string; ev: any } | null>(null)
 
   // Choferes
   const [choferes, setChoferes] = useState<{id: string, nombre: string, camion_codigo: string | null}[]>([])
@@ -282,7 +282,7 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, hora_evento, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls')
+      .select('id, camion_codigo, tipo, created_at, hora_evento, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls, observacion, motivo, nv, remito, categoria')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
@@ -785,7 +785,7 @@ export default function GuardiaPage() {
                                         <div key={i} style={{ marginBottom: i < evs.length - 1 ? 4 : 0 }}>
                                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
                                             <span
-                                              onClick={tieneFotos ? () => setVisorFotos({ urls: ev.fotos_urls, titulo: label }) : undefined}
+                                              onClick={tieneFotos ? () => setVisorFotos({ urls: ev.fotos_urls, titulo: label, ev }) : undefined}
                                               style={{ display: 'inline-block', background: t.color + '18', color: t.color, borderRadius: 6, padding: '3px 8px', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap', cursor: tieneFotos ? 'pointer' : 'default' }}
                                               title={tieneFotos ? `Ver ${ev.fotos_urls.length} foto${ev.fotos_urls.length > 1 ? 's' : ''}` : undefined}
                                             >
@@ -1084,21 +1084,53 @@ export default function GuardiaPage() {
       {/* Modal visor de fotos */}
       {visorFotos && (
         <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 16 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-start', zIndex: 200, padding: 20, overflowY: 'auto' }}
           onClick={() => setVisorFotos(null)}
         >
-          <p style={{ color: '#fff', fontWeight: 700, fontSize: 14, marginBottom: 12, textAlign: 'center' }}>{visorFotos.titulo}</p>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', maxWidth: 600 }} onClick={e => e.stopPropagation()}>
-            {visorFotos.urls.map((url, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src={url} alt={`foto ${i + 1}`}
-                style={{ maxWidth: 260, maxHeight: 360, objectFit: 'contain', borderRadius: 12, border: '2px solid rgba(255,255,255,0.2)' }} />
-            ))}
+          <div style={{ width: '100%', maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+            {/* Título */}
+            <p style={{ color: '#fff', fontWeight: 700, fontSize: 15, marginBottom: 12, textAlign: 'center' }}>{visorFotos.titulo}</p>
+
+            {/* Detalle del evento */}
+            {(() => {
+              const ev = visorFotos.ev
+              const campos = [
+                ev.nv && { label: 'NV', value: ev.nv },
+                ev.remito && { label: 'Remito', value: ev.remito },
+                ev.categoria && { label: 'Categoría', value: ev.categoria },
+                ev.tipo_ingreso && { label: 'Tipo ingreso', value: ev.tipo_ingreso },
+                ev.motivo && { label: 'Motivo', value: ev.motivo },
+                ev.observacion && { label: 'Observación', value: ev.observacion },
+              ].filter(Boolean) as { label: string; value: string }[]
+              if (!campos.length) return null
+              return (
+                <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: '12px 16px', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {campos.map(({ label, value }) => (
+                    <div key={label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, minWidth: 90, flexShrink: 0 }}>{label}</span>
+                      <span style={{ color: '#fff', fontSize: 13, fontWeight: 500, wordBreak: 'break-word' }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
+
+            {/* Fotos */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+              {visorFotos.urls.map((url, i) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={i} src={url} alt={`foto ${i + 1}`}
+                  style={{ maxWidth: 260, maxHeight: 360, objectFit: 'contain', borderRadius: 12, border: '2px solid rgba(255,255,255,0.2)' }} />
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
+              <button onClick={() => setVisorFotos(null)}
+                style={{ padding: '10px 28px', borderRadius: 12, border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>
+                Cerrar
+              </button>
+            </div>
           </div>
-          <button onClick={() => setVisorFotos(null)}
-            style={{ marginTop: 20, padding: '10px 28px', borderRadius: 12, border: 'none', background: 'rgba(255,255,255,0.15)', color: '#fff', fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>
-            Cerrar
-          </button>
         </div>
       )}
 

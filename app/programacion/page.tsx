@@ -58,14 +58,10 @@ const TODAS_VUELTAS = [
   { num: 4, label: 'Vuelta 4 (15–17h)' },
   { num: 5, label: 'Después de hora' },
 ]
-// Sábados: solo V1, V2 y V5 (sin V3 ni V4)
+// Logística puede mover pedidos a cualquier vuelta sin restricciones de horario ni día
 const VUELTAS_SABADO = new Set([3, 4])
-function vueltasDisponibles(fecha: string): number[] {
-  const todas = TODAS_VUELTAS.map(v => v.num)
-  const sinSabado = esSabado(fecha) ? todas.filter(v => !VUELTAS_SABADO.has(v)) : todas
-  if (fecha !== hoy()) return sinSabado
-  const horaActual = new Date().getHours()
-  return sinSabado.filter(v => !(v in VUELTA_CORTE) || horaActual < VUELTA_CORTE[v])
+function vueltasDisponibles(_fecha: string): number[] {
+  return TODAS_VUELTAS.map(v => v.num)
 }
 const ESTADOS_ACTIVOS = new Set(['pendiente', 'programado', 'en_camino'])
 function pesoColumna(ps: Pedido[]) { return ps.filter(p => ESTADOS_ACTIVOS.has(p.estado)).reduce((a, p) => a + (p.peso_total_kg ?? 0), 0) }

@@ -343,7 +343,7 @@ export default function StockPage() {
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr style={{ background: '#f9f9f9' }}>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold sticky left-0" style={{ color: '#254A96', background: '#f9f9f9', minWidth: 220 }}>Producto</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold sticky left-0" style={{ color: '#254A96', background: '#f9f9f9', minWidth: 260 }}>Producto</th>
                     <th className="text-left px-3 py-2.5 text-xs font-semibold hidden md:table-cell" style={{ color: '#B9BBB7' }}>Categoría</th>
                     {SUCURSALES.map(s => (
                       <th key={s}
@@ -360,11 +360,18 @@ export default function StockPage() {
                     <tr key={p.id_producto}
                       className="border-t hover:bg-gray-50 transition-colors"
                       style={{ borderColor: '#f0f0f0' }}>
-                      <td className="px-4 py-3 sticky left-0 bg-white" style={{ minWidth: 220 }}>
-                        <p className="font-medium text-xs leading-snug" style={{ color: '#1a1a1a' }}>{p.nombre}</p>
-                        {p.subcategoria && (
-                          <p className="text-xs mt-0.5 truncate" style={{ color: '#B9BBB7' }}>{p.subcategoria}</p>
-                        )}
+                      <td className="px-4 py-3 sticky left-0 bg-white" style={{ minWidth: 260 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                          <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: '#254A96', background: '#eef1fa', borderRadius: 4, padding: '2px 5px', lineHeight: '16px', marginTop: 1 }}>
+                            {p.id_producto}
+                          </span>
+                          <div>
+                            <p className="font-medium text-xs leading-snug" style={{ color: '#1a1a1a' }}>{p.nombre}</p>
+                            {p.subcategoria && (
+                              <p className="text-xs mt-0.5 truncate" style={{ color: '#B9BBB7' }}>{p.subcategoria}</p>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-3 py-3 hidden md:table-cell">
                         <span className="text-xs" style={{ color: '#666' }}>{p.categoria || '—'}</span>

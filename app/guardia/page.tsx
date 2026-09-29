@@ -84,6 +84,10 @@ export default function GuardiaPage() {
   const [editHora, setEditHora] = useState<{ id: string; label: string; horaActual: string } | null>(null)
   const [editHoraVal, setEditHoraVal] = useState('')
   const [guardandoHora, setGuardandoHora] = useState(false)
+  const [editCamion, setEditCamion] = useState<{ id: string; label: string; camionActual: string; choferActual: string } | null>(null)
+  const [editCamionVal, setEditCamionVal] = useState('')
+  const [editChoferVal, setEditChoferVal] = useState('')
+  const [guardandoCamion, setGuardandoCamion] = useState(false)
   const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string } | null>(null)
 
   // Choferes
@@ -231,6 +235,24 @@ export default function GuardiaPage() {
       showToast('Hora actualizada')
     }
     setGuardandoHora(false)
+  }
+
+  const guardarCamionEvento = async () => {
+    if (!editCamion || !editCamionVal.trim()) return
+    setGuardandoCamion(true)
+    const updates: any = { camion_codigo: editCamionVal.trim().toUpperCase() }
+    if (editChoferVal.trim()) updates.chofer_apellido = editChoferVal.trim()
+    const { error } = await supabase
+      .from('guardia_eventos')
+      .update(updates)
+      .eq('id', editCamion.id)
+    if (error) { showToast('Error al guardar camión', 'err') }
+    else {
+      setMatrizData(prev => prev.map(e => e.id === editCamion.id ? { ...e, ...updates } : e))
+      setEditCamion(null)
+      showToast('Camión actualizado')
+    }
+    setGuardandoCamion(false)
   }
 
   const exportarRegistros = async () => {
@@ -780,6 +802,13 @@ export default function GuardiaPage() {
                                                   onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
                                                 >✎</button>
                                                 <button
+                                                  onClick={() => { setEditCamion({ id: ev.id, label, camionActual: ev.camion_codigo, choferActual: ev.chofer_apellido ?? '' }); setEditCamionVal(ev.camion_codigo); setEditChoferVal(ev.chofer_apellido ?? '') }}
+                                                  title="Editar camión / chofer"
+                                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 12, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
+                                                  onMouseEnter={e => (e.currentTarget.style.color = '#059669')}
+                                                  onMouseLeave={e => (e.currentTarget.style.color = '#ccc')}
+                                                >🚛</button>
+                                                <button
                                                   onClick={() => setConfirmDelete({ id: ev.id, label, fotosUrls: ev.fotos_urls })}
                                                   title="Eliminar registro"
                                                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ccc', fontSize: 14, padding: '2px 3px', lineHeight: 1, borderRadius: 4, flexShrink: 0 }}
@@ -1093,6 +1122,42 @@ export default function GuardiaPage() {
               <button onClick={guardarHoraEvento} disabled={guardandoHora || !editHoraVal}
                 style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoHora ? 0.7 : 1 }}>
                 {guardandoHora ? 'Guardando…' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar camión — solo gerencia */}
+      {editCamion && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 340, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <p style={{ fontWeight: 700, fontSize: 16, color: '#1a1a1a', marginBottom: 4 }}>Corregir camión / chofer</p>
+            <p style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>{editCamion.label}</p>
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Código de camión</label>
+            <input
+              type="text"
+              value={editCamionVal}
+              onChange={e => setEditCamionVal(e.target.value.toUpperCase())}
+              placeholder={editCamion.camionActual}
+              style={{ width: '100%', padding: '10px 12px', fontSize: 16, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box', marginBottom: 12, textTransform: 'uppercase', fontWeight: 700 }}
+            />
+            <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Chofer (apellido)</label>
+            <input
+              type="text"
+              value={editChoferVal}
+              onChange={e => setEditChoferVal(e.target.value)}
+              placeholder={editCamion.choferActual || 'Opcional'}
+              style={{ width: '100%', padding: '10px 12px', fontSize: 15, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box', marginBottom: 16 }}
+            />
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setEditCamion(null)} disabled={guardandoCamion}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button onClick={guardarCamionEvento} disabled={guardandoCamion || !editCamionVal.trim()}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#059669', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: guardandoCamion ? 0.7 : 1 }}>
+                {guardandoCamion ? 'Guardando…' : 'Guardar'}
               </button>
             </div>
           </div>

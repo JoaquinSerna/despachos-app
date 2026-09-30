@@ -55,8 +55,14 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
 
   let y = 0
 
+  type RGB = [number, number, number]
+  const setFill = (c: RGB) => (doc as any).setFillColor(c[0], c[1], c[2])
+  const setDraw = (c: RGB) => (doc as any).setDrawColor(c[0], c[1], c[2])
+  const setTxt  = (c: RGB) => (doc as any).setTextColor(c[0], c[1], c[2])
+  const WHITE: RGB = [255, 255, 255]
+
   // ── HEADER ──────────────────────────────────────────────
-  doc.setFillColor(...AZUL)
+  setFill(AZUL)
   doc.rect(0, 0, W, 28, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFont('helvetica', 'bold')
@@ -80,13 +86,13 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
   const kW = (CW - 9) / 4
   kpis.forEach((k, i) => {
     const kx = M + i * (kW + 3)
-    doc.setFillColor(...AZUL_CLARO)
+    setFill(AZUL_CLARO)
     doc.roundedRect(kx, y, kW, 20, 2, 2, 'F')
-    doc.setTextColor(...GRIS)
+    setTxt(GRIS)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
     doc.text(k.label, kx + kW / 2, y + 6, { align: 'center' })
-    doc.setTextColor(...AZUL)
+    setTxt(AZUL)
     doc.setFontSize(13)
     doc.setFont('helvetica', 'bold')
     doc.text(k.value, kx + kW / 2, y + 15, { align: 'center' })
@@ -95,7 +101,7 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
 
   // ── TABLE HELPER ─────────────────────────────────────────
   function drawTableHeader(cols: { label: string; w: number }[], startX: number, ty: number) {
-    doc.setFillColor(...AZUL)
+    setFill(AZUL)
     const totalW = cols.reduce((s, c) => s + c.w, 0)
     doc.rect(startX, ty, totalW, 7, 'F')
     doc.setTextColor(255, 255, 255)
@@ -118,15 +124,11 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
     highlight?: [number, number, number]
   ) {
     const totalW = cols.reduce((s, c) => s + c.w, 0)
-    if (highlight) {
-      doc.setFillColor(...highlight)
-    } else {
-      doc.setFillColor(...(even ? GRIS_FILA : [255, 255, 255]))
-    }
+    setFill(highlight ?? (even ? GRIS_FILA : WHITE))
     doc.rect(startX, ty, totalW, 6.5, 'F')
-    doc.setDrawColor(...BORDE)
+    setDraw(BORDE)
     doc.rect(startX, ty, totalW, 6.5, 'S')
-    doc.setTextColor(...NEGRO)
+    setTxt(NEGRO)
     doc.setFontSize(7.5)
     doc.setFont('helvetica', 'normal')
     let cx = startX
@@ -139,11 +141,11 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
   }
 
   function sectionTitle(title: string, ty: number) {
-    doc.setTextColor(...AZUL)
+    setTxt(AZUL)
     doc.setFontSize(9)
     doc.setFont('helvetica', 'bold')
     doc.text(title, M, ty)
-    doc.setDrawColor(...AZUL)
+    setDraw(AZUL)
     doc.line(M, ty + 1.5, M + CW, ty + 1.5)
     return ty + 7
   }
@@ -185,7 +187,7 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
   })
 
   if (!data.ciclos.length) {
-    doc.setTextColor(...GRIS)
+    setTxt(GRIS)
     doc.setFontSize(8)
     doc.text('Sin ciclos registrados en el período.', M, y + 5)
     y += 10
@@ -217,7 +219,7 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
       )
     })
   } else {
-    doc.setTextColor(...GRIS)
+    setTxt(GRIS)
     doc.setFontSize(8)
     doc.text('Sin casos excluidos.', M, y + 5)
     y += 10
@@ -258,7 +260,7 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
       AZUL_CLARO
     )
   } else {
-    doc.setTextColor(...GRIS)
+    setTxt(GRIS)
     doc.setFontSize(8)
     doc.text('Sin devoluciones registradas.', M, y + 5)
     y += 10
@@ -297,7 +299,7 @@ export async function generarInformeGuardiaPDF(data: InformeData): Promise<void>
   const pageCount = doc.getNumberOfPages()
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p)
-    doc.setTextColor(...GRIS)
+    setTxt(GRIS)
     doc.setFontSize(7)
     doc.setFont('helvetica', 'normal')
     doc.text(

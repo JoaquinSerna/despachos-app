@@ -6,6 +6,22 @@ function toMinutes(hora: string): number {
   return h * 60 + m
 }
 
+function getTimeInfo(ev: any): { minutes: number; display: string } | null {
+  if (ev.hora_evento) {
+    const mins = toMinutes(ev.hora_evento)
+    return { minutes: mins, display: ev.hora_evento.slice(0, 5) }
+  }
+  if (ev.created_at) {
+    const d = new Date(ev.created_at)
+    const localH = (d.getUTCHours() - 3 + 24) % 24
+    const localM = d.getUTCMinutes()
+    const mins = localH * 60 + localM
+    const display = `${String(localH).padStart(2, '0')}:${String(localM).padStart(2, '0')}`
+    return { minutes: mins, display }
+  }
+  return null
+}
+
 function median(arr: number[]): number {
   if (!arr.length) return 0
   const sorted = [...arr].sort((a, b) => a - b)
@@ -23,7 +39,10 @@ function round1(n: number) { return Math.round(n * 10) / 10 }
 function buildCiclos(eventos: any[]) {
   const byFechaCamion: Record<string, any[]> = {}
   for (const ev of eventos) {
-    if (!ev.camion_codigo || !ev.hora_evento) continue
+    if (!ev.camion_codigo) continue
+    const ti = getTimeInfo(ev)
+    if (!ti) continue
+    ev._ti = ti
     const key = `${ev.fecha}__${ev.camion_codigo}`
     if (!byFechaCamion[key]) byFechaCamion[key] = []
     byFechaCamion[key].push(ev)
@@ -35,25 +54,25 @@ function buildCiclos(eventos: any[]) {
     const [fecha, camion] = key.split('__')
     const ingresos = evs
       .filter(e => e.tipo === 'ingreso')
-      .sort((a, b) => a.hora_evento.localeCompare(b.hora_evento))
+      .sort((a, b) => a._ti.minutes - b._ti.minutes)
     const salidas = evs
       .filter(e => e.tipo === 'salida')
-      .sort((a, b) => a.hora_evento.localeCompare(b.hora_evento))
+      .sort((a, b) => a._ti.minutes - b._ti.minutes)
 
     const usados = new Set<number>()
 
     for (const sal of salidas) {
-      const salMin = toMinutes(sal.hora_evento)
+      const salMin = sal._ti.minutes
       const candidatos = ingresos
         .map((ing, idx) => ({ ing, idx }))
         .filter(({ idx }) => !usados.has(idx))
-        .filter(({ ing }) => toMinutes(ing.hora_evento) < salMin)
+        .filter(({ ing }) => ing._ti.minutes < salMin)
 
       if (!candidatos.length) continue
       const { ing, idx } = candidatos[candidatos.length - 1]
       usados.add(idx)
 
-      const duracion = salMin - toMinutes(ing.hora_evento)
+      const duracion = salMin - ing._ti.minutes
 
       let excluido = false
       let motivo_exclusion: string | null = null
@@ -72,8 +91,8 @@ function buildCiclos(eventos: any[]) {
       ciclos.push({
         fecha,
         camion,
-        ingreso: ing.hora_evento.slice(0, 5),
-        salida: sal.hora_evento.slice(0, 5),
+        ingreso: ing._ti.display,
+        salida: sal._ti.display,
         duracion_min: duracion,
         excluido,
         motivo_exclusion,
@@ -103,12 +122,12 @@ function computeResumen(ciclos: any[]) {
 async function fetchEventos(admin: any, userIds: string[], desde: string, hasta: string) {
   const { data, error } = await admin
     .from('guardia_eventos')
-    .select('fecha, tipo, camion_codigo, hora_evento, deposito_destino, deposito_desde, categoria, motivo')
+    .select('fecha, tipo, camion_codigo, hora_evento, created_at, deposito_destino, deposito_desde, categoria, motivo')
     .in('registrado_por', userIds)
     .gte('fecha', desde)
     .lte('fecha', hasta)
     .order('fecha', { ascending: true })
-    .order('hora_evento', { ascending: true })
+    .order('created_at', { ascending: true })
   if (error) throw new Error(error.message)
   return data ?? []
 }

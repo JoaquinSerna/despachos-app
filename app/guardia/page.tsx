@@ -73,6 +73,12 @@ export default function GuardiaPage() {
   const [exportando, setExportando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [ultimoEvento, setUltimoEvento] = useState<string | null>(null)
+  const [sucursalUsuario, setSucursalUsuario] = useState<string>('')
+  const [informeModal, setInformeModal] = useState(false)
+  const [informeSucursal, setInformeSucursal] = useState<string>('')
+  const [informeDesde, setInformeDesde] = useState('')
+  const [informeHasta, setInformeHasta] = useState(hoy())
+  const [generandoInforme, setGenerandoInforme] = useState(false)
 
   // Matriz de actividad
   const [matrizFecha, setMatrizFecha] = useState(hoy())
@@ -134,12 +140,15 @@ export default function GuardiaPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data: perfil } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data: perfil } = await supabase.from('usuarios').select('rol, sucursal').eq('id', user.id).single()
       const rolesPermitidos = ['guardia', 'gerencia', 'admin_flota', 'ruteador', 'deposito']
       if (!rolesPermitidos.includes(perfil?.rol ?? '')) { router.push('/dashboard'); return }
       setUserId(user.id)
       const r = perfil?.rol ?? ''
       setRol(r)
+      const suc = perfil?.sucursal ?? ''
+      setSucursalUsuario(suc)
+      setInformeSucursal(suc || SUCURSALES[0])
       if (r === 'deposito') setTab('deposito')
 
       const [{ data: flota }, { data: choferesData }] = await Promise.all([
@@ -407,6 +416,26 @@ export default function GuardiaPage() {
     showToast(`Fin de carga registrado — ${fcCamion}`)
   }
 
+  const generarInforme = async () => {
+    if (!informeSucursal || !informeDesde || !informeHasta) {
+      showToast('Completá sucursal y rango de fechas', 'err'); return
+    }
+    setGenerandoInforme(true)
+    try {
+      const url = `/api/informe-guardia?sucursal=${encodeURIComponent(informeSucursal)}&desde=${informeDesde}&hasta=${informeHasta}`
+      const res = await fetch(url)
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Error al generar') }
+      const data = await res.json()
+      const { generarInformeGuardiaPDF } = await import('../lib/informe-guardia-pdf')
+      await generarInformeGuardiaPDF(data)
+      setInformeModal(false)
+    } catch (err: any) {
+      showToast(err.message || 'Error al generar informe', 'err')
+    } finally {
+      setGenerandoInforme(false)
+    }
+  }
+
   if (cargando) {
     return (
       <div style={{ minHeight: '100dvh', background: '#f4f4f3', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -581,16 +610,28 @@ export default function GuardiaPage() {
             </div>
           </div>
 
-          {/* Exportar — solo en home y para roles con acceso completo */}
+          {/* Botones de acción — solo en home y para roles con acceso completo */}
           {accion === 'home' && tieneDashboard && (
-            <button onClick={exportarRegistros} disabled={exportando}
-              style={{
-                background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
-                color: '#fff', borderRadius: 10, padding: '8px 14px', fontSize: 13,
-                fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: exportando ? 0.6 : 1,
-              }}>
-              {exportando ? 'Exportando…' : '↓ Exportar CSV'}
-            </button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {rol === 'gerencia' && (
+                <button onClick={() => setInformeModal(true)}
+                  style={{
+                    background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
+                    color: '#fff', borderRadius: 10, padding: '8px 14px', fontSize: 13,
+                    fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}>
+                  📊 Informe
+                </button>
+              )}
+              <button onClick={exportarRegistros} disabled={exportando}
+                style={{
+                  background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
+                  color: '#fff', borderRadius: 10, padding: '8px 14px', fontSize: 13,
+                  fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', opacity: exportando ? 0.6 : 1,
+                }}>
+                {exportando ? 'Exportando…' : '↓ Exportar CSV'}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1188,6 +1229,55 @@ export default function GuardiaPage() {
                 disabled={eliminando}
                 style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#ef4444', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: eliminando ? 0.7 : 1 }}>
                 {eliminando ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal informe de tiempos */}
+      {informeModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 20px', maxWidth: 380, width: '100%', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 17, fontWeight: 700, color: '#254A96' }}>
+              📊 Informe de tiempos
+            </h3>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, color: '#666', display: 'block', marginBottom: 6 }}>Sucursal</label>
+              <select
+                value={informeSucursal}
+                onChange={e => setInformeSucursal(e.target.value)}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 15, color: '#1a1a1a', background: '#fff' }}>
+                {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+              <div>
+                <label style={{ fontSize: 13, color: '#666', display: 'block', marginBottom: 6 }}>Desde</label>
+                <input type="date" value={informeDesde} onChange={e => setInformeDesde(e.target.value)}
+                  style={{ width: '100%', padding: '10px 8px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 14, color: '#1a1a1a', boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 13, color: '#666', display: 'block', marginBottom: 6 }}>Hasta</label>
+                <input type="date" value={informeHasta} onChange={e => setInformeHasta(e.target.value)}
+                  style={{ width: '100%', padding: '10px 8px', borderRadius: 10, border: '1.5px solid #e0e0e0', fontSize: 14, color: '#1a1a1a', boxSizing: 'border-box' }} />
+              </div>
+            </div>
+
+            <p style={{ fontSize: 12, color: '#888', margin: '0 0 16px' }}>
+              El período histórico de comparación se calcula automáticamente (igual duración, período anterior).
+            </p>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setInformeModal(false)}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+              <button onClick={generarInforme} disabled={generandoInforme || !informeDesde}
+                style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: generandoInforme || !informeDesde ? 0.6 : 1 }}>
+                {generandoInforme ? 'Generando…' : 'Descargar PDF'}
               </button>
             </div>
           </div>

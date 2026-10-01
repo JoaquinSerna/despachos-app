@@ -2217,8 +2217,8 @@ function ProgramacionInner() {
           .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
       ])
       const data = await res.json()
-      // Solo mostrar transferencias sin programar (vuelta=0) en el tab de transferencias
-      const list = (Array.isArray(data) ? data : []).filter((r: any) => !r.vuelta || r.vuelta === 0)
+      // Solo mostrar transferencias sin programar (vuelta=0) y autorizadas (conf_stock/preparacion) en el tab
+      const list = (Array.isArray(data) ? data : []).filter((r: any) => (!r.vuelta || r.vuelta === 0) && r.estado !== 'pendiente')
 
       // Auto-calcular peso/posiciones para transfers que aún no lo tienen
       const sinPeso = list.filter((r: any) => r.peso_total_kg == null && (r.requerimiento_items ?? []).length > 0)
@@ -2290,14 +2290,18 @@ function ProgramacionInner() {
   }
 
   async function asignarVueltaASeleccion(reqIds: string[], vuelta: number) {
-    await Promise.all(reqIds.map(id =>
+    const results = await Promise.all(reqIds.map(id =>
       fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta }) })
     ))
+    const fallidos = results.filter(r => !r.ok).length
+    if (fallidos > 0) { showToast(`Error al asignar ${fallidos} transferencia${fallidos !== 1 ? 's' : ''}`, 'err'); return }
     setTransferencias(prev => prev.filter(r => !reqIds.includes(r.id)))
     setSelTransfers(prev => { const s = new Set(prev); reqIds.forEach(id => s.delete(id)); return s })
     setContadorTransferencias(prev => Math.max(0, prev - reqIds.length))
     const label = vuelta === 5 ? 'DHora' : `V${vuelta}`
     showToast(`${reqIds.length} transferencia${reqIds.length !== 1 ? 's' : ''} asignada${reqIds.length !== 1 ? 's' : ''} a ${label}`)
+    // Navegar a la vuelta asignada para que aparezca en el kanban
+    setVueltaActiva(vuelta)
   }
 
   async function guardarPesoTransfer(id: string, peso: number, pos: number) {

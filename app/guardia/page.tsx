@@ -127,10 +127,12 @@ export default function GuardiaPage() {
   const [icCamion, setIcCamion] = useState('')
   const [icPosiciones, setIcPosiciones] = useState('')
   const [icHierro, setIcHierro] = useState('')
+  const [icObs, setIcObs] = useState('')
 
   // Fin de carga
   const [fcChofer, setFcChofer] = useState('')
   const [fcCamion, setFcCamion] = useState('')
+  const [fcObs, setFcObs] = useState('')
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo })
@@ -202,8 +204,8 @@ export default function GuardiaPage() {
     setDevRemito(''); setDevNV(''); setDevObs('')
     devFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setDevFotos([])
-    setIcChofer(''); setIcCamion(''); setIcPosiciones(''); setIcHierro('')
-    setFcChofer(''); setFcCamion('')
+    setIcChofer(''); setIcCamion(''); setIcPosiciones(''); setIcHierro(''); setIcObs('')
+    setFcChofer(''); setFcCamion(''); setFcObs('')
   }
 
   const eliminarEvento = async () => {
@@ -391,6 +393,7 @@ export default function GuardiaPage() {
       chofer_apellido: icChofer || null,
       cant_posiciones: icPosiciones ? Number(icPosiciones) : null,
       paquetes_hierro: icHierro ? Number(icHierro) : null,
+      observacion: icObs || null,
       registrado_por: userId,
     })
     setGuardando(false)
@@ -407,6 +410,7 @@ export default function GuardiaPage() {
     const { error } = await supabase.from('guardia_eventos').insert({
       fecha: hoy(), tipo: 'fin_carga', camion_codigo: fcCamion,
       chofer_apellido: fcChofer || null,
+      observacion: fcObs || null,
       registrado_por: userId,
     })
     setGuardando(false)
@@ -1083,6 +1087,12 @@ export default function GuardiaPage() {
                 value={icHierro} onChange={e => setIcHierro(e.target.value)}
                 placeholder="ej: 3" style={inputStyle} />
             </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Observación <span style={{ color: '#999' }}>(opcional)</span></label>
+              <textarea value={icObs} onChange={e => setIcObs(e.target.value)}
+                placeholder="Ej: carga incompleta, faltó material…" rows={3}
+                style={{ ...inputStyle, resize: 'none' }} />
+            </div>
             <button onClick={registrarInicioCarga} disabled={guardando} style={{ ...btnPrimary, background: '#0891b2' }}>
               {guardando ? 'Guardando…' : 'Registrar inicio de carga'}
             </button>
@@ -1105,6 +1115,12 @@ export default function GuardiaPage() {
             <div style={fieldStyle}>
               <label style={labelStyle}>Camión {fcChofer && <span style={{ color: '#888', fontWeight: 400 }}>(auto-completado, podés cambiarlo)</span>}</label>
               <SearchSelect value={fcCamion} onChange={setFcCamion} options={camiones} placeholder="Buscar camión…" />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Observación <span style={{ color: '#999' }}>(opcional)</span></label>
+              <textarea value={fcObs} onChange={e => setFcObs(e.target.value)}
+                placeholder="Ej: carga demorada, problema con pallets…" rows={3}
+                style={{ ...inputStyle, resize: 'none' }} />
             </div>
             <button onClick={registrarFinCarga} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>
               {guardando ? 'Guardando…' : 'Registrar fin de carga'}

@@ -338,7 +338,12 @@ export default function GuardiaPage() {
       )
       resetForms(); setAccion('home')
       showToast(`Salida registrada — ${salCamion}`)
-    } catch { showToast('Error al guardar', 'err') }
+    } catch (err: any) {
+      console.error('registrarSalida error:', err)
+      const msg = err?.message || err?.error_description || JSON.stringify(err)
+      alert(`Error al guardar salida:\n${msg}`)
+      showToast('Error al guardar', 'err')
+    }
     finally { setGuardando(false) }
   }
 

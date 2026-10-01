@@ -163,15 +163,40 @@ export default function GuardiaPage() {
     })
   }, [])
 
-  const agregarFotos = (files: FileList | null, setter: React.Dispatch<React.SetStateAction<FotoItem[]>>, current: FotoItem[]) => {
+  const comprimirFoto = (file: File): Promise<File> =>
+    new Promise(resolve => {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        const MAX_PX = 1600
+        let { width, height } = img
+        if (width > MAX_PX || height > MAX_PX) {
+          if (width > height) { height = Math.round(height * MAX_PX / width); width = MAX_PX }
+          else { width = Math.round(width * MAX_PX / height); height = MAX_PX }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width; canvas.height = height
+        canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(blob => {
+          resolve(blob ? new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }) : file)
+        }, 'image/jpeg', 0.82)
+      }
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file) }
+      img.src = url
+    })
+
+  const agregarFotos = async (files: FileList | null, setter: React.Dispatch<React.SetStateAction<FotoItem[]>>, current: FotoItem[]) => {
     if (!files) return
     const disponibles = MAX_FOTOS - current.length
     if (disponibles <= 0) { showToast(`Máximo ${MAX_FOTOS} fotos`, 'err'); return }
-    const nuevas = Array.from(files).slice(0, disponibles).map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-    }))
-    setter(prev => [...prev, ...nuevas])
+    const comprimidas = await Promise.all(
+      Array.from(files).slice(0, disponibles).map(async file => {
+        const compressed = await comprimirFoto(file)
+        return { file: compressed, preview: URL.createObjectURL(compressed) }
+      })
+    )
+    setter(prev => [...prev, ...comprimidas])
   }
 
   const quitarFoto = (index: number, setter: React.Dispatch<React.SetStateAction<FotoItem[]>>) => {

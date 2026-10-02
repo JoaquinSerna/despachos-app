@@ -108,8 +108,9 @@ export default function GuardiaPage() {
   // Ingreso
   const [ingChofer, setIngChofer] = useState('')
   const [ingCamion, setIngCamion] = useState('')
-  const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia'>('directo')
+  const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia' | 'con_proveedor'>('directo')
   const [ingDeposito, setIngDeposito] = useState('')
+  const [ingProveedor, setIngProveedor] = useState('')
 
   // Devolución
   const [devCamion, setDevCamion] = useState('')
@@ -224,7 +225,7 @@ export default function GuardiaPage() {
     setSalConTransferencia(false); setSalDepositoDestino('')
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
-    setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
+    setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito(''); setIngProveedor('')
     setDevCamion(''); setDevChofer(''); setDevCategoria(''); setDevMotivo('')
     setDevRemito(''); setDevNV(''); setDevObs('')
     devFotos.forEach(f => URL.revokeObjectURL(f.preview))
@@ -375,16 +376,18 @@ export default function GuardiaPage() {
   const registrarIngreso = async () => {
     if (!ingCamion) { showToast('Seleccioná el camión', 'err'); return }
     if (ingTipo === 'con_transferencia' && !ingDeposito) { showToast('Indicá el depósito de origen', 'err'); return }
+    if (ingTipo === 'con_proveedor' && !ingProveedor.trim()) { showToast('Ingresá el nombre del proveedor', 'err'); return }
     setGuardando(true)
     const { error } = await supabase.from('guardia_eventos').insert({
       fecha: hoy(), tipo: 'ingreso', camion_codigo: ingCamion,
       chofer_apellido: ingChofer || null,
-      tipo_ingreso: ingTipo, deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : null,
+      tipo_ingreso: ingTipo,
+      deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : ingTipo === 'con_proveedor' ? ingProveedor.trim() : null,
       registrado_por: userId,
     })
     setGuardando(false)
     if (error) { showToast('Error al guardar', 'err'); return }
-    const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : 'directo'
+    const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : ingTipo === 'con_proveedor' ? `con proveedor ${ingProveedor.trim()}` : 'directo'
     setUltimoEvento(`✅ ${ingCamion} ingresó ${label} — ${horaLocal()}`)
     resetForms(); setAccion('home')
     showToast(`Ingreso registrado — ${ingCamion}`)
@@ -1007,16 +1010,20 @@ export default function GuardiaPage() {
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Tipo de ingreso</label>
-              <div style={{ display: 'flex', gap: 10 }}>
-                {(['directo', 'con_transferencia'] as const).map(t => (
-                  <button key={t} onClick={() => { setIngTipo(t); if (t === 'directo') setIngDeposito('') }}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {([
+                  { key: 'directo', label: 'Vacío / directo' },
+                  { key: 'con_transferencia', label: 'Con transferencia' },
+                  { key: 'con_proveedor', label: 'Con proveedor' },
+                ] as const).map(({ key, label }) => (
+                  <button key={key} onClick={() => { setIngTipo(key); if (key !== 'con_transferencia') setIngDeposito(''); if (key !== 'con_proveedor') setIngProveedor('') }}
                     style={{
-                      flex: 1, padding: '14px 8px', borderRadius: 12, fontSize: 14, fontWeight: 600,
-                      border: ingTipo === t ? '2px solid #254A96' : '1.5px solid #e0e0e0',
-                      background: ingTipo === t ? '#eef2fb' : '#fff',
-                      color: ingTipo === t ? '#254A96' : '#666', cursor: 'pointer',
+                      flex: 1, minWidth: 90, padding: '12px 6px', borderRadius: 12, fontSize: 13, fontWeight: 600,
+                      border: ingTipo === key ? '2px solid #254A96' : '1.5px solid #e0e0e0',
+                      background: ingTipo === key ? '#eef2fb' : '#fff',
+                      color: ingTipo === key ? '#254A96' : '#666', cursor: 'pointer',
                     }}>
-                    {t === 'directo' ? 'Directo' : 'Con transferencia'}
+                    {label}
                   </button>
                 ))}
               </div>
@@ -1028,6 +1035,13 @@ export default function GuardiaPage() {
                   <option value="">Seleccioná el depósito</option>
                   {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+              </div>
+            )}
+            {ingTipo === 'con_proveedor' && (
+              <div style={fieldStyle}>
+                <label style={labelStyle}>Nombre del proveedor</label>
+                <input type="text" value={ingProveedor} onChange={e => setIngProveedor(e.target.value)}
+                  placeholder="ej: Acería Argentina" style={inputStyle} autoCapitalize="words" />
               </div>
             )}
             <button onClick={registrarIngreso} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>

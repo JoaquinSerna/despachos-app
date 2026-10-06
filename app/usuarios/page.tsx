@@ -45,7 +45,6 @@ export default function UsuariosPage() {
   const [guardandoPermisos, setGuardandoPermisos] = useState(false)
   const [modalInactivar, setModalInactivar] = useState<{ usuario: Usuario } | null>(null)
   const [motivoInactivar, setMotivoInactivar] = useState('')
-  const [botonPedidosVisible, setBotonPedidosVisible] = useState(true)
   const [adminId, setAdminId] = useState('')
   const [adminNombre, setAdminNombre] = useState('')
 
@@ -204,23 +203,6 @@ export default function UsuariosPage() {
     }
   }
 
-  const darVisualizacionPedidosComerciales = async () => {
-    const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor')
-    if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen acceso a pedidos'); setBotonPedidosVisible(false); return }
-    if (!confirm(`¿Dar visualización de pedidos a ${comerciales.length} comerciale${comerciales.length !== 1 ? 's' : ''}?`)) return
-    try {
-      await Promise.all(comerciales.map(u =>
-        fetch('/api/crear-usuario', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: u.id, permisos: { ...(u.permisos ?? {}), pedidos: 'viewer' } }),
-        })
-      ))
-      showToast(`${comerciales.length} comercial${comerciales.length !== 1 ? 'es' : ''} actualizados`)
-      setBotonPedidosVisible(false)
-      cargarUsuarios()
-    } catch { showToast('Error al actualizar', 'err') }
-  }
 
   const resetSucursalComerciales = async () => {
     const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.sucursal !== null)
@@ -538,13 +520,6 @@ export default function UsuariosPage() {
               className="text-xs px-3 py-1.5 rounded-lg border focus:outline-none w-52"
               style={{ borderColor: '#e8edf8', color: '#1a1a1a' }}
             />
-            {botonPedidosVisible && (
-              <button onClick={darVisualizacionPedidosComerciales}
-                className="text-xs px-3 py-1.5 rounded-lg font-medium border"
-                style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>
-                📋 Comerciales → Ver pedidos
-              </button>
-            )}
             <button onClick={exportarExcel}
               className="text-xs px-3 py-1.5 rounded-lg font-medium border"
               style={{ borderColor: '#e8edf8', color: '#254A96' }}>

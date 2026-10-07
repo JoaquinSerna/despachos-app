@@ -650,7 +650,7 @@ export default function GuardiaPage() {
           {/* Botones de acción — solo en home y para roles con acceso completo */}
           {accion === 'home' && tieneDashboard && (
             <div style={{ display: 'flex', gap: 8 }}>
-              {rol === 'gerencia' && (
+              {(['gerencia', 'admin_flota', 'ruteador'] as string[]).includes(rol) && (
                 <button onClick={() => setInformeModal(true)}
                   style={{
                     background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',

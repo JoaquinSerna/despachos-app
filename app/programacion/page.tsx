@@ -1935,6 +1935,7 @@ function ProgramacionInner() {
   const [contadorTransferencias, setContadorTransferencias] = useState(0)
   const [transferencias, setTransferencias] = useState<any[]>([])
   const [selTransfers, setSelTransfers] = useState<Set<string>>(new Set())
+  const [fechaAsignacion, setFechaAsignacion] = useState<string>(fecha)
   const [editTransfId, setEditTransfId] = useState<string | null>(null)
   const [editTransfPeso, setEditTransfPeso] = useState(0)
   const [editTransfPos, setEditTransfPos] = useState(0)
@@ -1986,6 +1987,7 @@ function ProgramacionInner() {
 
   // Cargar transferencias en paralelo (independiente de la vuelta activa)
   useEffect(() => { cargarTransferencias() }, [fecha, sucursal])
+  useEffect(() => { setFechaAsignacion(fecha) }, [fecha])
   useEffect(() => { cargarDatos() }, [fecha, sucursal, vueltaActiva])
   useEffect(() => { setConsolidacionDescartados(new Set()); detectarConsolidaciones() }, [fecha, sucursal])
 
@@ -2291,7 +2293,7 @@ function ProgramacionInner() {
 
   async function asignarVueltaASeleccion(reqIds: string[], vuelta: number) {
     const results = await Promise.all(reqIds.map(id =>
-      fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta, fecha_solicitada: fecha }) })
+      fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta, fecha_solicitada: fechaAsignacion }) })
     ))
     const fallidos = results.filter(r => !r.ok).length
     if (fallidos > 0) { showToast(`Error al asignar ${fallidos} transferencia${fallidos !== 1 ? 's' : ''}`, 'err'); return }
@@ -3554,6 +3556,10 @@ function ProgramacionInner() {
                             </span>
                           )}
                           <span className="text-xs" style={{ color: '#B9BBB7' }}>Asignar {selEnGrupo.length} a:</span>
+                          <input type="date" value={fechaAsignacion}
+                            onChange={e => setFechaAsignacion(e.target.value)}
+                            className="px-2 py-1 rounded-lg text-xs border"
+                            style={{ borderColor: '#e0e0e0', color: '#444' }} />
                           {[1, 2, 3, 4].map(v => (
                             <button key={v} onClick={() => asignarVueltaASeleccion(selEnGrupo.map(r => r.id), v)}
                               className="px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors"

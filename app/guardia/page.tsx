@@ -265,6 +265,8 @@ export default function GuardiaPage() {
       paquetes_hierro: ev.paquetes_hierro ?? '',
       observacion: ev.observacion ?? '',
       motivo: ev.motivo ?? '',
+      tipo_ingreso: ev.tipo_ingreso ?? 'directo',
+      deposito_desde: ev.deposito_desde ?? '',
     })
   }
 
@@ -281,6 +283,12 @@ export default function GuardiaPage() {
     if (v.paquetes_hierro !== '') updates.paquetes_hierro = Number(v.paquetes_hierro)
     updates.observacion = v.observacion
     updates.motivo = v.motivo
+    if (editEvento.tipo === 'ingreso') {
+      updates.tipo_ingreso = v.tipo_ingreso || 'directo'
+      updates.deposito_desde = (v.tipo_ingreso === 'con_transferencia' || v.tipo_ingreso === 'con_proveedor')
+        ? (v.deposito_desde?.trim() || null)
+        : null
+    }
     const { error } = await supabase.from('guardia_eventos').update(updates).eq('id', editEvento.id)
     if (error) { showToast('Error al guardar', 'err') }
     else {
@@ -1253,6 +1261,53 @@ export default function GuardiaPage() {
                 />
               </div>
             ))}
+
+            {/* Tipo de ingreso — solo para eventos de ingreso */}
+            {editEvento.tipo === 'ingreso' && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 6 }}>Tipo de ingreso</label>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {([
+                    { key: 'directo', label: 'Vacío / directo' },
+                    { key: 'con_transferencia', label: 'Con transferencia' },
+                    { key: 'con_proveedor', label: 'Con proveedor' },
+                  ] as const).map(({ key, label }) => (
+                    <button key={key}
+                      onClick={() => setEditEventoVals(prev => ({ ...prev, tipo_ingreso: key, deposito_desde: '' }))}
+                      style={{
+                        flex: 1, minWidth: 80, padding: '9px 6px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                        border: editEventoVals.tipo_ingreso === key ? '2px solid #254A96' : '1.5px solid #e0e0e0',
+                        background: editEventoVals.tipo_ingreso === key ? '#eef2fb' : '#fff',
+                        color: editEventoVals.tipo_ingreso === key ? '#254A96' : '#555',
+                        cursor: 'pointer',
+                      }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {editEventoVals.tipo_ingreso === 'con_transferencia' && (
+                  <div style={{ marginTop: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Depósito origen</label>
+                    <select value={editEventoVals.deposito_desde ?? ''}
+                      onChange={e => setEditEventoVals(prev => ({ ...prev, deposito_desde: e.target.value }))}
+                      style={{ width: '100%', padding: '10px 12px', fontSize: 15, borderRadius: 10, border: '1.5px solid #e0e0e0' }}>
+                      <option value="">Seleccioná…</option>
+                      {SUCURSALES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                )}
+                {editEventoVals.tipo_ingreso === 'con_proveedor' && (
+                  <div style={{ marginTop: 8 }}>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: '#555', display: 'block', marginBottom: 4 }}>Nombre del proveedor</label>
+                    <input type="text" value={editEventoVals.deposito_desde ?? ''}
+                      onChange={e => setEditEventoVals(prev => ({ ...prev, deposito_desde: e.target.value }))}
+                      placeholder="ej: Acería Argentina"
+                      style={{ width: '100%', padding: '10px 12px', fontSize: 15, borderRadius: 10, border: '1.5px solid #e0e0e0', boxSizing: 'border-box' }} />
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
               <button onClick={() => setEditEvento(null)} disabled={guardandoEvento}
                 style={{ flex: 1, padding: '12px', borderRadius: 12, border: '1.5px solid #e0e0e0', background: '#fff', color: '#444', fontWeight: 600, fontSize: 15, cursor: 'pointer' }}>

@@ -111,6 +111,8 @@ export default function GuardiaPage() {
   const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia' | 'con_proveedor'>('directo')
   const [ingDeposito, setIngDeposito] = useState('')
   const [ingProveedor, setIngProveedor] = useState('')
+  const [ingFotos, setIngFotos] = useState<FotoItem[]>([])
+  const ingFileRef = useRef<HTMLInputElement>(null)
 
   // Devolución
   const [devCamion, setDevCamion] = useState('')
@@ -226,6 +228,8 @@ export default function GuardiaPage() {
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
     setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito(''); setIngProveedor('')
+    ingFotos.forEach(f => URL.revokeObjectURL(f.preview))
+    setIngFotos([])
     setDevCamion(''); setDevChofer(''); setDevCategoria(''); setDevMotivo('')
     setDevRemito(''); setDevNV(''); setDevObs('')
     devFotos.forEach(f => URL.revokeObjectURL(f.preview))
@@ -385,20 +389,29 @@ export default function GuardiaPage() {
     if (!ingCamion) { showToast('Seleccioná el camión', 'err'); return }
     if (ingTipo === 'con_transferencia' && !ingDeposito) { showToast('Indicá el depósito de origen', 'err'); return }
     if (ingTipo === 'con_proveedor' && !ingProveedor.trim()) { showToast('Ingresá el nombre del proveedor', 'err'); return }
+    if ((ingTipo === 'con_transferencia' || ingTipo === 'con_proveedor') && ingFotos.length === 0) {
+      showToast('Agregá al menos 1 foto', 'err'); return
+    }
     setGuardando(true)
-    const { error } = await supabase.from('guardia_eventos').insert({
-      fecha: hoy(), tipo: 'ingreso', camion_codigo: ingCamion,
-      chofer_apellido: ingChofer || null,
-      tipo_ingreso: ingTipo,
-      deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : ingTipo === 'con_proveedor' ? ingProveedor.trim() : null,
-      registrado_por: userId,
-    })
-    setGuardando(false)
-    if (error) { showToast('Error al guardar', 'err'); return }
-    const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : ingTipo === 'con_proveedor' ? `con proveedor ${ingProveedor.trim()}` : 'directo'
-    setUltimoEvento(`✅ ${ingCamion} ingresó ${label} — ${horaLocal()}`)
-    resetForms(); setAccion('home')
-    showToast(`Ingreso registrado — ${ingCamion}`)
+    try {
+      const eventoId = crypto.randomUUID()
+      const fotosUrls = ingFotos.length > 0 ? await subirFotos(ingFotos, eventoId) : []
+      const { error } = await supabase.from('guardia_eventos').insert({
+        id: eventoId, fecha: hoy(), tipo: 'ingreso', camion_codigo: ingCamion,
+        chofer_apellido: ingChofer || null,
+        tipo_ingreso: ingTipo,
+        deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : ingTipo === 'con_proveedor' ? ingProveedor.trim() : null,
+        fotos_urls: fotosUrls,
+        registrado_por: userId,
+      })
+      if (error) throw error
+      const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : ingTipo === 'con_proveedor' ? `con proveedor ${ingProveedor.trim()}` : 'directo'
+      setUltimoEvento(`✅ ${ingCamion} ingresó ${label} — ${horaLocal()}`)
+      resetForms(); setAccion('home')
+      showToast(`Ingreso registrado — ${ingCamion}`)
+    } catch (err: any) {
+      showToast(err?.message || 'Error al guardar', 'err')
+    } finally { setGuardando(false) }
   }
 
   const registrarDevolucion = async () => {
@@ -1051,6 +1064,9 @@ export default function GuardiaPage() {
                 <input type="text" value={ingProveedor} onChange={e => setIngProveedor(e.target.value)}
                   placeholder="ej: Acería Argentina" style={inputStyle} autoCapitalize="words" />
               </div>
+            )}
+            {(ingTipo === 'con_transferencia' || ingTipo === 'con_proveedor') && (
+              <FotoSection fotos={ingFotos} setter={setIngFotos} fileRef={ingFileRef} color="#059669" />
             )}
             <button onClick={registrarIngreso} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>
               {guardando ? 'Guardando…' : 'Registrar ingreso'}

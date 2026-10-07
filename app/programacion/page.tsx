@@ -2291,7 +2291,7 @@ function ProgramacionInner() {
 
   async function asignarVueltaASeleccion(reqIds: string[], vuelta: number) {
     const results = await Promise.all(reqIds.map(id =>
-      fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta }) })
+      fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, vuelta, fecha_solicitada: fecha }) })
     ))
     const fallidos = results.filter(r => !r.ok).length
     if (fallidos > 0) { showToast(`Error al asignar ${fallidos} transferencia${fallidos !== 1 ? 's' : ''}`, 'err'); return }

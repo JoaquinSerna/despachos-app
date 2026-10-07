@@ -77,7 +77,6 @@ function buildCiclos(eventos: any[]) {
 
       if (!candidatos.length) {
         // Primera salida sin ingreso previo: arranque sintético a las 7:00
-        if (salMin <= ARRANQUE_MIN) continue // salida antes de las 7am, ignorar
         ingresoMin = ARRANQUE_MIN
         ingresoDisplay = '07:00 ★'
       } else {

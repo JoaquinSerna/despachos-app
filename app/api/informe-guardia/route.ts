@@ -60,6 +60,8 @@ function buildCiclos(eventos: any[]) {
       .sort((a, b) => a._ti.minutes - b._ti.minutes)
 
     const usados = new Set<number>()
+    const ARRANQUE_MIN = 7 * 60 // 07:00 — hora teórica de llegada de choferes
+    let arranqueUsado = false
 
     for (const sal of salidas) {
       const salMin = sal._ti.minutes
@@ -68,15 +70,15 @@ function buildCiclos(eventos: any[]) {
         .filter(({ idx }) => !usados.has(idx))
         .filter(({ ing }) => ing._ti.minutes < salMin)
 
-      const ARRANQUE_MIN = 7 * 60 // 07:00 — hora teórica de llegada de choferes
-
       let ingresoDisplay: string
       let ingresoMin: number
       let ingresoEsTransferencia = false
       let depositoDesde: string | null = null
 
       if (!candidatos.length) {
-        // Primera salida sin ingreso previo: arranque sintético a las 7:00
+        // Sin ingreso previo real: arranque sintético a las 7:00, solo para la primera salida del día
+        if (arranqueUsado) continue // ingreso no registrado, ciclo no medible
+        arranqueUsado = true
         ingresoMin = ARRANQUE_MIN
         ingresoDisplay = '07:00 ★'
       } else {

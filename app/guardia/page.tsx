@@ -343,13 +343,26 @@ export default function GuardiaPage() {
     for (const [key, evs] of Object.entries(byFechaCamion)) {
       const [fechaEv, camion] = key.split('__')
       const salidas = evs.filter((e: any) => e.tipo === 'salida').sort((a: any, b: any) => (getMin(a) ?? 0) - (getMin(b) ?? 0))
-      const ingresos = evs.filter((e: any) => e.tipo === 'ingreso')
-      if (!salidas.length) continue
-      const salMin = getMin(salidas[0])
-      if (salMin === null) continue
-      const hayIngresioPrevio = ingresos.some((ing: any) => (getMin(ing) ?? Infinity) < salMin)
-      if (!hayIngresioPrevio) {
-        sinteticos.push({ fecha: fechaEv, camion_codigo: camion, tipo: 'ingreso', hora_evento: '07:00:00', observacion: 'Arranque sintético (teórico 07:00)', registrado_por_nombre: '' })
+      const ingresos = evs.filter((e: any) => e.tipo === 'ingreso').sort((a: any, b: any) => (getMin(a) ?? 0) - (getMin(b) ?? 0))
+      const usados = new Set<number>()
+      let arranqueUsado = false
+      for (const sal of salidas) {
+        const salMin = getMin(sal)
+        if (salMin === null) continue
+        const candidatoIdx = ingresos.reduce((found: number, ing: any, idx: number) => {
+          if (usados.has(idx)) return found
+          if ((getMin(ing) ?? Infinity) >= salMin) return found
+          return idx // último ingreso previo no usado
+        }, -1)
+        if (candidatoIdx === -1) {
+          if (!arranqueUsado) {
+            arranqueUsado = true
+            sinteticos.push({ fecha: fechaEv, camion_codigo: camion, tipo: 'ingreso', hora_evento: '07:00:00', observacion: 'Arranque sintético (teórico 07:00)', registrado_por_nombre: '' })
+          }
+          // salidas posteriores sin ingreso: ciclo no medible, no inyectar
+        } else {
+          usados.add(candidatoIdx)
+        }
       }
     }
     const allRows = [...rows, ...sinteticos].sort((a: any, b: any) =>

@@ -320,8 +320,44 @@ export default function GuardiaPage() {
     }
     const rows = data.map((e: any) => ({ ...e, registrado_por_nombre: nombresMap[e.registrado_por] ?? '' }))
 
+    // Inyectar arranques sintéticos a las 7:00 para la primera salida sin ingreso previo
+    const getMin = (e: any): number | null => {
+      if (e.hora_evento) {
+        const [h, m] = e.hora_evento.split(':').map(Number)
+        return h * 60 + m
+      }
+      if (e.created_at) {
+        const d = new Date(e.created_at)
+        return ((d.getUTCHours() - 3 + 24) % 24) * 60 + d.getUTCMinutes()
+      }
+      return null
+    }
+    const byFechaCamion: Record<string, any[]> = {}
+    for (const e of rows) {
+      if (!e.camion_codigo) continue
+      const key = `${e.fecha}__${e.camion_codigo}`
+      if (!byFechaCamion[key]) byFechaCamion[key] = []
+      byFechaCamion[key].push(e)
+    }
+    const sinteticos: any[] = []
+    for (const [key, evs] of Object.entries(byFechaCamion)) {
+      const [fechaEv, camion] = key.split('__')
+      const salidas = evs.filter((e: any) => e.tipo === 'salida').sort((a: any, b: any) => (getMin(a) ?? 0) - (getMin(b) ?? 0))
+      const ingresos = evs.filter((e: any) => e.tipo === 'ingreso')
+      if (!salidas.length) continue
+      const salMin = getMin(salidas[0])
+      if (salMin === null) continue
+      const hayIngresioPrevio = ingresos.some((ing: any) => (getMin(ing) ?? Infinity) < salMin)
+      if (!hayIngresioPrevio) {
+        sinteticos.push({ fecha: fechaEv, camion_codigo: camion, tipo: 'ingreso', hora_evento: '07:00:00', observacion: 'Arranque sintético (teórico 07:00)', registrado_por_nombre: '' })
+      }
+    }
+    const allRows = [...rows, ...sinteticos].sort((a: any, b: any) =>
+      a.fecha.localeCompare(b.fecha) || (a.hora_evento ?? '').localeCompare(b.hora_evento ?? '')
+    )
+
     setExportando(false)
-    const csv = toCSV(rows)
+    const csv = toCSV(allRows)
     descargarCSV(csv, `guardia_${hoy()}.csv`)
     showToast(`${data.length} registros exportados`)
   }

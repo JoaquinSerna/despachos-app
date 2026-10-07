@@ -84,7 +84,13 @@ export default function GuardiaPage() {
   const [matrizFecha, setMatrizFecha] = useState(hoy())
   const [matrizData, setMatrizData] = useState<any[]>([])
   const [matrizLoading, setMatrizLoading] = useState(false)
+  const [matrizVista, setMatrizVista] = useState<'tabla' | 'fotos'>('tabla')
   const [usuariosMap, setUsuariosMap] = useState<Record<string, string>>({})
+  const fmtHora = (ev: any) => ev.hora_evento
+    ? ev.hora_evento.slice(0, 5)
+    : ev.created_at
+      ? new Date(ev.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+      : ''
   const [confirmDelete, setConfirmDelete] = useState<{ id: string; label: string; fotosUrls?: string[] } | null>(null)
   const [eliminando, setEliminando] = useState(false)
   const [editEvento, setEditEvento] = useState<{ id: string; label: string; tipo: string } | null>(null)
@@ -867,7 +873,16 @@ export default function GuardiaPage() {
                 <div style={{ marginTop: 24, background: '#fff', borderRadius: 16, border: '1px solid #e8edf8', overflow: 'hidden' }}>
                   {/* Header con fecha */}
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 700, fontSize: 14, color: '#254A96' }}>📊 Actividad del día</span>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {(['tabla', 'fotos'] as const).map(v => (
+                        <button key={v} onClick={() => setMatrizVista(v)}
+                          style={{ padding: '5px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none',
+                            background: matrizVista === v ? '#254A96' : '#f0f4ff',
+                            color: matrizVista === v ? '#fff' : '#254A96' }}>
+                          {v === 'tabla' ? '📊 Actividad' : '📷 Fotos'}
+                        </button>
+                      ))}
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       {matrizLoading && (
                         <div className="animate-spin" style={{ width: 16, height: 16, border: '2px solid #254A96', borderTopColor: 'transparent', borderRadius: '50%' }} />
@@ -880,11 +895,55 @@ export default function GuardiaPage() {
                     </div>
                   </div>
 
-                  {camionesConActividad.length === 0 ? (
+                  {/* Vista fotos cronológica */}
+                  {matrizVista === 'fotos' && (() => {
+                    const TIPO_LABEL: Record<string, string> = { salida: '🚛 Salida', ingreso: '🏠 Ingreso', devolucion: '📋 Devolución', inicio_carga: '📦 Inicio carga', fin_carga: '✅ Fin carga' }
+                    const TIPO_COLOR: Record<string, string> = { salida: '#254A96', ingreso: '#059669', devolucion: '#b45309', inicio_carga: '#0891b2', fin_carga: '#059669' }
+                    const conFotos = [...matrizData]
+                      .filter(ev => Array.isArray(ev.fotos_urls) && ev.fotos_urls.length > 0)
+                      .sort((a, b) => (a.hora_evento ?? a.created_at ?? '').localeCompare(b.hora_evento ?? b.created_at ?? ''))
+                    if (conFotos.length === 0) return (
+                      <p style={{ textAlign: 'center', padding: '28px 16px', fontSize: 13, color: '#B9BBB7' }}>
+                        {matrizLoading ? 'Cargando…' : 'Sin fotos para esta fecha'}
+                      </p>
+                    )
+                    return (
+                      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                        {conFotos.map((ev, ei) => {
+                          const color = TIPO_COLOR[ev.tipo] ?? '#666'
+                          const titulo = `${ev.camion_codigo} · ${TIPO_LABEL[ev.tipo] ?? ev.tipo} · ${fmtHora(ev)}`
+                          return (
+                            <div key={ei} style={{ borderLeft: `3px solid ${color}`, paddingLeft: 14 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+                                <span style={{ fontWeight: 700, fontSize: 13, color }}>{TIPO_LABEL[ev.tipo] ?? ev.tipo}</span>
+                                <span style={{ fontWeight: 700, fontSize: 13, color: '#1a1a1a' }}>{ev.camion_codigo}</span>
+                                <span style={{ fontSize: 12, color: '#888' }}>{fmtHora(ev)}</span>
+                                {ev.chofer_apellido && <span style={{ fontSize: 12, color: '#555' }}>🧑 {ev.chofer_apellido}</span>}
+                                {ev.registrado_por && usuariosMap[ev.registrado_por] && (
+                                  <span style={{ fontSize: 11, color: '#aaa' }}>👤 {usuariosMap[ev.registrado_por]}</span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                {ev.fotos_urls.map((url: string, fi: number) => (
+                                  <img key={fi} src={url} alt=""
+                                    onClick={() => setVisorFotos({ urls: ev.fotos_urls, titulo, ev })}
+                                    style={{ width: 90, height: 90, objectFit: 'cover', borderRadius: 8, cursor: 'zoom-in', border: '1px solid #e0e0e0' }}
+                                  />
+                                ))}
+                              </div>
+                              {ev.observacion && <p style={{ margin: '8px 0 0', fontSize: 12, color: '#666' }}>{ev.observacion}</p>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+
+                  {matrizVista === 'tabla' && camionesConActividad.length === 0 ? (
                     <p style={{ textAlign: 'center', padding: '28px 16px', fontSize: 13, color: '#B9BBB7' }}>
                       {matrizLoading ? 'Cargando…' : 'Sin registros para esta fecha'}
                     </p>
-                  ) : (
+                  ) : matrizVista === 'tabla' ? (
                     <div style={{ overflowX: 'auto' }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                         <thead>
@@ -979,7 +1038,7 @@ export default function GuardiaPage() {
                         </tbody>
                       </table>
                     </div>
-                  )}
+                  ) : null}
                 </div>
               )
             })()}

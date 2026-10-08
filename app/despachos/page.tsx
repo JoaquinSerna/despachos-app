@@ -193,10 +193,14 @@ export default function NuevoDespacho() {
   async function handleReprogramarPedido(id: string, fecha: string, vuelta: number, motivo: string) {
     const pedido = misPedidos.find(p => p.id === id)
     if (!pedido) return
-    // Validar cutoff — mismas restricciones que cargar un pedido nuevo
+    // Validar cutoff y sábado — mismas restricciones que cargar un pedido nuevo
     const franja = FRANJAS.find(f => f.vuelta === vuelta)
     if (franja && vultaCerrada(fecha, franja)) {
       toast('Esta vuelta ya cerró para esa fecha. Elegí una franja disponible.', 'err')
+      return
+    }
+    if (vueltasCerradasPara(fecha).includes(vuelta)) {
+      toast('V3 y V4 no están disponibles los sábados.', 'err')
       return
     }
     // Validar candadito manual — solo para comerciales (logística puede ignorarlo)

@@ -23,6 +23,7 @@ const TODAS_LAS_CARDS = [
   { href: '/stock',          icon: '🏷️', titulo: 'Stock',              descripcion: 'Consulta de stock por sucursal',             disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
   { href: '/pallets',        icon: '📦', titulo: 'Pallets',            descripcion: 'Devolución y reintegro de pallets',          disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
   { href: '/guardia',        icon: '🔒', titulo: 'Guardia y Cargas',  descripcion: 'Registro de movimientos y cargas',           disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito'] },
+  { href: '/compras',       icon: '🧾', titulo: 'Compras',            descripcion: 'Ingresos de proveedores y remitos',          disponible: true, roles: ['gerencia','admin_flota','compras'] },
   { href: '/ayuda',          icon: '📖', titulo: 'Manual de uso',      descripcion: 'Guía paso a paso y diagramas de flujo',      disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial','confirmador','chofer'] },
 ]
  
@@ -107,6 +108,7 @@ export default function Dashboard() {
       if (userData?.rol === 'chofer') { router.push('/ruteo'); return }
       if (userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
       if (userData?.rol === 'guardia') { router.push('/guardia'); return }
+      if (userData?.rol === 'compras') { router.push('/compras'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')

@@ -45,7 +45,6 @@ export default function UsuariosPage() {
   const [guardandoPermisos, setGuardandoPermisos] = useState(false)
   const [modalInactivar, setModalInactivar] = useState<{ usuario: Usuario } | null>(null)
   const [motivoInactivar, setMotivoInactivar] = useState('')
-  const [botonPedidosVisible, setBotonPedidosVisible] = useState(true)
   const [adminId, setAdminId] = useState('')
   const [adminNombre, setAdminNombre] = useState('')
 
@@ -204,23 +203,6 @@ export default function UsuariosPage() {
     }
   }
 
-  const darVisualizacionPedidosComerciales = async () => {
-    const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.permisos?.['pedidos'] !== 'viewer' && u.permisos?.['pedidos'] !== 'editor')
-    if (comerciales.length === 0) { showToast('Todos los comerciales ya tienen acceso a pedidos'); setBotonPedidosVisible(false); return }
-    if (!confirm(`¿Dar visualización de pedidos a ${comerciales.length} comerciale${comerciales.length !== 1 ? 's' : ''}?`)) return
-    try {
-      await Promise.all(comerciales.map(u =>
-        fetch('/api/crear-usuario', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: u.id, permisos: { ...(u.permisos ?? {}), pedidos: 'viewer' } }),
-        })
-      ))
-      showToast(`${comerciales.length} comercial${comerciales.length !== 1 ? 'es' : ''} actualizados`)
-      setBotonPedidosVisible(false)
-      cargarUsuarios()
-    } catch { showToast('Error al actualizar', 'err') }
-  }
 
   const resetSucursalComerciales = async () => {
     const comerciales = usuarios.filter(u => u.rol === 'comercial' && u.sucursal !== null)
@@ -429,8 +411,8 @@ export default function UsuariosPage() {
       {/* Modal permisos */}
       {modalPermisos && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6 space-y-4">
-            <div className="flex justify-between items-start">
+          <div className="bg-white rounded-2xl w-full max-w-lg flex flex-col" style={{ maxHeight: '90vh' }}>
+            <div className="flex justify-between items-start p-6 pb-3">
               <div>
                 <h3 className="font-bold text-base" style={{ color: '#254A96' }}>🔐 Permisos de acceso</h3>
                 <p className="text-xs mt-0.5" style={{ color: '#B9BBB7' }}>
@@ -440,7 +422,7 @@ export default function UsuariosPage() {
               <button onClick={() => setModalPermisos(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
 
-            <div className="space-y-2">
+            <div className="overflow-y-auto px-6 space-y-2" style={{ flex: 1 }}>
               {MODULOS.map(modulo => {
                 const override = permisosEdit[modulo]
                 const efectivo = nivelEfectivo(permisosEdit, modalPermisos.rol, modulo)
@@ -498,7 +480,7 @@ export default function UsuariosPage() {
               })}
             </div>
 
-            <div className="flex gap-2 pt-1">
+            <div className="flex gap-2 p-6 pt-4 border-t" style={{ borderColor: '#e8edf8' }}>
               <button onClick={() => setModalPermisos(null)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-medium border"
                 style={{ borderColor: '#e8edf8', color: '#666' }}>
@@ -538,13 +520,6 @@ export default function UsuariosPage() {
               className="text-xs px-3 py-1.5 rounded-lg border focus:outline-none w-52"
               style={{ borderColor: '#e8edf8', color: '#1a1a1a' }}
             />
-            {botonPedidosVisible && (
-              <button onClick={darVisualizacionPedidosComerciales}
-                className="text-xs px-3 py-1.5 rounded-lg font-medium border"
-                style={{ borderColor: '#bbf7d0', color: '#065f46', background: '#f0fdf4' }}>
-                📋 Comerciales → Ver pedidos
-              </button>
-            )}
             <button onClick={exportarExcel}
               className="text-xs px-3 py-1.5 rounded-lg font-medium border"
               style={{ borderColor: '#e8edf8', color: '#254A96' }}>

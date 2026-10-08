@@ -1,5 +1,5 @@
 // Modulos con control de permisos editor/visualizador
-export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia'] as const
+export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia', 'guardia', 'stock', 'pallets', 'materiales', 'compras'] as const
 export type Modulo = typeof MODULOS[number]
 
 export const MODULO_LABEL: Record<Modulo, string> = {
@@ -13,6 +13,11 @@ export const MODULO_LABEL: Record<Modulo, string> = {
   flota:          'Flota del dia',
   'flota-base':   'Flota base',
   'fin-del-dia':  'Fin del dia',
+  guardia:        'Guardia y Cargas',
+  stock:          'Stock',
+  pallets:        'Pallets',
+  materiales:     'Materiales',
+  compras:        'Compras',
 }
 
 export const MODULO_ICON: Record<Modulo, string> = {
@@ -26,6 +31,11 @@ export const MODULO_ICON: Record<Modulo, string> = {
   flota:          '🚛',
   'flota-base':   '⚙️',
   'fin-del-dia':  '🌙',
+  guardia:        '🔒',
+  stock:          '🏷️',
+  pallets:        '📦',
+  materiales:     '🏷️',
+  compras:        '🧾',
 }
 
 // Que roles pueden EDITAR cada modulo por defecto (sin override de permisos)
@@ -40,6 +50,11 @@ const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
   flota:          ['gerencia', 'admin_flota'],
   'flota-base':   ['gerencia', 'admin_flota'],
   'fin-del-dia':  ['gerencia', 'admin_flota', 'ruteador'],
+  guardia:        ['gerencia', 'admin_flota', 'deposito'],
+  stock:          ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
+  pallets:        ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
+  materiales:     ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
+  compras:        ['gerencia', 'admin_flota', 'compras'],
 }
 
 /**
@@ -74,6 +89,11 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   flota:          ['gerencia', 'admin_flota'],
   'flota-base':   ['gerencia', 'admin_flota'],
   'fin-del-dia':  ['gerencia', 'admin_flota', 'ruteador'],
+  guardia:        ['gerencia', 'admin_flota', 'deposito', 'ruteador'],
+  stock:          ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial'],
+  pallets:        ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial'],
+  materiales:     ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
+  compras:        ['gerencia', 'admin_flota', 'compras'],
 }
 
 /**

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
+function siguienteDiaHabil(fecha: string): string {
+  const d = new Date(fecha + 'T12:00:00')
+  do { d.setDate(d.getDate() + 1) } while (d.getDay() === 0) // saltar domingos
+  return d.toISOString().split('T')[0]
+}
+
 function getAdmin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -78,9 +84,9 @@ export async function POST(request: NextRequest) {
         cliente: original.cliente,
         direccion: original.direccion,
         sucursal: original.sucursal,
-        fecha_entrega: original.fecha_entrega,
+        fecha_entrega: siguienteDiaHabil(original.fecha_entrega),
         vuelta: original.vuelta,
-        estado: 'programado',
+        estado: 'pendiente',
         camion_id: null,
         telefono: original.telefono,
         tipo: original.tipo,

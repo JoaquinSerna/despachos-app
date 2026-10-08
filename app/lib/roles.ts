@@ -1,4 +1,4 @@
-export const ROLES = ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer'] as const
+export const ROLES = ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer', 'compras'] as const
 export type Rol = typeof ROLES[number]
 
 export const ROL_LABEL: Record<string, string> = {
@@ -9,6 +9,7 @@ export const ROL_LABEL: Record<string, string> = {
   comercial:    'Comercial',
   confirmador:  'Confirmador',
   chofer:       'Chofer',
+  compras:      'Compras',
 }
 
 export const ROL_DESCRIPCION: Record<string, string> = {
@@ -19,6 +20,7 @@ export const ROL_DESCRIPCION: Record<string, string> = {
   comercial:    'Carga solicitudes de despacho y ve estado de sus pedidos',
   confirmador:  'Llama a clientes para confirmar horario de entrega',
   chofer:       'Ve su recorrido diario asignado',
+  compras:      'Revisa ingresos de proveedores y remitos',
 }
 
 export const ROL_COLOR: Record<string, string> = {
@@ -29,6 +31,7 @@ export const ROL_COLOR: Record<string, string> = {
   comercial:    '#065f46',
   confirmador:  '#0891b2',
   chofer:       '#666',
+  compras:      '#0e7490',
 }
 
 export const ROL_BG: Record<string, string> = {
@@ -39,6 +42,7 @@ export const ROL_BG: Record<string, string> = {
   comercial:    '#d1fae5',
   confirmador:  '#e0f2fe',
   chofer:       '#f4f4f3',
+  compras:      '#cffafe',
 }
 
 // Qué páginas puede acceder cada rol
@@ -50,4 +54,5 @@ export const ROL_PAGINAS: Record<string, string[]> = {
   comercial:    ['/despachos'],
   confirmador:  ['/confirmaciones'],
   chofer:       ['/ruteo'],
+  compras:      ['/compras'],
 }

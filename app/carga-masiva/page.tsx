@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditoria } from '../lib/auditoria'
+import { esSabado } from '../lib/franjas'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const VUELTAS = [
@@ -188,6 +189,31 @@ export default function CargaMasiva() {
     if (!fechaEntrega) { setError('Seleccioná la fecha de entrega'); return }
     const seleccionadas = solicitudes.filter(s => s.seleccionada && !s.duplicada)
     if (seleccionadas.length === 0) { setError('No hay solicitudes seleccionadas'); return }
+
+    // Validar sábado: V3/V4 no permitidas
+    if (esSabado(fechaEntrega)) {
+      const bloqueadas = seleccionadas.filter(s => s.vuelta === 3 || s.vuelta === 4)
+      if (bloqueadas.length > 0) {
+        setError(`Los sábados no se permiten V3 ni V4. Cambiá la vuelta de: ${bloqueadas.map(s => s.raw.nv || s.raw.id_despacho).join(', ')}`)
+        return
+      }
+    }
+
+    // Validar cierres manuales del ruteador por sucursal
+    const sucursalesUsadas = [...new Set(seleccionadas.map(s => s.sucursal))]
+    for (const suc of sucursalesUsadas) {
+      const { data: vcm } = await supabase
+        .from('vueltas_cerradas_manual')
+        .select('vuelta')
+        .eq('fecha', fechaEntrega)
+        .eq('sucursal', suc)
+      const cerradas = (vcm ?? []).map((r: any) => r.vuelta as number)
+      const afectadas = seleccionadas.filter(s => s.sucursal === suc && cerradas.includes(s.vuelta))
+      if (afectadas.length > 0) {
+        setError(`Vuelta cerrada por logística en ${suc}. Cambiá la vuelta de: ${afectadas.map(s => s.raw.nv || s.raw.id_despacho).join(', ')}`)
+        return
+      }
+    }
 
     setCargando(true)
     setError('')

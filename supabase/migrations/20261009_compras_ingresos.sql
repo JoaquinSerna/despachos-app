@@ -1,5 +1,11 @@
 -- Compras: ingresos de proveedores (remitos) y maestro de proveedores
 
+-- Nuevo rol 'compras' (la restricción actual no lo admite)
+ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_rol_check;
+ALTER TABLE usuarios ADD CONSTRAINT usuarios_rol_check CHECK (rol = ANY (ARRAY[
+  'gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer', 'guardia', 'compras'
+]));
+
 -- Rol del usuario autenticado (SECURITY DEFINER: evita depender de las políticas de `usuarios`)
 CREATE OR REPLACE FUNCTION public.rol_actual()
 RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -235,7 +241,7 @@ INSERT INTO proveedores (nombre, cuit, estado, notas) VALUES
   ('RODIMAR', NULL, 'revisar', 'CUIT inválido en el ERP (23229317609)'),
   ('RODRIGUEZ MARIO JESUS', '30716688131', 'revisar', 'CUIT repetido en otro proveedor del ERP'),
   ('ROTOPLAS', '30690827065', 'aprobado', NULL),
-  ('Rukko importaciÃ³n y distribuciÃ³n', '33715336109', 'aprobado', NULL),
+  ('Rukko importación y distribución', '33715336109', 'aprobado', NULL),
   ('SAINT GOBIAN', '30500529071', 'aprobado', NULL),
   ('SANITARIOS SAN MARTIN', '30718092511', 'aprobado', NULL),
   ('SEARA REFRIGERACION', '33691421819', 'aprobado', NULL),

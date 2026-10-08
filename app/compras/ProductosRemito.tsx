@@ -30,6 +30,7 @@ interface Props {
   puedeEd: boolean
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   onItems: (items: ItemRemito[]) => void
+  recargarKey?: number
 }
 
 const inputSt: React.CSSProperties = { padding: '7px 9px', borderRadius: 8, border: '1.5px solid #d6d6d6', fontSize: 13, background: '#fff', boxSizing: 'border-box', fontFamily: 'inherit', color: '#111' }
@@ -84,7 +85,7 @@ function BuscadorProducto({ sugerencias, onElegir, onCerrar }: {
   )
 }
 
-export default function ProductosRemito({ remito, proveedorId, userId, puedeEd, showToast, onItems }: Props) {
+export default function ProductosRemito({ remito, proveedorId, userId, puedeEd, showToast, onItems, recargarKey }: Props) {
   const [items, setItems] = useState<ItemRemito[]>([])
   const [nombres, setNombres] = useState<Record<number, string>>({})
   const [cargando, setCargando] = useState(true)
@@ -142,6 +143,16 @@ export default function ProductosRemito({ remito, proveedorId, userId, puedeEd, 
     return () => { vivo = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [remito.id])
+
+  useEffect(() => {
+    if (!recargarKey) return
+    ;(async () => {
+      const { data } = await supabase.from('proveedor_remito_items').select('*').eq('remito_id', remito.id).order('orden')
+      const lista = (data ?? []) as ItemRemito[]
+      actualizar(lista); await cargarNombres(lista)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recargarKey])
 
   const material = async (id: number | null): Promise<MaterialConv | null> => {
     if (id === null) return null
@@ -216,7 +227,7 @@ export default function ProductosRemito({ remito, proveedorId, userId, puedeEd, 
 
       {(cargando || leyendo) && <div style={{ fontSize: 13, color: '#254A96', padding: '8px 0' }}>{leyendo ? 'Leyendo los productos del remito… puede tardar unos segundos.' : 'Cargando…'}</div>}
       {sinFotos && !cargando && <div style={{ fontSize: 13, color: '#999' }}>Este remito no tiene fotos para leer.</div>}
-      {errorLectura && !leyendo && <div style={{ fontSize: 13, color: '#b91c1c', marginBottom: 8 }}>No se pudieron leer los productos. Podés reintentar o cargar los renglones a mano.</div>}
+      {errorLectura && !leyendo && <div style={{ fontSize: 13, color: '#b91c1c', marginBottom: 8 }}>No se pudieron leer los productos. Podés reintentar, cargar los renglones a mano o, si ya sabés la OC, asociarla más abajo y cargar los productos desde ahí.</div>}
 
       {items.length > 0 && (
         <div style={{ overflowX: 'auto' }}>

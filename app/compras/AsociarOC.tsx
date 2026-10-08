@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
-import { compararConSaldo, type EstadoCantidad } from '../lib/remito-items'
+import { compararConSaldo, normalizarUnidad, type EstadoCantidad } from '../lib/remito-items'
 import { BadgeOC, fmtFechaOC, fmtNum, fmtPlata } from './OrdenesCompra'
 import type { ItemRemito } from './ProductosRemito'
 
@@ -16,6 +16,7 @@ interface Props {
   puedeEd: boolean
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   onChanged: (cambios: CambiosOC) => void
+  onItemsAgregados: () => void
 }
 
 const DIAS_RECIENTES = 120
@@ -47,7 +48,7 @@ function TablaItemsOC({ oc }: { oc: any }) {
   )
 }
 
-export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast, onChanged }: Props) {
+export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast, onChanged, onItemsAgregados }: Props) {
   const ids: number[] = useMemo(() => (rem.proveedor_remito_ocs ?? []).map((x: any) => x.oc_id as number), [rem.proveedor_remito_ocs])
   const clave = ids.join(',')
   const [asociadas, setAsociadas] = useState<any[]>([])
@@ -57,6 +58,9 @@ export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast,
   const [verTodas, setVerTodas] = useState(false)
   const [expandida, setExpandida] = useState<number | null>(null)
   const [cargando, setCargando] = useState(true)
+  const [seleccion, setSeleccion] = useState<Record<string, string>>({})
+  const [unidades, setUnidades] = useState<Record<number, string>>({})
+  const [agregando, setAgregando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -86,6 +90,14 @@ export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast,
   }, [rem.id, clave, rem.sin_oc, rem.oc_numero_leido, ing.proveedor_id, ing.sucursal])
 
   useEffect(() => { cargar() }, [cargar])
+
+  useEffect(() => {
+    const productos = [...new Set(asociadas.flatMap(oc => itemsDe(oc).map(i => i.codigo_producto as number)).filter(Boolean))]
+    if (!productos.length) { setUnidades({}); return }
+    supabase.from('materiales').select('id, unidad_base').in('id', productos).then(({ data }) => {
+      setUnidades(Object.fromEntries((data ?? []).map((m: any) => [m.id, m.unidad_base ?? ''])))
+    })
+  }, [asociadas])
 
   const idsRemito = useMemo(() => new Set(items.map(i => i.producto_id).filter((x): x is number => x !== null)), [items])
 
@@ -128,6 +140,36 @@ export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast,
     if (error) { showToast('No se pudo guardar', 'err'); return }
     showToast(valor ? 'Marcado como sin OC' : 'Marca «sin OC» quitada')
     onChanged({ oc_ids: valor ? [] : ids, sin_oc: valor })
+  }
+
+  // Productos de las OC asociadas con saldo que todavía no están en el remito: se pueden cargar a mano desde acá
+  const disponibles = useMemo(() => {
+    const yaEnRemito = new Set(items.map(i => i.producto_id))
+    return asociadas.flatMap(oc => itemsDe(oc).filter(i => saldoDe(i) > 0 && !yaEnRemito.has(i.codigo_producto)).map(i => ({ oc, i, clave: `${oc.id}:${i.id}` })))
+  }, [asociadas, items])
+  const elegidos = disponibles.filter(d => seleccion[d.clave] !== undefined)
+
+  const agregarDesdeOC = async () => {
+    const filas = []
+    for (const [k, d] of elegidos.entries()) {
+      const cantidad = Number(String(seleccion[d.clave]).replace(',', '.'))
+      if (!Number.isFinite(cantidad) || cantidad <= 0) { showToast(`Ingresá la cantidad de «${d.i.nombre_producto}»`, 'err'); return }
+      const unidadBase = unidades[d.i.codigo_producto] || null
+      filas.push({
+        remito_id: rem.id, orden: items.length + k, descripcion: d.i.nombre_producto ?? `Producto #${d.i.codigo_producto}`,
+        cantidad, unidad: normalizarUnidad(unidadBase) || null, unidad_original: unidadBase, producto_id: d.i.codigo_producto,
+        mapeo_origen: 'manual', mapeo_score: null, sugerencias: [], cantidad_base: cantidad, unidad_base: unidadBase,
+        regla_conversion: `cargado desde la OC ${d.oc.id}`,
+      })
+    }
+    if (!filas.length) return
+    setAgregando(true)
+    const { error } = await supabase.from('proveedor_remito_items').insert(filas)
+    if (error) { setAgregando(false); showToast('No se pudieron agregar los productos', 'err'); return }
+    await supabase.from('proveedor_remitos').update({ items_estado: 'ok', items_leidos_en: new Date().toISOString() }).eq('id', rem.id)
+    setAgregando(false); setSeleccion({})
+    showToast(`${filas.length} producto${filas.length !== 1 ? 's' : ''} agregado${filas.length !== 1 ? 's' : ''} al remito`)
+    onItemsAgregados()
   }
 
   const comparacion = useMemo(() => {
@@ -182,11 +224,59 @@ export default function AsociarOC({ ing, rem, items, userId, puedeEd, showToast,
         </div>
       ))}
 
+      {puedeEd && hayAsociadas && disponibles.length > 0 && (
+        <details open={items.length === 0} style={{ marginTop: 10, border: '1.5px solid #d6d6d6', borderRadius: 12, padding: '8px 12px' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 700, fontSize: 14, color: '#254A96' }}>
+            Cargar productos desde la OC{items.length === 0 ? ' (el remito no tiene productos cargados)' : ''}
+          </summary>
+          <div style={{ fontSize: 12, color: '#666', margin: '6px 0 8px' }}>
+            Elegí qué productos trae este remito y en qué cantidad (en la unidad base de cada producto). Se agregan al remito y quedan listos para comparar contra el saldo.
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+              <thead><tr>{['', 'Producto', 'OC', 'Saldo', 'Cantidad que trae', 'Unidad'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {disponibles.map(d => {
+                  const marcado = seleccion[d.clave] !== undefined
+                  return (
+                    <tr key={d.clave} style={{ background: marcado ? '#f0f7ff' : undefined }}>
+                      <td style={td}>
+                        <input type="checkbox" checked={marcado} onChange={e => setSeleccion(prev => {
+                          const n = { ...prev }
+                          if (e.target.checked) n[d.clave] = String(saldoDe(d.i)); else delete n[d.clave]
+                          return n
+                        })} />
+                      </td>
+                      <td style={td}>{d.i.nombre_producto}</td>
+                      <td style={td}>OC {d.oc.id}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{fmtNum(saldoDe(d.i))}</td>
+                      <td style={td}>
+                        <input type="number" min={0} step="any" disabled={!marcado} value={seleccion[d.clave] ?? ''}
+                          onChange={e => setSeleccion(prev => ({ ...prev, [d.clave]: e.target.value }))}
+                          style={{ width: 100, padding: '6px 8px', borderRadius: 8, border: '1.5px solid #d6d6d6', fontSize: 13 }} />
+                      </td>
+                      <td style={td}>{unidades[d.i.codigo_producto] || '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            <button style={btnLine} onClick={() => setSeleccion(Object.fromEntries(disponibles.map(d => [d.clave, String(saldoDe(d.i))])))}>Marcar todos con el saldo</button>
+            {elegidos.length > 0 && <button style={btnLine} onClick={() => setSeleccion({})}>Desmarcar</button>}
+            <button style={{ ...btn(), opacity: elegidos.length && !agregando ? 1 : 0.5 }} disabled={!elegidos.length || agregando} onClick={agregarDesdeOC}>
+              {agregando ? 'Agregando…' : `Agregar ${elegidos.length || ''} al remito`}
+            </button>
+          </div>
+        </details>
+      )}
+
       {comparacion && (
         <div style={{ marginTop: 12 }}>
           {comparacion.filas.length === 0 ? (
             <div style={{ fontSize: 13, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '8px 12px' }}>
-              Para comparar cantidades, asigná los productos del remito en la sección de arriba.
+              Para comparar cantidades, asigná los productos del remito en la sección de arriba o cargalos desde la OC con el panel de acá abajo.
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>

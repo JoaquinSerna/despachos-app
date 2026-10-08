@@ -86,6 +86,7 @@ export default function ComprasPage() {
   const [estadoRem, setEstadoRem] = useState('todos')
   const [filtroOC, setFiltroOC] = useState('todos')
   const [itemsRemito, setItemsRemito] = useState<ItemRemito[]>([])
+  const [recargarItems, setRecargarItems] = useState(0)
   const [texto, setTexto] = useState('')
   const [ingresos, setIngresos] = useState<any[]>([])
   const [cargandoIng, setCargandoIng] = useState(false)
@@ -478,10 +479,10 @@ export default function ComprasPage() {
             )}
 
             {sel.rem && (
-              <ProductosRemito key={sel.rem.id} remito={sel.rem} proveedorId={fProv?.id ?? sel.ing.proveedor_id} userId={userId} puedeEd={puedeEd} showToast={showToast} onItems={setItemsRemito} />
+              <ProductosRemito key={sel.rem.id} remito={sel.rem} proveedorId={fProv?.id ?? sel.ing.proveedor_id} userId={userId} puedeEd={puedeEd} showToast={showToast} onItems={setItemsRemito} recargarKey={recargarItems} />
             )}
             {sel.rem && (
-              <AsociarOC key={`oc-${sel.rem.id}`} ing={sel.ing} rem={sel.rem} items={itemsRemito} userId={userId} puedeEd={puedeEd} showToast={showToast}
+              <AsociarOC key={`oc-${sel.rem.id}`} ing={sel.ing} rem={sel.rem} items={itemsRemito} userId={userId} puedeEd={puedeEd} showToast={showToast} onItemsAgregados={() => setRecargarItems(k => k + 1)}
                 onChanged={({ oc_ids, sin_oc }) => {
                   const cambios = { sin_oc, proveedor_remito_ocs: oc_ids.map(oc_id => ({ oc_id })) }
                   setSel(prev => prev ? { ...prev, rem: { ...prev.rem, ...cambios } } : prev)

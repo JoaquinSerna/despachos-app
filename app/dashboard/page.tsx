@@ -25,6 +25,7 @@ const TODAS_LAS_CARDS = [
   { href: '/pallets',        icon: '📦', titulo: 'Pallets',            descripcion: 'Devolución y reintegro de pallets',          disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial'] },
   { href: '/guardia',        icon: '🔒', titulo: 'Guardia y Cargas',  descripcion: 'Registro de movimientos y cargas',           disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito'] },
   { href: '/compras',       icon: '🧾', titulo: 'Compras',            descripcion: 'Ingresos de proveedores y remitos',          disponible: true, roles: ['gerencia','admin_flota','compras'] },
+  { href: '/taller',        icon: '🔧', titulo: 'Taller',             descripcion: 'Órdenes de trabajo y tiempos de reparación', disponible: true, roles: ['gerencia','admin_flota','admin_taller'] },
   { href: '/ayuda',          icon: '📖', titulo: 'Manual de uso',      descripcion: 'Guía paso a paso y diagramas de flujo',      disponible: true, roles: ['gerencia','admin_flota','ruteador','deposito','comercial','confirmador','chofer'] },
 ]
  
@@ -112,6 +113,7 @@ export default function Dashboard() {
       if (!tieneExtras && userData?.rol === 'chofer') { router.push('/ruteo'); return }
       if (!tieneExtras && userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
       if (!tieneExtras && userData?.rol === 'guardia') { router.push('/guardia'); return }
+      if (!tieneExtras && (userData?.rol === 'mecanico' || userData?.rol === 'admin_taller')) { router.push('/taller'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')

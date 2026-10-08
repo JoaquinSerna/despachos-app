@@ -1,4 +1,4 @@
-export const ROLES = ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer', 'compras'] as const
+export const ROLES = ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer', 'compras', 'mecanico', 'admin_taller'] as const
 export type Rol = typeof ROLES[number]
 
 export const ROL_LABEL: Record<string, string> = {
@@ -10,6 +10,8 @@ export const ROL_LABEL: Record<string, string> = {
   confirmador:  'Confirmador',
   chofer:       'Chofer',
   compras:      'Compras',
+  mecanico:     'Mecánico',
+  admin_taller: 'Admin de Taller',
 }
 
 export const ROL_DESCRIPCION: Record<string, string> = {
@@ -21,6 +23,8 @@ export const ROL_DESCRIPCION: Record<string, string> = {
   confirmador:  'Llama a clientes para confirmar horario de entrega',
   chofer:       'Ve su recorrido diario asignado',
   compras:      'Revisa ingresos de proveedores y remitos',
+  mecanico:     'Registra inicio y fin de trabajos en el taller',
+  admin_taller: 'Administra el taller: edita las órdenes de trabajo y descarga los informes',
 }
 
 export const ROL_COLOR: Record<string, string> = {
@@ -32,6 +36,8 @@ export const ROL_COLOR: Record<string, string> = {
   confirmador:  '#0891b2',
   chofer:       '#666',
   compras:      '#0e7490',
+  mecanico:     '#b45309',
+  admin_taller: '#9a3412',
 }
 
 export const ROL_BG: Record<string, string> = {
@@ -43,6 +49,8 @@ export const ROL_BG: Record<string, string> = {
   confirmador:  '#e0f2fe',
   chofer:       '#f4f4f3',
   compras:      '#cffafe',
+  mecanico:     '#ffedd5',
+  admin_taller: '#fed7aa',
 }
 
 // Qué páginas puede acceder cada rol
@@ -55,6 +63,8 @@ export const ROL_PAGINAS: Record<string, string[]> = {
   confirmador:  ['/confirmaciones'],
   chofer:       ['/ruteo'],
   compras:      ['/compras'],
+  mecanico:     ['/taller'],
+  admin_taller: ['/taller'],
 }
 
 

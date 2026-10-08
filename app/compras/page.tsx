@@ -132,7 +132,7 @@ export default function ComprasPage() {
   const cargarIngresos = useCallback(async () => {
     setCargandoIng(true)
     let q = supabase.from('proveedor_ingresos')
-      .select('*, proveedores(id, nombre, cuit, estado), proveedor_remitos(*)')
+      .select('*, proveedores(id, nombre, cuit, estado), proveedor_remitos(*, proveedor_remito_ocs(oc_id))')
       .gte('fecha', desde).lte('fecha', hasta).order('hora_ingreso', { ascending: false }).limit(500)
     if (sucursal !== 'Todas') q = q.eq('sucursal', sucursal)
     if (origen !== 'todos') q = q.eq('origen', origen)
@@ -153,8 +153,9 @@ export default function ComprasPage() {
     const todas = ingresos.flatMap(ing => (ing.proveedor_remitos?.length ? ing.proveedor_remitos : [null]).map((rem: any) => ({ ing, rem })))
     return todas.filter(({ ing, rem }) => {
       if (estadoRem !== 'todos' && (rem?.estado ?? 'registrado') !== estadoRem) return false
-      if (filtroOC === 'sin' && (rem?.oc_id || rem?.sin_oc)) return false
-      if (filtroOC === 'asociadas' && !rem?.oc_id) return false
+      const nOC = rem?.proveedor_remito_ocs?.length ?? 0
+      if (filtroOC === 'sin' && (nOC > 0 || rem?.sin_oc)) return false
+      if (filtroOC === 'asociadas' && nOC === 0) return false
       if (filtroOC === 'sinoc' && !rem?.sin_oc) return false
       if (!texto.trim()) return true
       const hay = [ing.proveedores?.nombre, rem?.numero_remito, rem?.numero_remito_leido, ing.patente, ing.camion_codigo, ing.chofer].filter(Boolean).join(' ')
@@ -219,7 +220,7 @@ export default function ComprasPage() {
 
   const exportarCSV = () => {
     const cols = ['fecha', 'hora', 'sucursal', 'proveedor', 'cuit_proveedor', 'estado_proveedor', 'origen', 'patente', 'camion_propio', 'chofer',
-      'numero_remito', 'numero_leido', 'corregido_por_guardia', 'cuit_leido', 'oc_citada', 'oc_asociada', 'sin_oc', 'fecha_remito', 'estado_remito', 'observacion_compras', 'cant_fotos']
+      'numero_remito', 'numero_leido', 'corregido_por_guardia', 'cuit_leido', 'oc_citada', 'oc_asociadas', 'sin_oc', 'fecha_remito', 'estado_remito', 'observacion_compras', 'cant_fotos']
     const lineas = [cols.join(';')]
     for (const { ing, rem } of filas) {
       const hora = new Date(ing.hora_ingreso)
@@ -228,7 +229,7 @@ export default function ComprasPage() {
         sucursal: ing.sucursal, proveedor: ing.proveedores?.nombre, cuit_proveedor: ing.proveedores?.cuit,
         estado_proveedor: ing.proveedores?.estado, origen: ing.origen, patente: ing.patente, camion_propio: ing.camion_codigo, chofer: ing.chofer,
         numero_remito: rem?.numero_remito, numero_leido: rem?.numero_remito_leido, corregido_por_guardia: rem ? (rem.remito_corregido ? 'si' : 'no') : '',
-        cuit_leido: rem?.cuit_leido, oc_citada: rem?.oc_numero_leido, oc_asociada: rem?.oc_id, sin_oc: rem ? (rem.sin_oc ? 'si' : 'no') : '', fecha_remito: rem?.fecha_remito, estado_remito: rem?.estado,
+        cuit_leido: rem?.cuit_leido, oc_citada: rem?.oc_numero_leido, oc_asociadas: (rem?.proveedor_remito_ocs ?? []).map((x: any) => x.oc_id).join(' + '), sin_oc: rem ? (rem.sin_oc ? 'si' : 'no') : '', fecha_remito: rem?.fecha_remito, estado_remito: rem?.estado,
         observacion_compras: rem?.observacion_compras, cant_fotos: (rem?.fotos?.length ?? 0) + (ing.fotos_camion?.length ?? 0),
       }
       lineas.push(cols.map(c => csvCell(fila[c])).join(';'))
@@ -370,7 +371,7 @@ export default function ComprasPage() {
                             <b>{rem?.numero_remito ?? '—'}</b>
                             {rem?.remito_corregido && <div style={{ fontSize: 11, color: '#92400e' }}>✎ corregido por guardia (leído: {rem.numero_remito_leido})</div>}
                           </td>
-                          <td style={td}>{rem?.oc_id ? <b>OC {rem.oc_id}</b> : rem?.sin_oc ? <span style={{ color: '#666' }}>Sin OC</span> : <span style={{ color: '#aaa' }}>sin asociar</span>}</td>
+                          <td style={td}>{(rem?.proveedor_remito_ocs?.length ?? 0) > 0 ? <b>{rem.proveedor_remito_ocs.map((x: any) => `OC ${x.oc_id}`).join(' + ')}</b> : rem?.sin_oc ? <span style={{ color: '#666' }}>Sin OC</span> : <span style={{ color: '#aaa' }}>sin asociar</span>}</td>
                           <td style={{ ...td, color: av?.rojo ? '#b91c1c' : '#92400e', fontSize: 12 }}>{av?.texto ?? ''}</td>
                           <td style={td}><span style={{ background: rem?.estado === 'revisado' ? '#ecfdf5' : '#fffbeb', color: rem?.estado === 'revisado' ? '#065f46' : '#92400e', borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700 }}>{rem?.estado === 'revisado' ? 'Revisado' : 'Por revisar'}</span></td>
                           <td style={td}>📷 {nFotos}</td>
@@ -481,7 +482,8 @@ export default function ComprasPage() {
             )}
             {sel.rem && (
               <AsociarOC key={`oc-${sel.rem.id}`} ing={sel.ing} rem={sel.rem} items={itemsRemito} userId={userId} puedeEd={puedeEd} showToast={showToast}
-                onChanged={cambios => {
+                onChanged={({ oc_ids, sin_oc }) => {
+                  const cambios = { sin_oc, proveedor_remito_ocs: oc_ids.map(oc_id => ({ oc_id })) }
                   setSel(prev => prev ? { ...prev, rem: { ...prev.rem, ...cambios } } : prev)
                   setIngresos(prev => prev.map(i => i.id === sel.ing.id ? { ...i, proveedor_remitos: (i.proveedor_remitos ?? []).map((r: any) => r.id === sel.rem.id ? { ...r, ...cambios } : r) } : i))
                 }} />

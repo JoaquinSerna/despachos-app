@@ -7,6 +7,8 @@ import Link from 'next/link'
 import { puedeEditar } from '../lib/permisos'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 import { logAuditoria } from '../lib/auditoria'
+import { esHierroDeForma } from '../lib/hierro'
+import ValidacionHierro from '../components/ValidacionHierro'
 import type { jsPDF as JsPDFType } from 'jspdf'
 
 function detectarSucursal(sucursalObra: string, deposito: string): string {
@@ -101,6 +103,7 @@ export default function NuevoDespacho() {
   const [pedidoGrande, setPedidoGrande] = useState(false)
   const [verificando, setVerificando] = useState(false)
   const [productosNV, setProductosNV] = useState<any[]>([])
+  const [hierroModal, setHierroModal] = useState(false)
   const [pesoTotal, setPesoTotal] = useState(0)
   const [posicionesTotal, setPosicionesTotal] = useState(0)
   const [pdfFile, setPdfFile] = useState<File | null>(null)
@@ -445,7 +448,10 @@ export default function NuevoDespacho() {
           }
         }
 
-        setProductosNV(productosConDatos)
+        const conForma = productosConDatos.map((p: any) => ({ ...p, forma_hierro: null }))
+        setProductosNV(conForma)
+        // Hierros de 6 a 32 mm: hay que decidir si van derechos o doblados antes de poder guardar
+        if (conForma.some((p: any) => esHierroDeForma(p))) setHierroModal(true)
         setPosicionesTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.posiciones, 0))
         setPesoTotal(productosConDatos.reduce((acc: number, p: any) => acc + p.peso, 0))
       }
@@ -472,6 +478,14 @@ export default function NuevoDespacho() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('')
+
+    // Cada hierro de 6 a 32 mm tiene que tener definido si va derecho o doblado
+    if (productosNV.some((p: any) => esHierroDeForma(p) && !p.forma_hierro)) {
+      setError('Elegí si cada hierro va derecho o doblado antes de guardar.')
+      setHierroModal(true)
+      setLoading(false)
+      return
+    }
 
     // Re-consultar bloqueos al momento del submit para evitar estado desactualizado
     const { data: vcmFresh } = await supabase
@@ -560,6 +574,7 @@ export default function NuevoDespacho() {
           nombre: p.descripcion,
           cantidad: p.cantidad,
           unidad: p.material?.unidad_base || 'u',
+          forma_hierro: esHierroDeForma(p) ? p.forma_hierro : null,
         }))
       )
     }
@@ -1082,6 +1097,16 @@ export default function NuevoDespacho() {
         </div>
 
         {/* Productos */}
+        {hierroModal && (
+          <ValidacionHierro
+            lineas={productosNV.map((p: any, idx: number) => ({ idx, descripcion: p.descripcion, cantidad: p.cantidad, forma: p.forma_hierro ?? null })).filter((l: any) => esHierroDeForma(productosNV[l.idx]))}
+            onConfirmar={formas => {
+              setProductosNV(prev => prev.map((p: any, i: number) => formas[i] ? { ...p, forma_hierro: formas[i] } : p))
+              setHierroModal(false)
+              setError('')
+            }}
+          />
+        )}
         {productosNV.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm p-6">
             <h2 className="font-semibold text-sm mb-4" style={{ color: '#254A96' }}>📦 Productos del pedido</h2>
@@ -1093,6 +1118,13 @@ export default function NuevoDespacho() {
                     <span className="ml-2 text-xs" style={{ color: '#B9BBB7' }}>×{p.cantidad}</span>
                     {!p.material && (
                       <span className="ml-2 text-xs font-medium" style={{ color: '#f59e0b' }}>⚠ sin match en maestro</span>
+                    )}
+                    {esHierroDeForma(p) && (
+                      <button type="button" onClick={() => setHierroModal(true)}
+                        className="ml-2 text-xs font-bold rounded-full px-2 py-0.5"
+                        style={{ background: p.forma_hierro ? '#e8edf8' : '#fee2e2', color: p.forma_hierro ? '#254A96' : '#b91c1c', border: 'none', cursor: 'pointer' }}>
+                        {p.forma_hierro ? (p.forma_hierro === 'doblado' ? 'DOBLADO' : 'DERECHO') + ' · cambiar' : '⚠ elegir derecho/doblado'}
+                      </button>
                     )}
                   </div>
                   <div className="shrink-0 flex items-center gap-2">

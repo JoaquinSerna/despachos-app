@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
   const BATCH = 500
   for (let i = 0; i < allIds.length; i += BATCH) {
     const { data: batch } = await admin.from('pedido_items')
-      .select('pedido_id, nombre, cantidad, unidad, codigo_material')
+      .select('pedido_id, nombre, cantidad, unidad, codigo_material, forma_hierro')
       .in('pedido_id', allIds.slice(i, i + BATCH))
     if (batch) allItems = allItems.concat(batch)
   }
@@ -75,7 +75,8 @@ export async function GET(request: NextRequest) {
   for (const item of allItems) {
     if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
     const rawNombre = stripPrefix(item.nombre ?? '')
-    const nombre = toTitleCase(rawNombre)
+    const formaTxt = item.forma_hierro === 'doblado' ? ' — DOBLADO' : item.forma_hierro === 'derecho' ? ' — DERECHO' : ''
+    const nombre = toTitleCase(rawNombre) + formaTxt
     // Usar codigo_material si es numérico, si no buscar por nombre en materiales
     const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material))
       ? item.codigo_material

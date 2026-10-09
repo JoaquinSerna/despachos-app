@@ -88,14 +88,22 @@ export default function RemitosEditor({ remitos, setRemitos, proveedor, proveedo
             )}
 
             {r.fotos.length < MAX_FOTOS_REMITO && (
-              <label style={{ display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, border: '1.5px dashed #254A96', color: '#254A96', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
-                📷 {r.fotos.length === 0 ? 'Foto del remito' : 'Agregar otra hoja'}
-                <input type="file" accept="image/*" multiple style={{ display: 'none' }}
-                  onChange={e => { agregarFotos(r, e.target.files); e.target.value = '' }} />
-              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {/* Con capture el celular abre la cámara directo; sin capture solo ofrece la galería */}
+                <label style={{ flex: 2, display: 'block', textAlign: 'center', padding: '12px', borderRadius: 12, border: '1.5px solid #254A96', background: '#254A96', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                  📷 {r.fotos.length === 0 ? 'Sacar foto del remito' : 'Sacar otra foto'}
+                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+                    onChange={e => { agregarFotos(r, e.target.files); e.target.value = '' }} />
+                </label>
+                <label style={{ flex: 1, display: 'block', textAlign: 'center', padding: '12px 6px', borderRadius: 12, border: '1.5px dashed #254A96', color: '#254A96', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}>
+                  🖼️ Galería
+                  <input type="file" accept="image/*" multiple style={{ display: 'none' }}
+                    onChange={e => { agregarFotos(r, e.target.files); e.target.value = '' }} />
+                </label>
+              </div>
             )}
             {r.fotos.length === 0 && (
-              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Sacá la foto de la hoja con el número arriba. Si hay varias hojas, podés agregarlas después.</div>
+              <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>Sacá la foto de la hoja con el número arriba (o elegila de la galería). Si hay varias hojas, podés agregarlas después.</div>
             )}
 
             {r.ocr === 'leyendo' && <div style={AMBAR}>Leyendo el remito…</div>}

@@ -158,9 +158,14 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
             </div>
           ))}
           {fotosCamion.length < 4 && (
-            <label style={{ width: 68, height: 68, borderRadius: 8, border: '1.5px dashed #c8c8c8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, cursor: 'pointer', color: '#9ca3af' }}>
-              📷<input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { agregarFotoCamion(e.target.files); e.target.value = '' }} />
-            </label>
+            <>
+              <label title="Sacar foto" style={{ width: 68, height: 68, borderRadius: 8, border: '1.5px solid #254A96', background: '#eef2fb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, cursor: 'pointer', color: '#254A96' }}>
+                📷<input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e => { agregarFotoCamion(e.target.files); e.target.value = '' }} />
+              </label>
+              <label title="Elegir de la galería" style={{ width: 68, height: 68, borderRadius: 8, border: '1.5px dashed #c8c8c8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, cursor: 'pointer', color: '#9ca3af' }}>
+                🖼️<input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => { agregarFotoCamion(e.target.files); e.target.value = '' }} />
+              </label>
+            </>
           )}
         </div>
       </div>

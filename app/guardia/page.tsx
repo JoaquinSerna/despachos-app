@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { IngresoProveedorForm, IngresosProveedorLista } from './ProveedoresTab'
+import VisorFotoGrande from '../components/VisorFotoGrande'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -98,6 +99,7 @@ export default function GuardiaPage() {
   const [editEventoVals, setEditEventoVals] = useState<Record<string, any>>({})
   const [guardandoEvento, setGuardandoEvento] = useState(false)
   const [visorFotos, setVisorFotos] = useState<{ urls: string[]; titulo: string; ev: any } | null>(null)
+  const [fotoGrande, setFotoGrande] = useState<{ urls: string[]; i: number } | null>(null)
 
   // Choferes
   const [choferes, setChoferes] = useState<{id: string, nombre: string, camion_codigo: string | null}[]>([])
@@ -1364,11 +1366,12 @@ export default function GuardiaPage() {
             })()}
 
             {/* Fotos */}
+            <p style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>Tocá una foto para ampliarla</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
               {visorFotos.urls.map((url, i) => (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img key={i} src={url} alt={`foto ${i + 1}`}
-                  style={{ maxWidth: 260, maxHeight: 360, objectFit: 'contain', borderRadius: 12, border: '2px solid rgba(255,255,255,0.2)' }} />
+                <img key={i} src={url} alt={`foto ${i + 1}`} title="Tocá para ampliar" onClick={() => setFotoGrande({ urls: visorFotos.urls, i })}
+                  style={{ maxWidth: 260, maxHeight: 360, objectFit: 'contain', borderRadius: 12, border: '2px solid rgba(255,255,255,0.2)', cursor: 'zoom-in' }} />
               ))}
             </div>
 
@@ -1381,6 +1384,8 @@ export default function GuardiaPage() {
           </div>
         </div>
       )}
+
+      {fotoGrande && <VisorFotoGrande urls={fotoGrande.urls} inicio={fotoGrande.i} onCerrar={() => setFotoGrande(null)} />}
 
       {/* Modal editar evento — solo gerencia */}
       {editEvento && (

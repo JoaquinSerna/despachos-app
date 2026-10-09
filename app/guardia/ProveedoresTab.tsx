@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ProveedorPicker from '../components/ProveedorPicker'
 import RemitosEditor from '../components/RemitosEditor'
+import VisorFotoGrande from '../components/VisorFotoGrande'
 import { normalizarRemito, remitoIgual, ROLES_COMPRAS_ADMIN } from '../lib/compras-utils'
 import {
   comprimirFoto, confirmarDuplicados, crearProveedor, eliminarIngreso, fechaLocal, firmarFotos,
@@ -197,6 +198,7 @@ export function IngresosProveedorLista({ userId, rol, sucursalUsuario, refreshKe
   const [cargando, setCargando] = useState(false)
   const [editando, setEditando] = useState<{ id: string; valor: string } | null>(null)
   const [visor, setVisor] = useState<string[] | null>(null)
+  const [grande, setGrande] = useState<number | null>(null)
   const esAdmin = ROLES_COMPRAS_ADMIN.includes(rol)
 
   const cargar = useCallback(async () => {
@@ -296,11 +298,13 @@ export function IngresosProveedorLista({ userId, rol, sucursalUsuario, refreshKe
         <div onClick={() => setVisor(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.88)', zIndex: 300, overflowY: 'auto', padding: 20 }}>
           <div onClick={e => e.stopPropagation()} style={{ maxWidth: 600, margin: '0 auto' }}>
             {visor.length === 0 && <p style={{ color: '#fff', textAlign: 'center' }}>No se pudieron cargar las fotos</p>}
-            {visor.map((u, i) => <img key={i} src={u} alt="" style={{ width: '100%', borderRadius: 10, marginBottom: 14 }} />)}
+            {visor.length > 0 && <p style={{ color: 'rgba(255,255,255,.55)', fontSize: 12, textAlign: 'center', marginBottom: 10 }}>Tocá una foto para ampliarla</p>}
+            {visor.map((u, i) => <img key={i} src={u} alt="" onClick={() => setGrande(i)} style={{ width: '100%', borderRadius: 10, marginBottom: 14, cursor: 'zoom-in' }} />)}
             <button onClick={() => setVisor(null)} style={{ display: 'block', margin: '0 auto', color: '#fff', background: 'transparent', border: '1px solid rgba(255,255,255,.4)', borderRadius: 8, padding: '8px 24px', cursor: 'pointer' }}>Cerrar</button>
           </div>
         </div>
       )}
+      {visor && grande !== null && <VisorFotoGrande urls={visor} inicio={grande} onCerrar={() => setGrande(null)} />}
     </div>
   )
 }

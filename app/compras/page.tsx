@@ -8,6 +8,7 @@ import ProveedorPicker from '../components/ProveedorPicker'
 import OrdenesCompra from './OrdenesCompra'
 import ProductosRemito, { type ItemRemito } from './ProductosRemito'
 import AsociarOC from './AsociarOC'
+import VisorFotoGrande from '../components/VisorFotoGrande'
 import {
   coincideTexto, cuitValido, formatCuit, normalizarCuit, normalizarRemito, remitoIgual, soloDigitos,
 } from '../lib/compras-utils'
@@ -87,6 +88,7 @@ export default function ComprasPage() {
   const [filtroOC, setFiltroOC] = useState('todos')
   const [itemsRemito, setItemsRemito] = useState<ItemRemito[]>([])
   const [recargarItems, setRecargarItems] = useState(0)
+  const [fotoGrande, setFotoGrande] = useState<{ urls: string[]; i: number } | null>(null)
   const [texto, setTexto] = useState('')
   const [ingresos, setIngresos] = useState<any[]>([])
   const [cargandoIng, setCargandoIng] = useState(false)
@@ -459,8 +461,8 @@ export default function ComprasPage() {
               {fotos && fotos.camion.length + fotos.remito.length === 0 && <div style={{ fontSize: 13, color: '#999' }}>Sin fotos</div>}
               {fotos && (
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                  {fotos.remito.map((u, i) => <a key={`r${i}`} href={u} target="_blank" rel="noreferrer"><img src={u} alt="remito" style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 10, border: '1px solid #ddd' }} /></a>)}
-                  {fotos.camion.map((u, i) => <a key={`c${i}`} href={u} target="_blank" rel="noreferrer"><img src={u} alt="camión" style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 10, border: '1px solid #ddd' }} /></a>)}
+                  {fotos.remito.map((u, i) => <img key={`r${i}`} src={u} alt="remito" title="Tocá para ampliar" onClick={() => setFotoGrande({ urls: [...fotos.remito, ...fotos.camion], i })} style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 10, border: '1px solid #ddd', cursor: 'zoom-in' }} />)}
+                  {fotos.camion.map((u, i) => <img key={`c${i}`} src={u} alt="camión" title="Tocá para ampliar" onClick={() => setFotoGrande({ urls: [...fotos.remito, ...fotos.camion], i: fotos.remito.length + i })} style={{ width: 130, height: 130, objectFit: 'cover', borderRadius: 10, border: '1px solid #ddd', cursor: 'zoom-in' }} />)}
                 </div>
               )}
               <div style={{ fontSize: 11, color: '#999', marginTop: 6 }}>Tocá una foto para verla grande.</div>
@@ -516,6 +518,8 @@ export default function ComprasPage() {
           </div>
         </div>
       )}
+
+      {fotoGrande && <VisorFotoGrande urls={fotoGrande.urls} inicio={fotoGrande.i} onCerrar={() => setFotoGrande(null)} />}
 
       {/* ───────── MODAL EDITAR PROVEEDOR ───────── */}
       {editProv && (

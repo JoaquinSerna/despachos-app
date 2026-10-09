@@ -25,7 +25,7 @@ Devolvé SOLO el JSON array, sin markdown, sin texto adicional.`
 async function llamarClaude(anthropic: Anthropic, base64: string, intento: number): Promise<any> {
   try {
     return await anthropic.messages.create({
-      model: 'claude-haiku-5-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 16000,
       messages: [{
         role: 'user',

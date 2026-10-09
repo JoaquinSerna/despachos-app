@@ -9,6 +9,15 @@ import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG } from '../lib/rol
 import { MODULOS, MODULO_LABEL, MODULO_ICON, nivelEfectivo } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
 
+// Todas las llamadas al endpoint de usuarios mandan la sesión: el servidor exige rol gerencia
+async function authFetch(url: string, init: RequestInit = {}) {
+  const { data: { session } } = await supabase.auth.getSession()
+  return fetch(url, {
+    ...init,
+    headers: { ...(init.headers ?? {}), ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+  })
+}
+
 interface Usuario {
   id: string
   nombre: string
@@ -125,7 +134,7 @@ export default function UsuariosPage() {
     if (!modalPermisos) return
     setGuardandoPermisos(true)
     const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch('/api/crear-usuario', {
+    const res = await authFetch('/api/crear-usuario', {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
@@ -146,7 +155,7 @@ export default function UsuariosPage() {
 
   const cargarUsuarios = async () => {
     setCargando(true)
-    const res = await fetch('/api/crear-usuario')
+    const res = await authFetch('/api/crear-usuario')
     const data = await res.json()
     setUsuarios(data.usuarios ?? [])
     setCargando(false)
@@ -166,7 +175,7 @@ export default function UsuariosPage() {
     setGuardando(true)
     try {
       if (modal?.tipo === 'crear') {
-        const res = await fetch('/api/crear-usuario', {
+        const res = await authFetch('/api/crear-usuario', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -176,7 +185,7 @@ export default function UsuariosPage() {
         showToast('Usuario creado correctamente')
         if (adminId) logAuditoria(adminId, adminNombre, 'Creó usuario', 'Usuarios', { email: form.email, nombre: form.nombre, rol: form.rol, sucursal: form.sucursal })
       } else if (modal?.tipo === 'editar' && modal.usuario) {
-        const res = await fetch('/api/crear-usuario', {
+        const res = await authFetch('/api/crear-usuario', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -210,7 +219,7 @@ export default function UsuariosPage() {
     if (!confirm(`¿Asignar "Todas las sucursales" a ${comerciales.length} comerciale${comerciales.length !== 1 ? 's' : ''}?`)) return
     try {
       await Promise.all(comerciales.map(u =>
-        fetch('/api/crear-usuario', {
+        authFetch('/api/crear-usuario', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: u.id, emailAnterior: u.email, nombre: u.nombre, email: u.email, rol: u.rol, sucursal: '' }),
@@ -230,7 +239,7 @@ export default function UsuariosPage() {
       return
     }
     if (!confirm(`¿${nuevoEstado ? 'Activar' : 'Inactivar'} a ${u.nombre}?`)) return
-    const res = await fetch('/api/crear-usuario', {
+    const res = await authFetch('/api/crear-usuario', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: u.id, activo: nuevoEstado, motivo_inactivo: nuevoEstado ? null : (motivoDirecto ?? null) }),

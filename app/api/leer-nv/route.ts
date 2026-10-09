@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import Anthropic from '@anthropic-ai/sdk'
 
 export async function POST(request: NextRequest) {
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
       : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-5-5',
       max_tokens: 2048,
       messages: [
         {
@@ -63,7 +64,7 @@ No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo 
       ]
     })
 
-    const texto = response.content[0].type === 'text' ? response.content[0].text : ''
+    const texto = textoDeRespuesta(response)
     const limpio = texto.replace(/```json|```/g, '').trim()
     let datos: any
     try {

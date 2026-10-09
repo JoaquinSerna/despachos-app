@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import Anthropic from '@anthropic-ai/sdk'
 
 const PROMPT = `Este PDF contiene múltiples Solicitudes de Despacho. Extraé TODAS las solicitudes y devolvé SOLO un JSON array válido sin texto adicional ni markdown.
@@ -25,7 +26,7 @@ Devolvé SOLO el JSON array, sin markdown, sin texto adicional.`
 async function llamarClaude(anthropic: Anthropic, base64: string, intento: number): Promise<any> {
   try {
     return await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-5-5',
       max_tokens: 16000,
       messages: [{
         role: 'user',
@@ -64,7 +65,7 @@ export async function POST(request: NextRequest) {
 
     const response = await llamarClaude(anthropic, base64, 0)
 
-    const texto = response.content[0].type === 'text' ? response.content[0].text : ''
+    const texto = textoDeRespuesta(response)
     const limpio = texto.replace(/```json\n?|```\n?/g, '').trim()
     const solicitudes = JSON.parse(limpio)
 

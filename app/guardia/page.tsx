@@ -4,12 +4,6 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { IngresoProveedorForm, IngresosProveedorLista } from './ProveedoresTab'
-import ProveedorPicker from '../components/ProveedorPicker'
-import RemitosEditor from '../components/RemitosEditor'
-import {
-  confirmarDuplicados, crearProveedor, eliminarIngreso, guardarIngresoProveedor, nuevoRemito,
-  useProveedores, validarRemitos, type ProveedorLite, type RemitoDraft,
-} from '../lib/compras'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -121,12 +115,10 @@ export default function GuardiaPage() {
   // Ingreso
   const [ingChofer, setIngChofer] = useState('')
   const [ingCamion, setIngCamion] = useState('')
-  const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia' | 'con_proveedor'>('directo')
+  const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia'>('directo')
   const [ingDeposito, setIngDeposito] = useState('')
-  const [ingProv, setIngProv] = useState<ProveedorLite | null>(null)
-  const [ingRemitos, setIngRemitos] = useState<RemitoDraft[]>([nuevoRemito()])
   const [provRefresh, setProvRefresh] = useState(0)
-  const { lista: proveedoresLista, recargar: recargarProveedores } = useProveedores()
+  const [provInicial, setProvInicial] = useState<{ origen: 'externo' | 'propio'; chofer?: string; camion?: string } | null>(null)
   const [ingFotos, setIngFotos] = useState<FotoItem[]>([])
   const ingFileRef = useRef<HTMLInputElement>(null)
 
@@ -243,11 +235,9 @@ export default function GuardiaPage() {
     setSalConTransferencia(false); setSalDepositoDestino('')
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
-    setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito(''); setIngProv(null)
+    setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
     ingFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setIngFotos([])
-    ingRemitos.forEach(r => r.fotos.forEach(f => URL.revokeObjectURL(f.preview)))
-    setIngRemitos([nuevoRemito()])
     setDevCamion(''); setDevChofer(''); setDevCategoria(''); setDevMotivo('')
     setDevRemito(''); setDevNV(''); setDevObs('')
     devFotos.forEach(f => URL.revokeObjectURL(f.preview))
@@ -452,53 +442,24 @@ export default function GuardiaPage() {
     finally { setGuardando(false) }
   }
 
-  const crearProveedorGuardia = async (nombre: string, cuit: string) => {
-    const puedeAprobar = ['gerencia', 'admin_flota', 'compras'].includes(rol)
-    const r = await crearProveedor(nombre, cuit, puedeAprobar, userId)
-    if (r.error) { showToast(r.error, 'err'); return null }
-    if (r.existente) { showToast('Ya existe «' + r.existente.nombre + '», se usa ese'); return r.existente }
-    await recargarProveedores()
-    return r.proveedor ?? null
-  }
-
   const registrarIngreso = async () => {
     if (!ingCamion) { showToast('Seleccioná el camión', 'err'); return }
     if (ingTipo === 'con_transferencia' && !ingDeposito) { showToast('Indicá el depósito de origen', 'err'); return }
-    if (ingTipo === 'con_proveedor') {
-      if (!ingProv) { showToast('Elegí el proveedor', 'err'); return }
-      const errRem = validarRemitos(ingRemitos)
-      if (errRem) { showToast(errRem, 'err'); return }
-      if (ingRemitos.some(r => r.ocr === 'leyendo')) { showToast('Esperá que termine de leer el remito', 'err'); return }
-    }
-    if ((ingTipo === 'con_transferencia' || ingTipo === 'con_proveedor') && ingFotos.length === 0) {
-      showToast('Agregá al menos 1 foto', 'err'); return
-    }
+    if (ingTipo === 'con_transferencia' && ingFotos.length === 0) { showToast('Agregá al menos 1 foto', 'err'); return }
     setGuardando(true)
     try {
-      if (ingTipo === 'con_proveedor' && !(await confirmarDuplicados(ingProv!, ingRemitos))) return
       const eventoId = crypto.randomUUID()
       const fotosUrls = ingFotos.length > 0 ? await subirFotos(ingFotos, eventoId) : []
-      let ingresoProvId: string | null = null
-      if (ingTipo === 'con_proveedor') {
-        ingresoProvId = await guardarIngresoProveedor({
-          userId, sucursal: SUCURSALES.includes(sucursalUsuario) ? sucursalUsuario : 'Guernica', origen: 'propio',
-          proveedor: ingProv!, chofer: ingChofer, camionCodigo: ingCamion, guardiaEventoId: eventoId,
-          fotosCamion: [], remitos: ingRemitos,
-        })
-      }
       const { error } = await supabase.from('guardia_eventos').insert({
         id: eventoId, fecha: hoy(), tipo: 'ingreso', camion_codigo: ingCamion,
         chofer_apellido: ingChofer || null,
         tipo_ingreso: ingTipo,
-        deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : ingTipo === 'con_proveedor' ? (ingProv?.nombre ?? null) : null,
+        deposito_desde: ingTipo === 'con_transferencia' ? ingDeposito : null,
         fotos_urls: fotosUrls,
         registrado_por: userId,
       })
-      if (error) {
-        if (ingresoProvId) await eliminarIngreso(ingresoProvId)
-        throw error
-      }
-      const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : ingTipo === 'con_proveedor' ? `con proveedor ${ingProv?.nombre}` : 'directo'
+      if (error) throw error
+      const label = ingTipo === 'con_transferencia' ? `con transferencia desde ${ingDeposito}` : 'directo'
       setUltimoEvento(`✅ ${ingCamion} ingresó ${label} — ${horaLocal()}`)
       resetForms(); setAccion('home')
       showToast(`Ingreso registrado — ${ingCamion}`)
@@ -862,7 +823,7 @@ export default function GuardiaPage() {
 
               {/* Tab Proveedores */}
               {tab === 'proveedores' && !esDeposito && (
-                <button onClick={() => setAccion('prov_ingreso')} style={{
+                <button onClick={() => { setProvInicial(null); setAccion('prov_ingreso') }} style={{
                   background: '#fff', border: '2px solid #254A96', borderRadius: 16, padding: '22px 20px',
                   textAlign: 'left', cursor: 'pointer',
                 }}>
@@ -1103,6 +1064,7 @@ export default function GuardiaPage() {
         {/* INGRESO DE PROVEEDOR (camión externo) */}
         {accion === 'prov_ingreso' && (
           <IngresoProveedorForm
+            key={provInicial ? 'propio' : 'externo'} camiones={camiones} choferes={choferes} inicial={provInicial ?? undefined}
             userId={userId} rol={rol} sucursalUsuario={sucursalUsuario} showToast={showToast}
             onCancel={() => setAccion('home')}
             onDone={msg => { setUltimoEvento(msg); setProvRefresh(k => k + 1); setTab('proveedores'); setAccion('home'); showToast('Ingreso de proveedor registrado') }}
@@ -1209,7 +1171,11 @@ export default function GuardiaPage() {
                   { key: 'con_transferencia', label: 'Con transferencia' },
                   { key: 'con_proveedor', label: 'Con proveedor' },
                 ] as const).map(({ key, label }) => (
-                  <button key={key} onClick={() => { setIngTipo(key); if (key !== 'con_transferencia') setIngDeposito(''); if (key !== 'con_proveedor') setIngProv(null) }}
+                  <button key={key} onClick={() => {
+                    // «Con proveedor» se carga en el mismo formulario que el ingreso de proveedores (proveedor, remito, fotos)
+                    if (key === 'con_proveedor') { setProvInicial({ origen: 'propio', chofer: ingChofer, camion: ingCamion }); setAccion('prov_ingreso'); return }
+                    setIngTipo(key); setIngDeposito('')
+                  }}
                     style={{
                       flex: 1, minWidth: 90, padding: '12px 6px', borderRadius: 12, fontSize: 13, fontWeight: 600,
                       border: ingTipo === key ? '2px solid #254A96' : '1.5px solid #e0e0e0',
@@ -1230,17 +1196,7 @@ export default function GuardiaPage() {
                 </select>
               </div>
             )}
-            {ingTipo === 'con_proveedor' && (
-              <>
-                <div style={fieldStyle}>
-                  <label style={labelStyle}>Proveedor</label>
-                  <ProveedorPicker proveedores={proveedoresLista} value={ingProv} onChange={setIngProv} onCrear={crearProveedorGuardia} />
-                </div>
-                <RemitosEditor remitos={ingRemitos} setRemitos={setIngRemitos} proveedor={ingProv}
-                  proveedores={proveedoresLista} onUsarProveedor={setIngProv} showToast={showToast} />
-              </>
-            )}
-            {(ingTipo === 'con_transferencia' || ingTipo === 'con_proveedor') && (
+            {ingTipo === 'con_transferencia' && (
               <FotoSection fotos={ingFotos} setter={setIngFotos} fileRef={ingFileRef} color="#059669" />
             )}
             <button onClick={registrarIngreso} disabled={guardando} style={{ ...btnPrimary, background: '#059669' }}>

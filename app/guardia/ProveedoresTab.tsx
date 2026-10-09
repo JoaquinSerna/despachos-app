@@ -27,9 +27,12 @@ interface FormProps {
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   onDone: (mensaje: string) => void
   onCancel: () => void
+  camiones?: string[]
+  choferes?: { id: string; nombre: string; camion_codigo: string | null }[]
+  inicial?: { origen?: 'externo' | 'propio'; chofer?: string; camion?: string }
 }
 
-export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, onDone, onCancel }: FormProps) {
+export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, onDone, onCancel, camiones, choferes, inicial }: FormProps) {
   const { lista, recargar } = useProveedores()
   const puedeAprobar = ROLES_COMPRAS_ADMIN.includes(rol)
   const sucursalFija = rol === 'guardia' && SUCURSALES.includes(sucursalUsuario)
@@ -41,6 +44,16 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
   const [remitos, setRemitos] = useState<RemitoDraft[]>([nuevoRemito()])
   const [obs, setObs] = useState('')
   const [guardando, setGuardando] = useState(false)
+  const [origen, setOrigen] = useState<'externo' | 'propio'>(inicial?.origen ?? 'externo')
+  const [choferPropio, setChoferPropio] = useState(inicial?.chofer ?? '')
+  const [camionPropio, setCamionPropio] = useState(inicial?.camion ?? '')
+  const permitePropio = !!camiones
+
+  const elegirChofer = (v: string) => {
+    setChoferPropio(v)
+    const c = choferes?.find(ch => ch.nombre === v)
+    if (c?.camion_codigo) setCamionPropio(c.camion_codigo)
+  }
 
   const crear = async (nombre: string, cuit: string) => {
     const r = await crearProveedor(nombre, cuit, puedeAprobar, userId)
@@ -60,6 +73,7 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
   }
 
   const registrar = async () => {
+    if (origen === 'propio' && (!camionPropio || (camiones && !camiones.includes(camionPropio)))) { showToast('Elegí el camión de la lista', 'err'); return }
     if (!prov) { showToast('Elegí el proveedor', 'err'); return }
     const err = validarRemitos(remitos)
     if (err) { showToast(err, 'err'); return }
@@ -67,10 +81,23 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
     setGuardando(true)
     try {
       if (!(await confirmarDuplicados(prov, remitos))) { setGuardando(false); return }
-      await guardarIngresoProveedor({
-        userId, sucursal, origen: 'externo', proveedor: prov, patente, chofer, fotosCamion, remitos, observacion: obs,
+      const esPropio = origen === 'propio'
+      const eventoId = esPropio ? crypto.randomUUID() : undefined
+      const ingresoId = await guardarIngresoProveedor({
+        userId, sucursal, origen, proveedor: prov, patente: esPropio ? '' : patente, chofer: esPropio ? choferPropio : chofer,
+        camionCodigo: esPropio ? camionPropio : undefined, guardiaEventoId: eventoId, fotosCamion, remitos, observacion: obs,
       })
-      onDone(`✅ Ingreso de ${prov.nombre} registrado (${remitos.length} remito${remitos.length !== 1 ? 's' : ''})`)
+      if (esPropio) {
+        // El camión propio también deja su evento de ingreso en guardia (no cambia el informe de ciclos)
+        const { error } = await supabase.from('guardia_eventos').insert({
+          id: eventoId, fecha: fechaLocal(), tipo: 'ingreso', camion_codigo: camionPropio, chofer_apellido: choferPropio || null,
+          tipo_ingreso: 'con_proveedor', deposito_desde: prov.nombre, fotos_urls: [], observacion: obs.trim() || null, registrado_por: userId,
+        })
+        if (error) { await eliminarIngreso(ingresoId); throw error }
+        onDone(`✅ ${camionPropio} ingresó con proveedor ${prov.nombre} (${remitos.length} remito${remitos.length !== 1 ? 's' : ''})`)
+      } else {
+        onDone(`✅ Ingreso de ${prov.nombre} registrado (${remitos.length} remito${remitos.length !== 1 ? 's' : ''})`)
+      }
     } catch (e: any) {
       showToast(e?.message || 'Error al guardar', 'err')
     } finally { setGuardando(false) }
@@ -79,6 +106,18 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
   return (
     <div>
       <div style={cardStyle}>
+        {permitePropio && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+            {([['externo', '🚚 Camión externo'], ['propio', '🚛 Camión propio']] as const).map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setOrigen(k)}
+                style={{
+                  flex: 1, padding: '12px 6px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                  border: origen === k ? '2px solid #254A96' : '1.5px solid #e0e0e0',
+                  background: origen === k ? '#eef2fb' : '#fff', color: origen === k ? '#254A96' : '#666',
+                }}>{l}</button>
+            ))}
+          </div>
+        )}
         {sucursalFija ? (
           <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Sucursal: <b>{sucursal}</b></div>
         ) : (
@@ -91,12 +130,23 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
         )}
         <label style={labelStyle}>Proveedor</label>
         <ProveedorPicker proveedores={lista} value={prov} onChange={setProv} onCrear={crear} />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-          <div><label style={labelStyle}>Patente <span style={{ color: '#999' }}>(opcional)</span></label>
-            <input value={patente} onChange={e => setPatente(e.target.value.toUpperCase())} placeholder="AB123CD" style={inputStyle} /></div>
-          <div><label style={labelStyle}>Chofer <span style={{ color: '#999' }}>(opcional)</span></label>
-            <input value={chofer} onChange={e => setChofer(e.target.value)} placeholder="Apellido" style={inputStyle} autoCapitalize="words" /></div>
-        </div>
+        {origen === 'externo' ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+            <div><label style={labelStyle}>Patente <span style={{ color: '#999' }}>(opcional)</span></label>
+              <input value={patente} onChange={e => setPatente(e.target.value.toUpperCase())} placeholder="AB123CD" style={inputStyle} /></div>
+            <div><label style={labelStyle}>Chofer <span style={{ color: '#999' }}>(opcional)</span></label>
+              <input value={chofer} onChange={e => setChofer(e.target.value)} placeholder="Apellido" style={inputStyle} autoCapitalize="words" /></div>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+            <div><label style={labelStyle}>Chofer</label>
+              <input list="dl-choferes-prov" value={choferPropio} onChange={e => elegirChofer(e.target.value)} placeholder="Buscar chofer…" style={inputStyle} />
+              <datalist id="dl-choferes-prov">{(choferes ?? []).map(c => <option key={c.id} value={c.nombre} />)}</datalist></div>
+            <div><label style={labelStyle}>Camión</label>
+              <input list="dl-camiones-prov" value={camionPropio} onChange={e => setCamionPropio(e.target.value)} placeholder="Buscar camión…" style={inputStyle} />
+              <datalist id="dl-camiones-prov">{(camiones ?? []).map(c => <option key={c} value={c} />)}</datalist></div>
+          </div>
+        )}
         <label style={{ ...labelStyle, marginTop: 14 }}>Foto del camión <span style={{ color: '#999' }}>(opcional)</span></label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {fotosCamion.map((f, i) => (

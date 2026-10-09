@@ -9,8 +9,25 @@ function getAdmin() {
   )
 }
 
+// Todas las operaciones usan la clave de servicio (saltean RLS): solo puede llamarlas un usuario
+// con sesión válida, activo y con rol gerencia. Devuelve el id del que llama, o la respuesta de error.
+async function exigirGerencia(req: NextRequest): Promise<{ id: string } | NextResponse> {
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '').trim()
+  if (!token) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  const admin = getAdmin()
+  const { data: { user }, error } = await admin.auth.getUser(token)
+  if (error || !user) return NextResponse.json({ error: 'Sesión inválida' }, { status: 401 })
+  const { data: fila } = await admin.from('usuarios').select('rol, activo').eq('id', user.id).single()
+  if (!fila || fila.rol !== 'gerencia' || fila.activo === false) {
+    return NextResponse.json({ error: 'No autorizado — se requiere rol gerencia' }, { status: 403 })
+  }
+  return { id: user.id }
+}
+
 // GET - listar todos los usuarios (bypasa RLS)
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const acceso = await exigirGerencia(req)
+  if (acceso instanceof NextResponse) return acceso
   try {
     const { data, error } = await getAdmin()
       .from('usuarios')
@@ -25,6 +42,8 @@ export async function GET() {
 
 // POST - crear usuario
 export async function POST(req: NextRequest) {
+  const acceso = await exigirGerencia(req)
+  if (acceso instanceof NextResponse) return acceso
   try {
     const { nombre, email, password, rol, sucursal } = await req.json()
     if (!nombre || !email || !password || !rol)
@@ -54,6 +73,8 @@ export async function POST(req: NextRequest) {
 
 // PUT - editar usuario
 export async function PUT(req: NextRequest) {
+  const acceso = await exigirGerencia(req)
+  if (acceso instanceof NextResponse) return acceso
   try {
     const { id, emailAnterior, nombre, email, password, rol, sucursal } = await req.json()
 
@@ -91,12 +112,17 @@ export async function PUT(req: NextRequest) {
 
 // PATCH - actualizar permisos o estado activo/inactivo
 export async function PATCH(req: NextRequest) {
+  const acceso = await exigirGerencia(req)
+  if (acceso instanceof NextResponse) return acceso
   try {
     const { id, permisos, activo } = await req.json()
     if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
 
-    // Toggle activo/inactivo (no requiere verificacion de rol extra)
+    // Toggle activo/inactivo
     if (activo !== undefined) {
+      if (id === acceso.id && activo === false) {
+        return NextResponse.json({ error: 'No podés inactivar tu propio usuario' }, { status: 400 })
+      }
       const { error } = await getAdmin().from('usuarios').update({ activo }).eq('id', id)
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
       // Banear/desbanear en Supabase Auth para bloquear el login
@@ -106,17 +132,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true })
     }
 
-    // Actualizar permisos — verificar que el caller sea gerencia
-    const authHeader = req.headers.get('authorization')
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '')
-      const { data: { user } } = await getAdmin().auth.getUser(token)
-      if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 403 })
-      const { data: userRow } = await getAdmin().from('usuarios').select('rol').eq('id', user.id).single()
-      if (!userRow || userRow.rol !== 'gerencia') {
-        return NextResponse.json({ error: 'No autorizado — se requiere rol gerencia' }, { status: 403 })
-      }
-    }
     const { error } = await getAdmin().from('usuarios').update({ permisos }).eq('id', id)
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     return NextResponse.json({ success: true })
@@ -127,8 +142,12 @@ export async function PATCH(req: NextRequest) {
 
 // DELETE - eliminar usuario
 export async function DELETE(req: NextRequest) {
+  const acceso = await exigirGerencia(req)
+  if (acceso instanceof NextResponse) return acceso
   try {
     const { id } = await req.json()
+    if (!id) return NextResponse.json({ error: 'Falta id' }, { status: 400 })
+    if (id === acceso.id) return NextResponse.json({ error: 'No podés eliminar tu propio usuario' }, { status: 400 })
     await getAdmin().from('usuarios').delete().eq('id', id)
     await getAdmin().auth.admin.deleteUser(id)
     return NextResponse.json({ success: true })

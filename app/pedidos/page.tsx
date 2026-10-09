@@ -83,7 +83,7 @@ const PAGO_LABEL: Record<string, string> = {
 const ESTADOS_PAGO = ['cobrado', 'cuenta_corriente', 'pendiente_cobro', 'pago_en_obra']
 
 interface Item {
-  nombre: string; cantidad: number; unidad: string
+  nombre: string; cantidad: number; unidad: string; forma_hierro?: 'derecho' | 'doblado' | null
   tipo_carga?: string; categoria?: string; subcategoria?: string; material_id?: number
 }
 
@@ -275,7 +275,7 @@ export default function PedidosPage() {
     setDetalleCargando(true)
     try {
     const [{ data: rawItems, error: itemsErr }, { data: mats }, { data: rawFotos }] = await Promise.all([
-      supabase.from('pedido_items').select('pedido_id, nombre, cantidad, unidad').in('pedido_id', ids),
+      supabase.from('pedido_items').select('pedido_id, nombre, cantidad, unidad, forma_hierro').in('pedido_id', ids),
       supabase.from('materiales').select('id, nombre, tipo_carga, categoria, subcategoria'),
       supabase.from('pedido_fotos').select('pedido_id, url, label').in('pedido_id', ids).order('created_at'),
     ])
@@ -296,7 +296,7 @@ export default function PedidosPage() {
       const categoria = mat?.categoria ?? null
       const subcategoria = mat?.subcategoria ?? null
       if (!newItemsMap[item.pedido_id]) newItemsMap[item.pedido_id] = []
-      newItemsMap[item.pedido_id].push({ nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, tipo_carga: tipo, categoria: categoria ?? undefined, subcategoria: subcategoria ?? undefined, material_id: mat?.id ?? undefined })
+      newItemsMap[item.pedido_id].push({ nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, forma_hierro: item.forma_hierro ?? null, tipo_carga: tipo, categoria: categoria ?? undefined, subcategoria: subcategoria ?? undefined, material_id: mat?.id ?? undefined })
       if (!newCatMap[item.pedido_id]) newCatMap[item.pedido_id] = new Map()
       // No mostrar badge para categoría Logística
       if (categoria !== 'Logística') {
@@ -1175,7 +1175,7 @@ export default function PedidosPage() {
                                         return (
                                           <tr key={j} style={{ borderBottom: j < items.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
                                             <td className="px-4 py-2 font-mono text-xs whitespace-nowrap" style={{ color: it.material_id ? '#B9BBB7' : '#f87171' }}>{it.material_id ?? '—'}</td>
-                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}</td>
+                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}{it.forma_hierro && <span className="ml-2 text-xs font-bold rounded-full px-2 py-0.5" style={{ background: it.forma_hierro === 'doblado' ? '#fef3c7' : '#e8edf8', color: it.forma_hierro === 'doblado' ? '#92400e' : '#254A96' }}>{it.forma_hierro === 'doblado' ? 'DOBLADO' : 'DERECHO'}</span>}</td>
                                             <td className="px-4 py-2 text-right font-medium" style={{ color: '#254A96' }}>{it.cantidad.toLocaleString('es-AR')}</td>
                                             <td className="px-4 py-2" style={{ color: '#666' }}>{it.unidad}</td>
                                             <td className="px-4 py-2">

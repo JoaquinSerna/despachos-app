@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await getAdmin()
       .from('pedido_items')
-      .select('pedido_id, nombre, cantidad, unidad')
+      .select('pedido_id, nombre, cantidad, unidad, forma_hierro')
       .in('pedido_id', pedidoIds)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })

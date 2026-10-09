@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import {
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 4096,
       messages: [{ role: 'user', content: [...imagenes, { type: 'text', text: PROMPT }] }],
     })
-    const crudo = respuesta.content[0]?.type === 'text' ? respuesta.content[0].text : ''
+    const crudo = textoDeRespuesta(respuesta)
     const leidos: any[] = JSON.parse(crudo.replace(/```json|```/g, '').trim()).items ?? []
 
     // 3) Universo de productos: alias aprendidos, productos de las OC del proveedor y catálogo activo

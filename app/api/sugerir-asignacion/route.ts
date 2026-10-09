@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import Anthropic from '@anthropic-ai/sdk'
 import { GoogleAuth } from 'google-auth-library'
 
@@ -599,12 +600,12 @@ Respondé ÚNICAMENTE con JSON válido, sin texto antes ni después:
 La "asignacion" debe incluir TODOS los ids de la lista.`
 
   const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-haiku-5-5',
     max_tokens: 8192,
     messages: [{ role: 'user', content: prompt }],
   })
 
-  const text = (response.content[0] as { type: string; text: string }).text.trim()
+  const text = textoDeRespuesta(response).trim()
   const jsonMatch = text.match(/\{[\s\S]*\}/)
   if (!jsonMatch) return { asignacion: sugerencia, cambios: [], engine: 'claude-haiku-fallback' }
 

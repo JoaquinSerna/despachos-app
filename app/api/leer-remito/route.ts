@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 import { normalizarCuit, normalizarRemito } from '../../lib/compras-utils'
@@ -66,7 +67,7 @@ export async function POST(req: NextRequest) {
       }],
     })
 
-    const crudo = response.content[0]?.type === 'text' ? response.content[0].text : ''
+    const crudo = textoDeRespuesta(response)
     const json = JSON.parse(crudo.replace(/```json|```/g, '').trim())
 
     const numero = texto(json.numero_remito)

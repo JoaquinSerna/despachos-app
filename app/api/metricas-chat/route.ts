@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { textoDeRespuesta } from '../../lib/claude-texto'
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
     const contexto = await buildContext(sucursal || undefined)
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-haiku-5-5',
       max_tokens: 1500,
       system: `Sos un asistente de análisis operativo de flota para Construyo al Costo, empresa de materiales de construcción con sucursales en La Plata (LP520, LP139), Guernica, Cañuelas y Pinamar.
 
@@ -116,7 +117,7 @@ ${contexto}`,
       messages: messages.map((m: any) => ({ role: m.role, content: m.content }))
     })
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textoDeRespuesta(response)
     return NextResponse.json({ respuesta: text })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })

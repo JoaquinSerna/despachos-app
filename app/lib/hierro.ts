@@ -26,3 +26,10 @@ export const requiereFormaHierro = (nombre: string | null | undefined) => diamet
 // Línea de pedido leída de la NV: se mira lo que dice el PDF y el nombre del producto del maestro
 export const esHierroDeForma = (p: { descripcion?: string; material?: { nombre?: string } | null } | null | undefined) =>
   requiereFormaHierro(p?.descripcion) || requiereFormaHierro(p?.material?.nombre)
+
+// Nombre para mostrar: "HIERRO 8MM X 12M — DOBLADO". Solo para pantallas, PDFs y mensajes:
+// no usarlo al guardar, el nombre del producto se guarda sin la etiqueta.
+export const nombreConForma = (it: { nombre: string; forma_hierro?: string | null }) =>
+  it.forma_hierro === 'doblado' ? `${it.nombre} — DOBLADO`
+  : it.forma_hierro === 'derecho' ? `${it.nombre} — DERECHO`
+  : it.nombre

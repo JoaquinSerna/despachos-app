@@ -5,6 +5,7 @@ import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { logAuditoria } from '../lib/auditoria'
+import { nombreConForma } from '../lib/hierro'
 import { tieneAcceso } from '../lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
 
@@ -26,7 +27,7 @@ interface Pedido {
   longitud: number | null
   telefono: string | null
   preparado_at: string | null
-  items?: { nombre: string; cantidad: number; unidad: string }[]
+  items?: { nombre: string; cantidad: number; unidad: string; forma_hierro?: string | null }[]
   tipo?: string
   _esTransfer?: boolean
 }
@@ -415,7 +416,7 @@ export default function RuteoPage() {
 
     const { data } = await supabase
       .from('pedidos')
-      .select('*, items:pedido_items(nombre, cantidad, unidad)')
+      .select('*, items:pedido_items(nombre, cantidad, unidad, forma_hierro)')
       .eq('fecha_entrega', fecha)
       .eq('camion_id', camionSeleccionado)
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
@@ -762,8 +763,9 @@ export default function RuteoPage() {
     const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
     pedidosNormales.forEach(p => {
       ;(p.items ?? []).forEach(item => {
-        if (!totales[item.nombre]) totales[item.nombre] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
-        totales[item.nombre].cantidad += item.cantidad
+        const clave = nombreConForma(item)
+        if (!totales[clave]) totales[clave] = { nombre: clave, cantidad: 0, unidad: item.unidad }
+        totales[clave].cantidad += item.cantidad
       })
     })
 
@@ -788,13 +790,13 @@ export default function RuteoPage() {
         : ''
       const filaItems = items.length === 0
         ? `<tr><td colspan="3" style="color:#999">Sin items</td></tr>`
-        : items.map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${item.nombre}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
+        : items.map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${nombreConForma(item)}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
       const primeraFila = notaComercial
         ? `<tr>${headerCells}${filaNote.replace('<tr>', '').replace('</tr>', '')}</tr>`
-        : `<tr>${headerCells}${items.length === 0 ? '<td colspan="3" style="color:#999">Sin items</td>' : `<td>${items[0].nombre}</td><td class="qty">${items[0].cantidad.toLocaleString('es-AR')}</td><td>${items[0].unidad}</td>`}</tr>`
+        : `<tr>${headerCells}${items.length === 0 ? '<td colspan="3" style="color:#999">Sin items</td>' : `<td>${nombreConForma(items[0])}</td><td class="qty">${items[0].cantidad.toLocaleString('es-AR')}</td><td>${items[0].unidad}</td>`}</tr>`
       const filasResto = notaComercial
         ? filaItems
-        : items.slice(1).map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${item.nombre}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
+        : items.slice(1).map((item: {nombre:string;cantidad:number;unidad:string}) => `<tr><td>${nombreConForma(item)}</td><td class="qty">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td></tr>`).join('')
       return `<table class="pedido"><thead><tr><th style="width:24px">#</th><th style="width:38%">Cliente / NV / Dirección</th><th>Material</th><th class="qty" style="width:60px">Cant.</th><th style="width:36px">U.</th></tr></thead><tbody>${primeraFila}${filasResto}</tbody></table>`
     }).join('')
 
@@ -816,7 +818,7 @@ export default function RuteoPage() {
               ? `<tr><td rowspan="1" style="color:#047857;font-weight:bold">→ ${destino}</td><td style="color:#666">${t.nv || '—'}</td><td colspan="3" style="color:#999">Sin items</td></tr>`
               : items.map((item: {nombre:string;cantidad:number;unidad:string}, i: number) => `<tr>
                   ${i === 0 ? `<td rowspan="${items.length}" style="vertical-align:top;color:#047857;font-weight:bold">→ ${destino}</td><td rowspan="${items.length}" style="vertical-align:top;color:#666">${t.nv || '—'}${t.notas ? `<br><small>${t.notas}</small>` : ''}</td>` : ''}
-                  <td>${item.nombre}</td><td class="qty" style="color:#047857">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td>
+                  <td>${nombreConForma(item)}</td><td class="qty" style="color:#047857">${item.cantidad.toLocaleString('es-AR')}</td><td>${item.unidad}</td>
                 </tr>`).join('')
             }
           </tbody></table>`
@@ -909,7 +911,7 @@ export default function RuteoPage() {
 
     pedidosEntrega.forEach((p, idx) => {
       const items = p.items ?? []
-      const filas = items.length === 0 ? [['Sin items', '', '']] : items.map(i => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
+      const filas = items.length === 0 ? [['Sin items', '', '']] : items.map(i => [nombreConForma(i), i.cantidad.toLocaleString('es-AR'), i.unidad])
       const numEntrega = p.orden_entrega ?? idx + 1
       // Nota de comercial (sin ⚡) + motivo del ruteador (lo que va después de ' — ' en notas ⚡)
       // Se excluye el boilerplate "Reprogramado desde..." y "Separado de solicitud original" (no tienen ' — ')
@@ -986,8 +988,9 @@ export default function RuteoPage() {
     const totales: Record<string, { nombre: string; cantidad: number; unidad: string }> = {}
     pedidosEntrega.forEach(p => {
       ;(p.items ?? []).forEach(item => {
-        if (!totales[item.nombre]) totales[item.nombre] = { nombre: item.nombre, cantidad: 0, unidad: item.unidad }
-        totales[item.nombre].cantidad += item.cantidad
+        const clave = nombreConForma(item)
+        if (!totales[clave]) totales[clave] = { nombre: clave, cantidad: 0, unidad: item.unidad }
+        totales[clave].cantidad += item.cantidad
       })
     })
     const filasTotales = Object.values(totales).sort((a, b) => a.nombre.localeCompare(b.nombre))
@@ -1044,7 +1047,7 @@ export default function RuteoPage() {
 
       pedidosRetiroPDF.forEach((p, idx) => {
         const items = p.items ?? []
-        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
+        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [nombreConForma(i), i.cantidad.toLocaleString('es-AR'), i.unidad])
         const alturaEstimada = 8 + filas.length * 6
         if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
 
@@ -1096,7 +1099,7 @@ export default function RuteoPage() {
 
       pedidosTransferPDF.forEach((t, idx) => {
         const items = t.items ?? []
-        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [i.nombre, i.cantidad.toLocaleString('es-AR'), i.unidad])
+        const filas = items.length === 0 ? [['Sin items', '', '']] : items.map((i: any) => [nombreConForma(i), i.cantidad.toLocaleString('es-AR'), i.unidad])
         const destino = t.direccion ?? t.cliente
         const alturaEstimada = 8 + filas.length * 6
         if (y + alturaEstimada > 270) { doc.addPage(); y = 15 }
@@ -1399,7 +1402,7 @@ export default function RuteoPage() {
                     return (
                       <div key={i} className="rounded-xl p-3 border"
                         style={{ borderColor: pendiente > 0 ? '#fbbf24' : '#d1fae5', background: pendiente > 0 ? '#fffbeb' : '#f0fdf4' }}>
-                        <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                        <p className="text-xs font-medium mb-2" style={{ color: '#1a1a1a' }}>{nombreConForma(item)}</p>
                         <div className="flex items-center gap-2">
                           <button onClick={() => setCantEntregadas(prev => ({ ...prev, [i]: Math.max(0, (prev[i] ?? item.cantidad) - 1) }))}
                             className="w-8 h-8 rounded-full text-base font-bold flex items-center justify-center shrink-0"
@@ -1903,7 +1906,7 @@ export default function RuteoPage() {
                               <div className="rounded-lg p-2.5 space-y-1" style={{ background: '#f4f4f3' }}>
                                 {pedido.items.map((item, i) => (
                                   <div key={i} className="flex justify-between text-xs" style={{ color: '#666' }}>
-                                    <span>{item.nombre}</span>
+                                    <span>{nombreConForma(item)}</span>
                                     <span className="font-medium ml-2 shrink-0">{item.cantidad} {item.unidad}</span>
                                   </div>
                                 ))}

@@ -6,6 +6,7 @@ import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
 import { puedeEditar } from '@/app/lib/permisos'
 import { logAuditoria } from '@/app/lib/auditoria'
+import { nombreConForma } from '@/app/lib/hierro'
 
 interface Pedido {
   id: string; nv: string; id_despacho?: string | null; cliente: string; direccion: string; sucursal: string
@@ -16,7 +17,7 @@ interface Pedido {
   requiere_volcador?: boolean
   localidad?: string
   created_at?: string
-  items?: { nombre: string; cantidad: number; unidad: string }[]
+  items?: { nombre: string; cantidad: number; unidad: string; forma_hierro?: string | null }[]
 }
 interface Camion {
   codigo: string; sucursal: string; tipo_unidad: string
@@ -702,7 +703,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
                 <div key={i} onMouseDown={e => e.stopPropagation()}
                   className="rounded px-2 py-1.5"
                   style={{ background: sinStock ? '#fde8e8' : parcial ? '#fef3c7' : '#f0fdf4', border: `1px solid ${sinStock ? '#fca5a5' : parcial ? '#fcd34d' : '#bbf7d0'}` }}>
-                  <p className="text-xs mb-1 leading-tight font-medium" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                  <p className="text-xs mb-1 leading-tight font-medium" style={{ color: '#1a1a1a' }}>{nombreConForma(item)}</p>
                   <div className="flex items-center gap-2">
                     <span className="text-xs" style={{ color: '#666' }}>Stock disponible:</span>
                     <input type="number" min={0} max={item.cantidad} step={1}
@@ -792,7 +793,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
                 <div key={i} onMouseDown={e => e.stopPropagation()}
                   className="rounded px-2 py-1.5"
                   style={{ background: activo ? '#e8edf8' : '#fff', border: '1px solid #e8edf8' }}>
-                  <p className="text-xs mb-1 leading-tight" style={{ color: '#1a1a1a' }}>{item.nombre}</p>
+                  <p className="text-xs mb-1 leading-tight" style={{ color: '#1a1a1a' }}>{nombreConForma(item)}</p>
                   <div className="flex items-center gap-2">
                     <span className="text-xs" style={{ color: '#B9BBB7' }}>Nuevo:</span>
                     <input type="number" min={0} max={item.cantidad} step={1}
@@ -890,7 +891,7 @@ function PedidoCard({ pedido, onDragStart, onCancelar, onCambiarVuelta, onReprog
             <div className="mt-1.5 space-y-1">
               {pedido.items.map((item, i) => (
                 <div key={i} className="flex justify-between text-xs rounded px-2 py-1" style={{ background: '#f4f4f3', color: '#666' }}>
-                  <span>{item.nombre}</span>
+                  <span>{nombreConForma(item)}</span>
                   <span className="shrink-0 ml-2 font-medium">{item.cantidad} {item.unidad}</span>
                 </div>
               ))}
@@ -1332,7 +1333,7 @@ function PreProgramacionPanel({
   const [separandoId, setSeparandoId] = useState<string | null>(null)
   // consolidación
   const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set())
-  const [itemsData, setItemsData] = useState<Record<string, { nombre: string; cantidad: number; unidad: string }[]>>({})
+  const [itemsData, setItemsData] = useState<Record<string, { nombre: string; cantidad: number; unidad: string; forma_hierro?: string | null }[]>>({})
   const [aceptandoKey, setAceptandoKey] = useState<string | null>(null)
   const [aceptandoCamion, setAceptandoCamion] = useState<string | null>(null)
   const [aceptarVuelta, setAceptarVuelta] = useState<number>(1)
@@ -1841,7 +1842,7 @@ function PreProgramacionPanel({
                             ) : items.map((it, i) => (
                               <p key={i} style={{ color: '#555' }}>
                                 <span style={{ color: '#254A96', fontWeight: 600 }}>{it.cantidad}</span>
-                                {it.unidad ? ` ${it.unidad}` : ''} — {it.nombre}
+                                {it.unidad ? ` ${it.unidad}` : ''} — {nombreConForma(it)}
                               </p>
                             ))}
                           </div>
@@ -2368,10 +2369,10 @@ function ProgramacionInner() {
         const res = await fetch(`/api/pedido-items?ids=${ids}`)
         const json = await res.json()
         if (json.items && json.items.length > 0) {
-          const itemsMap: Record<string, { nombre: string; cantidad: number; unidad: string }[]> = {}
+          const itemsMap: Record<string, { nombre: string; cantidad: number; unidad: string; forma_hierro?: string | null }[]> = {}
           for (const it of json.items) {
             if (!itemsMap[it.pedido_id]) itemsMap[it.pedido_id] = []
-            itemsMap[it.pedido_id].push({ nombre: it.nombre, cantidad: it.cantidad, unidad: it.unidad })
+            itemsMap[it.pedido_id].push({ nombre: it.nombre, cantidad: it.cantidad, unidad: it.unidad, forma_hierro: it.forma_hierro ?? null })
           }
           todosConItems = pedidosBase.map((p: any) => {
             const items = itemsMap[p.id] ?? []
@@ -3881,7 +3882,7 @@ function ModalRutas({ columnas, sinAsignar, sucursal, onClose }: {
         return peds.map((p, gi) => {
           const itemsHtml = p.items && p.items.length > 0
             ? `<div style="margin-top:4px;border-top:1px solid #f0f0f0;padding-top:4px">${p.items.map(it =>
-                `<div style="font-size:11px;color:#555">• ${it.nombre} × ${it.cantidad} ${it.unidad}</div>`
+                `<div style="font-size:11px;color:#555">• ${nombreConForma(it)} × ${it.cantidad} ${it.unidad}</div>`
               ).join('')}</div>`
             : ''
           return `<div style="min-width:220px;max-width:280px${gi > 0 ? ';border-top:2px solid #e5e7eb;margin-top:10px;padding-top:10px' : ''}">

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
+import { nombreConForma } from '../lib/hierro'
 
 interface PedidoItem { nombre: string; cantidad: number; unidad: string }
 
@@ -349,8 +350,8 @@ export default function ConfirmacionesPage() {
     ;(async () => {
       for (const id of uncached) {
         if (itemsCache[id]) continue
-        const { data } = await supabase.from('pedido_items').select('nombre, cantidad, unidad').eq('pedido_id', id)
-        const items: PedidoItem[] = (data ?? []).map((i: any) => ({ nombre: i.nombre ?? '', cantidad: i.cantidad ?? 0, unidad: i.unidad ?? '' }))
+        const { data } = await supabase.from('pedido_items').select('nombre, cantidad, unidad, forma_hierro').eq('pedido_id', id)
+        const items: PedidoItem[] = (data ?? []).map((i: any) => ({ nombre: nombreConForma({ nombre: i.nombre ?? '', forma_hierro: i.forma_hierro }), cantidad: i.cantidad ?? 0, unidad: i.unidad ?? '' }))
         setItemsCache(prev => ({ ...prev, [id]: items }))
       }
       setLoadingGruposItems(false)
@@ -593,8 +594,8 @@ export default function ConfirmacionesPage() {
       setLoadingItems(true)
       const newMap = { ...cachedMap }
       for (const p of sinCache) {
-        const { data } = await supabase.from('pedido_items').select('nombre, cantidad, unidad').eq('pedido_id', p.id)
-        const items: PedidoItem[] = (data ?? []).map((i: any) => ({ nombre: i.nombre ?? '', cantidad: i.cantidad ?? 0, unidad: i.unidad ?? '' }))
+        const { data } = await supabase.from('pedido_items').select('nombre, cantidad, unidad, forma_hierro').eq('pedido_id', p.id)
+        const items: PedidoItem[] = (data ?? []).map((i: any) => ({ nombre: nombreConForma({ nombre: i.nombre ?? '', forma_hierro: i.forma_hierro }), cantidad: i.cantidad ?? 0, unidad: i.unidad ?? '' }))
         newMap[p.id] = items; setItemsCache(prev => ({ ...prev, [p.id]: items }))
       }
       setLoadingItems(false)

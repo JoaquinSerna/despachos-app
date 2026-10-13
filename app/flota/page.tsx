@@ -5,6 +5,7 @@ import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
+import { cambiosDeFila, resumenTramos, tramosDeFila, type CambioSucursal } from '../lib/flota-tramos'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 
@@ -417,14 +418,22 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
         // Si ya existe una fila en flota_dia, respetar su chofer (aunque sea null).
         // Solo usar el default de flota_base si NO hay fila guardada para ese día.
         chofer_id: diaConfig ? (diaConfig.chofer_id ?? '') : (c.chofer_id_default ?? ''),
-        sucursal_extra: diaConfig?.sucursal_extra ?? '',
-        sucursal_extra_desde_vuelta: diaConfig?.sucursal_extra_desde_vuelta ?? 2,
+        cambios: diaConfig ? cambiosDeFila(diaConfig) : [],
       }
     })
     setCamiones(mapped)
     setCamionesOriginal(JSON.parse(JSON.stringify(mapped)))
     setLoading(false)
   }
+
+  // Cambios completos y ordenados por vuelta (si se repite una vuelta, queda el último)
+  const cambiosParaGuardar = (cambios: CambioSucursal[] | undefined): CambioSucursal[] => {
+    const porVuelta = new Map<number, CambioSucursal>()
+    for (const x of cambios ?? []) if (x.sucursal && x.desde_vuelta >= 2) porVuelta.set(x.desde_vuelta, { desde_vuelta: x.desde_vuelta, sucursal: x.sucursal })
+    return [...porVuelta.values()].sort((a, b) => a.desde_vuelta - b.desde_vuelta)
+  }
+  const editarCambios = (codigo: string, fn: (prev: CambioSucursal[]) => CambioSucursal[]) =>
+    setCamiones(prev => prev.map(x => x.codigo === codigo ? { ...x, cambios: fn(x.cambios ?? []) } : x))
 
   const moverCamion = (codigo: string, nuevaSucursal: string) => {
     setCamiones(prev => prev.map(c =>
@@ -484,8 +493,10 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
               activo: c.activo_dia,
               chofer_id: c.chofer_id || null,
               revisado: true,
-              sucursal_extra: c.sucursal_extra || null,
-              sucursal_extra_desde_vuelta: c.sucursal_extra ? (c.sucursal_extra_desde_vuelta ?? 2) : null,
+              cambios_sucursal: cambiosParaGuardar(c.cambios),
+              // Columnas del esquema anterior (un solo cambio): se vacían para que no reaparezcan
+              sucursal_extra: null,
+              sucursal_extra_desde_vuelta: null,
             },
             { onConflict: 'fecha,camion_codigo' }
           )
@@ -509,8 +520,8 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
             } else if (orig.chofer_id !== c.chofer_id && c.chofer_id) {
               const chofer = choferes.find(ch => ch.id === c.chofer_id)
               logAuditoria(userId, userNombre, 'Asignó chofer', 'Flota', { fecha, camion_codigo: c.codigo, chofer_nombre: chofer?.nombre ?? c.chofer_id, sucursal: c.sucursal_dia })
-            } else if (orig.sucursal_extra !== c.sucursal_extra && c.sucursal_extra) {
-              logAuditoria(userId, userNombre, 'Asignó camión a sucursal extra', 'Flota', { camion_codigo: c.codigo, sucursal_extra: c.sucursal_extra })
+            } else if (JSON.stringify(cambiosParaGuardar(orig.cambios)) !== JSON.stringify(cambiosParaGuardar(c.cambios))) {
+              logAuditoria(userId, userNombre, 'Cambió el recorrido de sucursales del camión', 'Flota', { fecha, camion_codigo: c.codigo, recorrido: resumenTramos(tramosDeFila({ sucursal: c.sucursal_dia, cambios_sucursal: cambiosParaGuardar(c.cambios) })) })
             }
           }
         }
@@ -685,36 +696,40 @@ function VistaEditar({ fecha, onVolver, showToast, userId, userNombre }: {
                             ))}
                           </select>
 
-                          {/* Segunda sucursal */}
-                          <select
-                            value={c.sucursal_extra ?? ''}
-                            onChange={e => setCamiones(prev => prev.map(x =>
-                              x.codigo === c.codigo ? { ...x, sucursal_extra: e.target.value, sucursal_extra_desde_vuelta: 2 } : x
-                            ))}
-                            className="w-full text-xs border rounded-lg px-2 py-1 focus:outline-none"
-                            style={{
-                              borderColor: c.sucursal_extra ? '#7c3aed' : '#e8edf8',
-                              color: c.sucursal_extra ? '#7c3aed' : '#B9BBB7',
-                              background: c.sucursal_extra ? '#f5f3ff' : 'white',
-                            }}>
-                            <option value="">🔀 Sin 2ª sucursal</option>
-                            {SUCURSALES.filter(s => s !== sucursal && s !== 'Fuera de servicio').map(s => (
-                              <option key={s} value={s}>{s}</option>
-                            ))}
-                          </select>
-
-                          {/* Desde qué vuelta está disponible en la 2ª sucursal */}
-                          {c.sucursal_extra && (
-                            <select
-                              value={c.sucursal_extra_desde_vuelta ?? 2}
-                              onChange={e => setCamiones(prev => prev.map(x =>
-                                x.codigo === c.codigo ? { ...x, sucursal_extra_desde_vuelta: parseInt(e.target.value) } : x
-                              ))}
-                              className="w-full text-xs border rounded-lg px-2 py-1 focus:outline-none"
-                              style={{ borderColor: '#e8edf8', color: '#7c3aed', background: '#f5f3ff' }}>
-                              <option value={2}>Disponible desde V2</option>
-                              <option value={3}>Disponible desde V3</option>
-                            </select>
+                          {/* Cambios de sucursal en el día: tantos como hagan falta */}
+                          {(c.cambios ?? []).map((cb: CambioSucursal, i: number) => (
+                            <div key={i} className="flex gap-1 items-center">
+                              <select
+                                value={cb.desde_vuelta}
+                                onChange={e => editarCambios(c.codigo, prev => prev.map((x, j) => j === i ? { ...x, desde_vuelta: parseInt(e.target.value) } : x))}
+                                className="text-xs border rounded-lg px-1 py-1 focus:outline-none shrink-0"
+                                style={{ borderColor: '#7c3aed', color: '#7c3aed', background: '#f5f3ff' }}>
+                                <option value={2}>V2+</option>
+                                <option value={3}>V3+</option>
+                                <option value={4}>V4+</option>
+                              </select>
+                              <select
+                                value={cb.sucursal}
+                                onChange={e => editarCambios(c.codigo, prev => prev.map((x, j) => j === i ? { ...x, sucursal: e.target.value } : x))}
+                                className="flex-1 min-w-0 text-xs border rounded-lg px-2 py-1 focus:outline-none"
+                                style={{ borderColor: cb.sucursal ? '#7c3aed' : '#fca5a5', color: cb.sucursal ? '#7c3aed' : '#B9BBB7', background: cb.sucursal ? '#f5f3ff' : 'white' }}>
+                                <option value="">Elegí sucursal</option>
+                                {SUCURSALES.filter(s => s !== 'Fuera de servicio').map(s => (
+                                  <option key={s} value={s}>{s}</option>
+                                ))}
+                              </select>
+                              <button type="button" title="Quitar este cambio"
+                                onClick={() => editarCambios(c.codigo, prev => prev.filter((_, j) => j !== i))}
+                                className="text-xs px-1.5 py-1 rounded-lg shrink-0" style={{ color: '#E52322', background: '#fde8e8' }}>✕</button>
+                            </div>
+                          ))}
+                          {(c.cambios ?? []).length < 3 && (
+                            <button type="button"
+                              onClick={() => editarCambios(c.codigo, prev => [...prev, { desde_vuelta: Math.min((prev.at(-1)?.desde_vuelta ?? 1) + 1, 4), sucursal: '' }])}
+                              className="w-full text-xs border rounded-lg px-2 py-1 text-left"
+                              style={{ borderColor: '#e8edf8', color: '#7c3aed', background: 'white' }}>
+                              🔀 {(c.cambios ?? []).length === 0 ? 'Cambia de sucursal en el día' : 'Otro cambio de sucursal'}
+                            </button>
                           )}
                         </div>
                       )}

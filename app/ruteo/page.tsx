@@ -73,6 +73,7 @@ export default function RuteoPage() {
   const [vueltaActiva, setVueltaActiva] = useState<number | null>(null)
   const [cargando, setCargando] = useState(true)
   const [cargandoPedidos, setCargandoPedidos] = useState(false)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [horaInicio, setHoraInicio] = useState<string | null>(null)
   const [horaFin, setHoraFin] = useState<string | null>(null)
@@ -413,15 +414,28 @@ export default function RuteoPage() {
   const cargarPedidos = async () => {
     if (!camionSeleccionado) return
     setCargandoPedidos(true)
+    setErrorCarga(null)
 
-    const { data } = await supabase
+    const consultarPedidos = (campos: string) => supabase
       .from('pedidos')
-      .select('*, items:pedido_items(nombre, cantidad, unidad, forma_hierro)')
+      .select(campos)
       .eq('fecha_entrega', fecha)
       .eq('camion_id', camionSeleccionado)
       .in('estado', ['programado', 'en_camino', 'entregado', 'rechazado'])
       .order('vuelta')
       .order('orden_entrega', { ascending: true, nullsFirst: false })
+    let { data, error: errPedidos } = await consultarPedidos('*, items:pedido_items(nombre, cantidad, unidad, forma_hierro)')
+    if (errPedidos) {
+      // Si la base todavía no tiene forma_hierro, se carga igual sin la etiqueta derecho/doblado
+      console.error('[ruteo] error al cargar pedidos con forma_hierro:', errPedidos.message)
+      const reintento = await consultarPedidos('*, items:pedido_items(nombre, cantidad, unidad)')
+      data = reintento.data
+      errPedidos = reintento.error
+    }
+    if (errPedidos) {
+      console.error('[ruteo] error al cargar pedidos:', errPedidos.message)
+      setErrorCarga(errPedidos.message)
+    }
 
     // Buscar por todas las variantes de formato del código de camión
     const camionVariants = [...new Set([
@@ -466,7 +480,7 @@ export default function RuteoPage() {
       _esTransfer: true,
     }))
 
-    const todosPedidos = [...(data ?? []), ...transfers]
+    const todosPedidos: Pedido[] = [...((data ?? []) as unknown as Pedido[]), ...transfers]
     setPedidos(todosPedidos)
 
     // Marcar vueltas que ya tienen actividad (en_camino o entregado)
@@ -1828,7 +1842,8 @@ export default function RuteoPage() {
                 {pedidosVuelta.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20" style={{ color: '#B9BBB7' }}>
                     <div className="text-5xl mb-4">📦</div>
-                    <p className="font-medium">No hay entregas para esta fecha</p>
+                    <p className="font-medium">{errorCarga ? 'No se pudieron cargar las entregas' : 'No hay entregas para esta fecha'}</p>
+                    {errorCarga && <p className="text-xs mt-2 max-w-md text-center" style={{ color: '#b91c1c' }}>{errorCarga}</p>}
                   </div>
                 ) : (
                   <div className="space-y-3">

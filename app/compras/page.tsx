@@ -7,6 +7,7 @@ import { rolesDe } from '../lib/roles'
 import { puedeEditar } from '../lib/permisos'
 import ProveedorPicker from '../components/ProveedorPicker'
 import OrdenesCompra from './OrdenesCompra'
+import IngresosHuemul from './IngresosHuemul'
 import ProductosRemito, { type ItemRemito } from './ProductosRemito'
 import AsociarOC from './AsociarOC'
 import VisorFotoGrande from '../components/VisorFotoGrande'
@@ -20,7 +21,7 @@ import {
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
-type Tab = 'ingresos' | 'oc' | 'proveedores'
+type Tab = 'ingresos' | 'oc' | 'huemul' | 'proveedores'
 type Fila = { ing: any; rem: any | null }
 
 const ESTADO_PROV: Record<string, { label: string; bg: string; fg: string; bd: string }> = {
@@ -339,7 +340,7 @@ export default function ComprasPage() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          {([['ingresos', '📥 Ingresos'], ['oc', '📑 Órdenes de compra'], ['proveedores', '🏢 Proveedores']] as [Tab, string][]).map(([k, l]) => (
+          {([['ingresos', '📥 Ingresos'], ['oc', '📑 Órdenes de compra'], ['huemul', '📦 Ingresos en Huemul'], ['proveedores', '🏢 Proveedores']] as [Tab, string][]).map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               padding: '11px 20px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer',
               border: tab === k ? '2px solid #254A96' : '1.5px solid #e0e0e0', background: tab === k ? '#254A96' : '#fff', color: tab === k ? '#fff' : '#666',
@@ -406,6 +407,8 @@ export default function ComprasPage() {
         )}
 
         {/* ───────── PROVEEDORES ───────── */}
+        {tab === 'huemul' && <IngresosHuemul puedeEd={puedeEd} showToast={showToast} />}
+
         {tab === 'oc' && <OrdenesCompra puedeEd={puedeEd} showToast={showToast} onImportado={() => { recargarProveedores(); cargarTodosProv() }} />}
 
         {tab === 'proveedores' && (

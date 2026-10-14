@@ -26,10 +26,22 @@ export async function tokenDrive(): Promise<string> {
   return token
 }
 
+// Traduce el error de Google a algo que se pueda resolver
+function mensajeDeError(status: number, cuerpo: string): string {
+  const proyecto = cuerpo.match(/project[ =](\d{6,})/)?.[1]
+  if (/SERVICE_DISABLED|has not been used in project|accessNotConfigured/i.test(cuerpo)) {
+    return `Falta activar la API de Google Drive en el proyecto de Google Cloud${proyecto ? ` (${proyecto})` : ''}. Activala en este enlace y reintentá: `
+      + `https://console.developers.google.com/apis/api/drive.googleapis.com/overview${proyecto ? `?project=${proyecto}` : ''}`
+  }
+  if (status === 401) return 'Google rechazó las credenciales de la cuenta de servicio (revisá GOOGLE_SERVICE_ACCOUNT_JSON).'
+  if (status === 403) return 'La cuenta de servicio no tiene permiso para leer esa carpeta de Drive. Compartila con ella como Lector.'
+  return `Google Drive respondió ${status}: ${cuerpo.slice(0, 200)}`
+}
+
 async function pedir(token: string, ruta: string, params: Record<string, string>): Promise<any> {
   const url = `${API}${ruta}?${new URLSearchParams({ supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', ...params })}`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw new Error(`Google Drive respondió ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  if (!res.ok) throw new Error(mensajeDeError(res.status, await res.text()))
   return res.json()
 }
 

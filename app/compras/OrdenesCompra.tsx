@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { coincideTexto } from '../lib/compras-utils'
 import { importarExcelOC, type ResumenImport } from '../lib/oc-import'
+import SyncDrive from './SyncDrive'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
@@ -97,6 +98,10 @@ export default function OrdenesCompra({ puedeEd, showToast, onImportado }: Props
 
   return (
     <>
+      <div style={card}>
+        <SyncDrive puedeEd={puedeEd} showToast={showToast} mostrar="oc" onSincronizado={() => { cargarUltimo(); cargarLista(); onImportado() }} />
+      </div>
+
       {puedeEd && (
         <div style={card}>
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>Importar órdenes de compra del ERP</div>

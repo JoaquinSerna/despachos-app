@@ -44,13 +44,14 @@ interface CatItem {
   minutos_estandar: number | null; orden: number; activo: boolean
 }
 interface Mecanico { id: string; nombre: string; sucursal: string | null; activo: boolean }
-type TipoTaller = 'autoelevador' | 'pala' | 'puente_grua'
+type TipoTaller = 'autoelevador' | 'pala' | 'puente_grua' | 'acoplado'
 interface Equipo { id: string; codigo: string; tipo: TipoTaller; sucursal: string | null; activo: boolean }
 type TipoEquipo = 'camion' | TipoTaller | 'externo'
 const TIPOS_TALLER: { key: TipoTaller; label: string; plural: string; icon: string; prefijo: string }[] = [
   { key: 'autoelevador', label: 'Autoelevador', plural: 'Autoelevadores', icon: '📦', prefijo: 'SA' },
   { key: 'pala', label: 'Pala cargadora', plural: 'Palas cargadoras', icon: '🚜', prefijo: 'CF' },
   { key: 'puente_grua', label: 'Puente grúa', plural: 'Puentes grúa', icon: '🏗️', prefijo: 'PG' },
+  { key: 'acoplado', label: 'Carro / semi', plural: 'Carros y semis (SC, SP)', icon: '🔗', prefijo: 'SC' },
 ]
 
 // Qué grupos de tareas se ofrecen según el equipo (Service y General sirven para todos)
@@ -59,6 +60,7 @@ const GRUPOS_POR_EQUIPO: Record<TipoEquipo, string[]> = {
   autoelevador: ['service', 'autoelevador', 'general'],
   pala: ['service', 'pala', 'general'],
   puente_grua: ['puente_grua', 'general'],
+  acoplado: ['service', 'acoplado', 'general'],
   externo: ['service', 'camion', 'hidrogrua', 'acoplado', 'autoelevador', 'pala', 'puente_grua', 'general'],
 }
 interface Tarea {
@@ -292,7 +294,7 @@ export default function TallerPage() {
   const gruposVisibles = useMemo(() => GRUPOS.filter(g => GRUPOS_POR_EQUIPO[tipoActual].includes(g.key)), [tipoActual])
   useEffect(() => {
     // Al elegir un autoelevador o una pala se muestran sus tareas; si el grupo abierto ya no corresponde, se pasa a uno válido
-    if (tipoActual === 'autoelevador' || tipoActual === 'pala') setGrupoTab(tipoActual)
+    if (tipoActual !== 'camion' && tipoActual !== 'externo') setGrupoTab(tipoActual === 'acoplado' ? 'acoplado' : tipoActual)
     else if (!gruposVisibles.some(g => g.key === grupoTab)) setGrupoTab('service')
   }, [tipoActual]) // eslint-disable-line react-hooks/exhaustive-deps
   const mecanicosActivos = useMemo(

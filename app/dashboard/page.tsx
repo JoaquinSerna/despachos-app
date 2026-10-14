@@ -108,7 +108,6 @@ export default function Dashboard() {
       if (userData?.rol === 'chofer') { router.push('/ruteo'); return }
       if (userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
       if (userData?.rol === 'guardia') { router.push('/guardia'); return }
-      if (userData?.rol === 'compras') { router.push('/compras'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')
@@ -225,6 +224,7 @@ export default function Dashboard() {
     '/ruteo': 'ruteo', '/confirmaciones': 'confirmaciones', '/abastecimiento': 'abastecimiento',
     '/metricas': 'metricas', '/flota': 'flota', '/flota-base': 'flota-base',
     '/fin-del-dia': 'fin-del-dia', '/usuarios': 'usuarios', '/ayuda': 'ayuda',
+    '/guardia': 'guardia', '/stock': 'stock', '/pallets': 'pallets', '/compras': 'compras', '/materiales': 'materiales',
   }
   const cards = TODAS_LAS_CARDS.filter(c => {
     if (!rolUsuario) return true

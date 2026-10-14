@@ -6,6 +6,7 @@ import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
 import { puedeEditar } from '@/app/lib/permisos'
 import { logAuditoria } from '@/app/lib/auditoria'
+import { filaIncluyeSucursal, tramosDeFila, sucursalEnVuelta, resumenTramos } from '@/app/lib/flota-tramos'
 import { nombreConForma } from '@/app/lib/hierro'
 
 interface Pedido {
@@ -968,10 +969,10 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
       className="flex flex-col h-full shrink-0 rounded-xl transition-all"
       style={{
         width: w, minWidth: w,
-        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#e0e0e0' : '#f0f0f0'}`,
-        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? '#f0f0f0' : '#f9f9f9',
+        border: `2px ${sinAsignar ? 'dashed' : 'solid'} ${isDragOver ? '#254A96' : bloqueado ? '#f59e0b' : (soloVer && (camion as any)._tramos) ? '#e0e0e0' : '#f0f0f0'}`,
+        background: isDragOver ? '#e8edf8' : bloqueado ? '#fffbeb' : (soloVer && (camion as any)._tramos) ? '#f0f0f0' : '#f9f9f9',
         boxShadow: isDragOver ? '0 0 0 3px rgba(37,74,150,0.12)' : bloqueado ? '0 0 0 2px rgba(245,158,11,0.15)' : 'none',
-        opacity: (soloVer && ((camion as any)._sale_a_sucursal || (camion as any)._desde_sucursal)) ? 0.65 : 1,
+        opacity: (soloVer && (camion as any)._tramos) ? 0.65 : 1,
       }}>
       <div className="p-3 rounded-t-xl shrink-0" style={{ background: sinAsignar ? 'transparent' : 'white', borderBottom: sinAsignar ? 'none' : '1px solid #f0f0f0' }}>
         {sinAsignar ? (
@@ -995,16 +996,10 @@ function ColumnaCamion({ columna, sinAsignar = false, onDrop, onDragOver, onDrag
                     🚛 V{(camion as any)._en_ruta_desde_vuelta} en ruta
                   </span>
                 )}
-                {(camion as any)._desde_sucursal && (
+                {(camion as any)._tramos && (
                   <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#f5f3ff', color: '#7c3aed' }}
-                    title={`Viene de ${(camion as any)._desde_sucursal}, disponible desde V${(camion as any)._disponible_desde_vuelta ?? 2}`}>
-                    🔀 {(camion as any)._desde_sucursal} V{(camion as any)._disponible_desde_vuelta ?? 2}+
-                  </span>
-                )}
-                {(camion as any)._sale_a_sucursal && (
-                  <span className="text-xs px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#fde8e8', color: '#E52322' }}
-                    title={`Va a ${(camion as any)._sale_a_sucursal} desde V${(camion as any)._sale_desde_vuelta ?? 2}`}>
-                    🔀 → {(camion as any)._sale_a_sucursal} V{(camion as any)._sale_desde_vuelta ?? 2}+
+                    title={`Recorrido del día: ${resumenTramos((camion as any)._tramos)}`}>
+                    🔀 {resumenTramos((camion as any)._tramos)}
                   </span>
                 )}
                 {camion.grua_hidraulica && <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ background: '#e8edf8', color: '#254A96' }}>Grúa</span>}
@@ -2005,13 +2000,12 @@ function ProgramacionInner() {
           .select('camion_id, vuelta, volumen_total_m3, peso_total_kg')
           .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
           .in('estado', ['pendiente', 'programado']).not('camion_id', 'is', null),
-        supabase.from('flota_dia').select('camion_codigo')
-          .eq('fecha', fecha).eq('activo', true)
-          .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
+        supabase.from('flota_dia').select('camion_codigo, sucursal, sucursal_extra, sucursal_extra_desde_vuelta, cambios_sucursal')
+          .eq('fecha', fecha).eq('activo', true),
       ])
 
       // ── Flota disponible ─────────────────────────────────────────────────────
-      let codigos: string[] = (flotaDia ?? []).map((f: any) => f.camion_codigo)
+      let codigos: string[] = (flotaDia ?? []).filter((f: any) => filaIncluyeSucursal(f, sucursal)).map((f: any) => f.camion_codigo)
       if (codigos.length === 0) {
         const { data: base } = await supabase.from('camiones_flota').select('codigo').eq('sucursal', sucursal).eq('activo', true)
         codigos = (base ?? []).map((b: any) => b.codigo)
@@ -2215,9 +2209,8 @@ function ProgramacionInner() {
       const [res, { data: fd }] = await Promise.all([
         fetch(`/api/requerimientos?tab=pendientes&sucursal_origen=${encodeURIComponent(sucursal)}`),
         // Incluir camiones propios de la sucursal + camiones de otra sucursal disponibles acá (sucursal_extra)
-        supabase.from('flota_dia').select('camion_codigo, sucursal_extra, sucursal_extra_desde_vuelta')
-          .eq('fecha', fecha).eq('activo', true)
-          .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
+        supabase.from('flota_dia').select('camion_codigo, sucursal, sucursal_extra, sucursal_extra_desde_vuelta, cambios_sucursal')
+          .eq('fecha', fecha).eq('activo', true),
       ])
       const data = await res.json()
       // Solo mostrar transferencias sin programar (vuelta=0) y autorizadas (conf_stock/preparacion) en el tab
@@ -2245,7 +2238,7 @@ function ProgramacionInner() {
       setTransferencias(list)
       setContadorTransferencias(list.length)
       // Cargar camiones para el kanban de transferencias
-      let codigos = (fd ?? []).map((f: any) => f.camion_codigo)
+      let codigos = (fd ?? []).filter((f: any) => filaIncluyeSucursal(f, sucursal)).map((f: any) => f.camion_codigo)
       if (codigos.length === 0) {
         const { data: baseData } = await supabase.from('camiones_flota').select('codigo').eq('sucursal', sucursal).eq('activo', true)
         codigos = (baseData ?? []).map((b: any) => b.codigo)
@@ -2390,9 +2383,8 @@ function ProgramacionInner() {
     // el contador de sin-vuelta corre en paralelo para no bloquear
     const [{ data: allFd }, { count: cSinVuelta }, { data: reqVuelta }] = await Promise.all([
       supabase.from('flota_dia')
-        .select('camion_codigo, sucursal, revisado, sucursal_extra, sucursal_extra_desde_vuelta')
-        .eq('fecha', fecha).eq('activo', true)
-        .or(`sucursal.eq.${sucursal},sucursal_extra.eq.${sucursal}`),
+        .select('camion_codigo, sucursal, revisado, sucursal_extra, sucursal_extra_desde_vuelta, cambios_sucursal')
+        .eq('fecha', fecha).eq('activo', true),
       supabase.from('pedidos')
         .select('id', { count: 'exact', head: true })
         .eq('fecha_entrega', fecha).eq('sucursal', sucursal)
@@ -2404,7 +2396,7 @@ function ProgramacionInner() {
         : Promise.resolve({ data: [] as any[] }),
     ])
     const fd = (allFd ?? []).filter((f: any) => f.sucursal === sucursal)
-    const fdExtra = (allFd ?? []).filter((f: any) => f.sucursal_extra === sucursal)
+    const fdExtra = (allFd ?? []).filter((f: any) => f.sucursal !== sucursal && filaIncluyeSucursal(f, sucursal))
     setContadorSinVuelta(cSinVuelta ?? 0)
 
     let codigos = fd.map((f: any) => f.camion_codigo)
@@ -2426,17 +2418,10 @@ function ProgramacionInner() {
     // Enriquecer con metadata de sucursal extra y ordenar por código
     const cams = (cd ?? [])
       .map((c: any) => {
-        const extra  = fdExtra.find((f: any) => f.camion_codigo === c.codigo)
-        const propio = fd.find((f: any) => f.camion_codigo === c.codigo)
-        if (extra) {
-          // Camión que viene de otra sucursal: disponible desde vuelta X
-          return { ...c, _desde_sucursal: extra.sucursal, _disponible_desde_vuelta: extra.sucursal_extra_desde_vuelta ?? 2 }
-        }
-        if (propio?.sucursal_extra) {
-          // Camión local que se va a otra sucursal desde vuelta X
-          return { ...c, _sale_a_sucursal: propio.sucursal_extra, _sale_desde_vuelta: propio.sucursal_extra_desde_vuelta ?? 2 }
-        }
-        return c
+        // Recorrido del día: el camión puede cambiar de sucursal las veces que haga falta
+        const fila = fdExtra.find((f: any) => f.camion_codigo === c.codigo) ?? fd.find((f: any) => f.camion_codigo === c.codigo)
+        const tramos = fila ? tramosDeFila(fila) : []
+        return tramos.length > 1 ? { ...c, _tramos: tramos } : c
       })
       .sort((a: any, b: any) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true, sensitivity: 'base' }))
     setFlotaSinRevisar(flotaSinRevisar)
@@ -3763,11 +3748,8 @@ function ProgramacionInner() {
               <div className="flex gap-2 h-full pr-2">
                 {columnas.map(col => {
                   const camEx: any = col.camion
-                  // Truck that leaves to another sucursal from vuelta X: block when vueltaActiva >= X
-                  // Truck that comes from another sucursal from vuelta X: block when vueltaActiva < X
-                  const noDisponible =
-                    (camEx._sale_desde_vuelta != null && vueltaActiva >= camEx._sale_desde_vuelta) ||
-                    (camEx._disponible_desde_vuelta != null && vueltaActiva < camEx._disponible_desde_vuelta)
+                  // El camión solo se puede usar en las vueltas en que está en esta sucursal
+                  const noDisponible = camEx._tramos != null && sucursalEnVuelta(camEx._tramos, vueltaActiva) !== sucursal
                   return (
                   <ColumnaCamion key={col.camion.codigo} columna={col}
                     onDrop={noDisponible ? (e) => e.preventDefault() : handleDrop}

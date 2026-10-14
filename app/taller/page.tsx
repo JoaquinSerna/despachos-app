@@ -14,6 +14,8 @@ const GRUPOS = [
   { key: 'camion', label: '🚛 Camión' },
   { key: 'hidrogrua', label: '🏗️ Hidrogrúa' },
   { key: 'acoplado', label: '🔗 Acoplado' },
+  { key: 'autoelevador', label: '📦 Autoelevador' },
+  { key: 'pala', label: '🚜 Pala cargadora' },
   { key: 'general', label: '🏭 General' },
 ]
 
@@ -41,6 +43,16 @@ interface CatItem {
   minutos_estandar: number | null; orden: number; activo: boolean
 }
 interface Mecanico { id: string; nombre: string; sucursal: string | null; activo: boolean }
+interface Equipo { id: string; codigo: string; tipo: 'autoelevador' | 'pala'; sucursal: string | null; activo: boolean }
+type TipoEquipo = 'camion' | 'autoelevador' | 'pala' | 'externo'
+
+// Qué grupos de tareas se ofrecen según el equipo (Service y General sirven para todos)
+const GRUPOS_POR_EQUIPO: Record<TipoEquipo, string[]> = {
+  camion: ['service', 'camion', 'hidrogrua', 'acoplado', 'general'],
+  autoelevador: ['service', 'autoelevador', 'general'],
+  pala: ['service', 'pala', 'general'],
+  externo: ['service', 'camion', 'hidrogrua', 'acoplado', 'autoelevador', 'pala', 'general'],
+}
 interface Tarea {
   id: string; orden_id: string; catalogo_id: string | null; grupo: string; sistema: string
   nombre: string; personalizada: boolean; minutos: number | null; minutos_estandar: number | null
@@ -54,6 +66,8 @@ interface Orden {
   fotos_antes: string[]; fotos_despues: string[]
   registrado_por: string | null; cerrado_por: string | null
   taller_orden_tareas?: Tarea[]
+  tipo_equipo?: string | null
+  editado_por?: string | null; editado_en?: string | null
 }
 interface SelTarea {
   catalogo_id: string | null; grupo: string; sistema: string; nombre: string
@@ -145,6 +159,13 @@ export default function TallerPage() {
   const [catalogo, setCatalogo] = useState<CatItem[]>([])
   const [mecanicos, setMecanicos] = useState<Mecanico[]>([])
   const [camiones, setCamiones] = useState<string[]>([])
+  const [equipos, setEquipos] = useState<Equipo[]>([])
+  const [nuevoEquipo, setNuevoEquipo] = useState<{ codigo: string; tipo: 'autoelevador' | 'pala' }>({ codigo: '', tipo: 'autoelevador' })
+  // Edición de una orden (solo administradores)
+  const [edicion, setEdicion] = useState<null | {
+    o: Orden; unidad: string; tipo: string; fecha: string; inicioStr: string; finStr: string
+    mecs: string[]; obs: string; obsCierre: string; motivo: string; mins: Record<string, string>; quitadas: Set<string>
+  }>(null)
   const [abiertas, setAbiertas] = useState<Orden[]>([])
   const [dia, setDia] = useState(fechaLocal())
   const [ordenesDia, setOrdenesDia] = useState<Orden[]>([])
@@ -193,7 +214,7 @@ export default function TallerPage() {
     setTimeout(() => setToast(null), 3200)
   }
 
-  const esAdmin = ['gerencia', 'admin_flota'].includes(rol)
+  const esAdmin = ['gerencia', 'admin_flota', 'admin_taller'].includes(rol)
   const puedeEd = puedeEditar(permisos, rol, 'taller')
 
   const cargarCatalogo = useCallback(async () => {
@@ -232,13 +253,15 @@ export default function TallerPage() {
       })
       const { perfil } = await res.json()
       const r = perfil?.rol ?? ''
-      const acceso = ['gerencia', 'admin_flota', 'mecanico'].includes(r) || (perfil?.permisos && perfil.permisos.taller && perfil.permisos.taller !== 'none')
+      const acceso = ['gerencia', 'admin_flota', 'admin_taller', 'mecanico'].includes(r) || (perfil?.permisos && perfil.permisos.taller && perfil.permisos.taller !== 'none')
       if (!acceso || perfil?.permisos?.taller === 'none') { router.push('/dashboard'); return }
       setUserId(user.id); setRol(r); setPermisos(perfil?.permisos ?? null)
       const suc = SUCURSALES.includes(perfil?.sucursal) ? perfil.sucursal : 'Guernica'
       setSucursal(suc); setExpSucursal(suc)
       const { data: flota } = await supabase.from('camiones_flota').select('codigo').order('codigo')
       setCamiones((flota ?? []).map((c: any) => c.codigo))
+      const { data: eq } = await supabase.from('taller_equipos').select('*').order('tipo').order('codigo')
+      setEquipos((eq ?? []) as Equipo[])
       await Promise.all([cargarCatalogo(), cargarMecanicos()])
       setCargando(false)
     })()
@@ -249,6 +272,18 @@ export default function TallerPage() {
   useEffect(() => { const t = setInterval(() => setAhora(Date.now()), 30000); return () => clearInterval(t) }, [])
 
   const catActivo = useMemo(() => catalogo.filter(c => c.activo), [catalogo])
+
+  const tipoEquipoDe = useCallback((codigo: string, esExterna: boolean): TipoEquipo => {
+    if (esExterna) return 'externo'
+    return equipos.find(e => e.codigo === codigo)?.tipo ?? 'camion'
+  }, [equipos])
+  const tipoActual = tipoEquipoDe(unidad, externa)
+  const gruposVisibles = useMemo(() => GRUPOS.filter(g => GRUPOS_POR_EQUIPO[tipoActual].includes(g.key)), [tipoActual])
+  useEffect(() => {
+    // Al elegir un autoelevador o una pala se muestran sus tareas; si el grupo abierto ya no corresponde, se pasa a uno válido
+    if (tipoActual === 'autoelevador' || tipoActual === 'pala') setGrupoTab(tipoActual)
+    else if (!gruposVisibles.some(g => g.key === grupoTab)) setGrupoTab('service')
+  }, [tipoActual]) // eslint-disable-line react-hooks/exhaustive-deps
   const mecanicosActivos = useMemo(
     () => mecanicos.filter(m => m.activo && (!m.sucursal || m.sucursal === sucursal)),
     [mecanicos, sucursal]
@@ -344,7 +379,7 @@ export default function TallerPage() {
       const ordenId = crypto.randomUUID()
       const fotos = fotosAntes.length ? await subirFotos(fotosAntes, ordenId, 'antes') : []
       const { error } = await supabase.from('taller_ordenes').insert({
-        id: ordenId, fecha: fechaLocal(inicio), sucursal, unidad_codigo: unidadFinal, unidad_externa: externa,
+        id: ordenId, fecha: fechaLocal(inicio), sucursal, unidad_codigo: unidadFinal, unidad_externa: externa, tipo_equipo: tipoEquipoDe(unidadFinal, externa),
         tipo, estado: 'abierta', inicio: inicio.toISOString(), mecanicos: mecSel,
         observacion: obs.trim() || null, fotos_antes: fotos, registrado_por: userId,
       })
@@ -453,6 +488,91 @@ export default function TallerPage() {
     cargarDia(sucursal, dia); cargarAbiertas(sucursal)
   }
 
+  // ── Edición de una orden por el administrador ──
+  const abrirEdicion = (o: Orden) => {
+    setEdicion({
+      o, unidad: o.unidad_codigo, tipo: o.tipo, fecha: o.fecha, inicioStr: valorDatetimeLocal(new Date(o.inicio)),
+      finStr: o.fin ? valorDatetimeLocal(new Date(o.fin)) : '', mecs: [...(o.mecanicos ?? [])],
+      obs: o.observacion ?? '', obsCierre: o.observacion_cierre ?? '', motivo: o.motivo_diferencia ?? '',
+      mins: Object.fromEntries(tareasDe(o).map(t => [t.id, t.minutos != null ? String(t.minutos) : ''])), quitadas: new Set(),
+    })
+  }
+
+  const calcEdicion = useMemo(() => {
+    if (!edicion) return null
+    const cerrada = edicion.o.estado === 'cerrada'
+    const inicio = new Date(edicion.inicioStr)
+    const fin = edicion.finStr ? new Date(edicion.finStr) : null
+    const tareas = tareasDe(edicion.o).filter(t => !edicion.quitadas.has(t.id)).map(t => {
+      const num = parseInt(edicion.mins[t.id] ?? '', 10)
+      return { t, num }
+    })
+    const transcurrido = cerrada && fin && !isNaN(fin.getTime()) && !isNaN(inicio.getTime()) ? minutosEntre(inicio, fin) : null
+    const suma = cerrada ? tareas.reduce((s, x) => s + (Number.isFinite(x.num) ? x.num : 0), 0) : null
+    const diferencia = transcurrido != null && suma != null ? transcurrido - suma : null
+    const requiereMotivo = diferencia != null && Math.abs(diferencia) > TOLERANCIA_MIN
+    const completo = !cerrada || (tareas.length > 0 && tareas.every(x => Number.isFinite(x.num) && x.num >= 1))
+    return { cerrada, inicio, fin, tareas, transcurrido, suma, diferencia, requiereMotivo, completo }
+  }, [edicion])
+
+  const guardarEdicion = async () => {
+    if (!edicion || !calcEdicion) return
+    const { cerrada, inicio, fin, tareas, transcurrido, suma, diferencia, requiereMotivo, completo } = calcEdicion
+    const unidadNueva = edicion.unidad.trim()
+    if (!unidadNueva) { showToast('Indicá la unidad', 'err'); return }
+    if (isNaN(inicio.getTime())) { showToast('Hora de inicio inválida', 'err'); return }
+    if (cerrada) {
+      if (!fin || isNaN(fin.getTime()) || transcurrido == null || transcurrido < 1) { showToast('La hora de fin debe ser posterior al inicio', 'err'); return }
+      if (!completo) { showToast('Cargá los minutos de cada tarea (al menos 1) y dejá una tarea como mínimo', 'err'); return }
+      if (requiereMotivo && !edicion.motivo.trim()) { showToast('Indicá el motivo de la diferencia', 'err'); return }
+    }
+    setGuardando(true)
+    try {
+      if (edicion.quitadas.size) {
+        const { error } = await supabase.from('taller_orden_tareas').delete().in('id', Array.from(edicion.quitadas))
+        if (error) throw error
+      }
+      if (cerrada) {
+        for (const x of tareas) {
+          const { error } = await supabase.from('taller_orden_tareas').update({ minutos: x.num }).eq('id', x.t.id)
+          if (error) throw error
+        }
+      }
+      const { error } = await supabase.from('taller_ordenes').update({
+        unidad_codigo: unidadNueva, tipo: edicion.tipo, fecha: edicion.fecha, inicio: inicio.toISOString(),
+        ...(cerrada ? {
+          fin: fin!.toISOString(), minutos_transcurridos: transcurrido, minutos_trabajados: suma, diferencia_min: diferencia,
+          motivo_diferencia: requiereMotivo ? edicion.motivo.trim() : null, observacion_cierre: edicion.obsCierre.trim() || null,
+        } : {}),
+        mecanicos: edicion.mecs, observacion: edicion.obs.trim() || null,
+        tipo_equipo: tipoEquipoDe(unidadNueva, edicion.o.unidad_externa),
+        editado_por: userId, editado_en: new Date().toISOString(),
+      }).eq('id', edicion.o.id)
+      if (error) throw error
+      showToast(`Orden actualizada — ${unidadNueva}`)
+      setEdicion(null)
+      await Promise.all([cargarDia(sucursal, dia), cargarAbiertas(sucursal)])
+    } catch (err: any) {
+      showToast(err?.message || 'No se pudo guardar la edición', 'err')
+    } finally { setGuardando(false) }
+  }
+
+  const agregarEquipo = async () => {
+    const codigo = nuevoEquipo.codigo.trim().toUpperCase()
+    if (!codigo) { showToast('Indicá el código del equipo', 'err'); return }
+    const { data, error } = await supabase.from('taller_equipos').insert({ codigo, tipo: nuevoEquipo.tipo }).select('*').single()
+    if (error) { showToast(error.code === '23505' ? 'Ese equipo ya existe' : 'No se pudo agregar', 'err'); return }
+    setEquipos(prev => [...prev, data as Equipo].sort((a, b) => a.tipo.localeCompare(b.tipo) || a.codigo.localeCompare(b.codigo)))
+    setNuevoEquipo(p => ({ ...p, codigo: '' }))
+    showToast(`Equipo ${codigo} agregado`)
+  }
+
+  const toggleEquipo = async (e: Equipo) => {
+    const { error } = await supabase.from('taller_equipos').update({ activo: !e.activo }).eq('id', e.id)
+    if (error) { showToast('No se pudo cambiar', 'err'); return }
+    setEquipos(prev => prev.map(x => x.id === e.id ? { ...x, activo: !x.activo } : x))
+  }
+
   const exportarCSV = async () => {
     if (!expDesde || !expHasta) { showToast('Indicá el rango de fechas', 'err'); return }
     setExportando(true)
@@ -471,7 +591,7 @@ export default function TallerPage() {
         for (const u of (us ?? [])) nombres[(u as any).id] = (u as any).nombre
       }
       const cols = [
-        'fecha', 'orden_id', 'sucursal', 'unidad', 'unidad_otra_empresa', 'tipo', 'estado',
+        'fecha', 'orden_id', 'sucursal', 'unidad', 'tipo_equipo', 'unidad_otra_empresa', 'tipo', 'estado',
         'inicio', 'fin', 'grupo', 'sistema', 'tarea', 'tarea_no_listada',
         'minutos_tarea', 'minutos_estandar', 'desvio_vs_estandar_min',
         'minutos_transcurridos_orden', 'minutos_trabajados_orden', 'diferencia_orden_min', 'motivo_diferencia',
@@ -488,7 +608,7 @@ export default function TallerPage() {
           const desvio = t.minutos != null && t.minutos_estandar != null ? t.minutos - t.minutos_estandar : ''
           const fila: Record<string, any> = {
             fecha: o.fecha, orden_id: o.id, sucursal: o.sucursal, unidad: o.unidad_codigo,
-            unidad_otra_empresa: o.unidad_externa ? 'si' : 'no', tipo: o.tipo, estado: o.estado,
+            tipo_equipo: o.tipo_equipo ?? '', unidad_otra_empresa: o.unidad_externa ? 'si' : 'no', tipo: o.tipo, estado: o.estado,
             inicio: fechaHora(o.inicio), fin: fechaHora(o.fin), grupo: t.grupo, sistema: t.sistema, tarea: t.nombre,
             tarea_no_listada: t.personalizada ? 'si' : 'no', minutos_tarea: t.minutos ?? '',
             minutos_estandar: t.minutos_estandar ?? '', desvio_vs_estandar_min: desvio,
@@ -593,7 +713,7 @@ export default function TallerPage() {
       <div style={{ background: '#254A96', padding: '14px 16px', position: 'sticky', top: 0, zIndex: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, maxWidth: 1100, margin: '0 auto', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {rol !== 'mecanico' && (
+            {!['mecanico', 'admin_taller'].includes(rol) && (
               <button onClick={() => router.push('/dashboard')}
                 style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 10, padding: '6px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                 ← Dashboard
@@ -610,7 +730,7 @@ export default function TallerPage() {
             ) : (
               <span style={{ color: 'rgba(255,255,255,0.8)', fontSize: 14 }}>{sucursal}</span>
             )}
-            {rol === 'mecanico' && (
+            {['mecanico', 'admin_taller'].includes(rol) && (
               <button onClick={salir}
                 style={{ background: 'rgba(255,255,255,0.15)', border: 'none', color: '#fff', borderRadius: 10, padding: '7px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                 Salir
@@ -693,7 +813,13 @@ export default function TallerPage() {
               {!externa ? (
                 <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inputSt}>
                   <option value="">Seleccioná la unidad…</option>
-                  {camiones.map(c => <option key={c}>{c}</option>)}
+                  <optgroup label="🚛 Camiones">{camiones.map(c => <option key={c}>{c}</option>)}</optgroup>
+                  {equipos.some(e => e.activo && e.tipo === 'autoelevador') && (
+                    <optgroup label="📦 Autoelevadores">{equipos.filter(e => e.activo && e.tipo === 'autoelevador').map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup>
+                  )}
+                  {equipos.some(e => e.activo && e.tipo === 'pala') && (
+                    <optgroup label="🚜 Palas cargadoras">{equipos.filter(e => e.activo && e.tipo === 'pala').map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup>
+                  )}
                 </select>
               ) : (
                 <input value={externaTxt} onChange={e => setExternaTxt(e.target.value)} placeholder="Ej: LP-520 / equipo / otra empresa…" style={inputSt} />
@@ -747,7 +873,7 @@ export default function TallerPage() {
                 <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="🔍 Buscar tarea…" style={{ ...inputSt, padding: '10px 14px', fontSize: 14, marginBottom: 10 }} />
                 {!busqueda.trim() && (
                   <div style={{ display: 'flex', gap: 6, overflowX: 'auto' }}>
-                    {GRUPOS.map(g => (
+                    {gruposVisibles.map(g => (
                       <button key={g.key} onClick={() => setGrupoTab(g.key)} style={{ ...chip(grupoTab === g.key), flexShrink: 0, whiteSpace: 'nowrap' }}>{g.label}</button>
                     ))}
                   </div>
@@ -882,9 +1008,13 @@ export default function TallerPage() {
                                 <button onClick={() => setVisor({ titulo: `${o.unidad_codigo} · ${hhmm(o.inicio)}`, fotos: fotosDeOrden(o) })}
                                   style={{ border: 'none', background: '#eef2fb', color: '#254A96', borderRadius: 6, padding: '3px 8px', cursor: 'pointer', fontWeight: 600 }}>📷 {fotosDeOrden(o).length}</button>
                               )}
-                              {rol === 'gerencia' && (
-                                <button onClick={() => eliminarOrden(o)} title="Eliminar" style={{ border: 'none', background: 'none', cursor: 'pointer', marginLeft: 6 }}>🗑</button>
+                              {esAdmin && (
+                                <>
+                                  <button onClick={() => abrirEdicion(o)} title="Editar" style={{ border: 'none', background: 'none', cursor: 'pointer', marginLeft: 6 }}>✎</button>
+                                  <button onClick={() => eliminarOrden(o)} title="Eliminar" style={{ border: 'none', background: 'none', cursor: 'pointer' }}>🗑</button>
+                                </>
                               )}
+                              {o.editado_en && <div style={{ fontSize: 10, color: '#92400e', marginTop: 2 }}>✎ editada</div>}
                             </td>
                           </tr>
                         )
@@ -895,6 +1025,7 @@ export default function TallerPage() {
               )}
             </div>
 
+            {esAdmin && (
             <div style={card}>
               <label style={labelSt}>Exportar CSV (una fila por tarea)</label>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -914,6 +1045,7 @@ export default function TallerPage() {
               </div>
               <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Los datos de la orden (tiempos, diferencia, mecánicos) se repiten en cada tarea: para sumar tiempos por orden usá la columna de la tarea, no la de la orden.</div>
             </div>
+            )}
           </>
         )}
 
@@ -953,6 +1085,30 @@ export default function TallerPage() {
             </div>
 
             <div style={card}>
+              <label style={labelSt}>Equipos de taller (autoelevadores y palas)</label>
+              {(['autoelevador', 'pala'] as const).map(t => (
+                <div key={t} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#254A96', marginBottom: 4 }}>{t === 'autoelevador' ? '📦 Autoelevadores' : '🚜 Palas cargadoras'}</div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {equipos.filter(e => e.tipo === t).map(e => (
+                      <button key={e.id} onClick={() => toggleEquipo(e)} title={e.activo ? 'Tocá para ocultar' : 'Tocá para mostrar'}
+                        style={{ padding: '5px 10px', borderRadius: 14, border: '1.5px solid ' + (e.activo ? '#254A96' : '#d6d6d6'), background: e.activo ? '#eef2fb' : '#f4f4f3', color: e.activo ? '#254A96' : '#999', fontWeight: 700, fontSize: 13, cursor: 'pointer', textDecoration: e.activo ? 'none' : 'line-through' }}>{e.codigo}</button>
+                    ))}
+                    {!equipos.some(e => e.tipo === t) && <span style={{ fontSize: 12, color: '#999' }}>Sin equipos cargados</span>}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <input value={nuevoEquipo.codigo} onChange={e => setNuevoEquipo(p => ({ ...p, codigo: e.target.value }))} placeholder="Código (ej: SA-22)" style={{ ...inputSt, flex: '1 1 140px', padding: '9px 12px', fontSize: 14 }} />
+                <select value={nuevoEquipo.tipo} onChange={e => setNuevoEquipo(p => ({ ...p, tipo: e.target.value as 'autoelevador' | 'pala' }))} style={{ ...inputSt, flex: '0 0 150px', padding: '9px 12px', fontSize: 14, width: 'auto' }}>
+                  <option value="autoelevador">Autoelevador</option><option value="pala">Pala cargadora</option>
+                </select>
+                <button onClick={agregarEquipo} style={{ padding: '0 16px', borderRadius: 10, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Agregar</button>
+              </div>
+              <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Los equipos tildados en azul aparecen al iniciar un trabajo. Los camiones salen de la flota.</div>
+            </div>
+
+            <div style={card}>
               <label style={labelSt}>Mecánicos</label>
               {mecanicos.map(m => (
                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid #f3f3f3', opacity: m.activo ? 1 : 0.45 }}>
@@ -969,6 +1125,98 @@ export default function TallerPage() {
           </>
         )}
       </div>
+
+      {/* ───────── MODAL EDITAR ORDEN (administradores) ───────── */}
+      {edicion && calcEdicion && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 210, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => !guardando && setEdicion(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#f4f4f3', width: '100%', maxWidth: 600, maxHeight: '94dvh', overflowY: 'auto', borderRadius: '20px 20px 0 0', padding: '18px 16px 28px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>Editar orden — {edicion.o.unidad_codigo}</div>
+                <div style={{ fontSize: 13, color: '#666' }}>{edicion.o.estado === 'cerrada' ? 'Orden cerrada' : 'Orden en curso'} · los cambios quedan registrados con tu usuario</div>
+              </div>
+              <button onClick={() => setEdicion(null)} style={{ border: 'none', background: 'none', fontSize: 22, cursor: 'pointer', color: '#666' }}>✕</button>
+            </div>
+
+            <div style={card}>
+              <label style={labelSt}>Unidad</label>
+              <input list="unidades-edicion" value={edicion.unidad} onChange={e => setEdicion(p => p && ({ ...p, unidad: e.target.value }))} style={inputSt} />
+              <datalist id="unidades-edicion">{[...camiones, ...equipos.map(e => e.codigo)].map(u => <option key={u} value={u} />)}</datalist>
+              <label style={{ ...labelSt, marginTop: 12 }}>Tipo de intervención</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                {TIPOS.map(t => (
+                  <button key={t.key} onClick={() => setEdicion(p => p && ({ ...p, tipo: t.key }))}
+                    style={{ padding: '10px 6px', borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 14,
+                      border: `2px solid ${edicion.tipo === t.key ? t.color : '#e0e0e0'}`, background: edicion.tipo === t.key ? t.bg : '#fff', color: edicion.tipo === t.key ? t.color : '#666' }}>{t.icon} {t.label}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={card}>
+              <label style={labelSt}>Fecha</label>
+              <input type="date" value={edicion.fecha} onChange={e => setEdicion(p => p && ({ ...p, fecha: e.target.value }))} style={inputSt} />
+              <label style={{ ...labelSt, marginTop: 12 }}>Hora de inicio</label>
+              <input type="datetime-local" value={edicion.inicioStr} onChange={e => setEdicion(p => p && ({ ...p, inicioStr: e.target.value }))} style={inputSt} />
+              {calcEdicion.cerrada && (
+                <>
+                  <label style={{ ...labelSt, marginTop: 12 }}>Hora de fin</label>
+                  <input type="datetime-local" value={edicion.finStr} onChange={e => setEdicion(p => p && ({ ...p, finStr: e.target.value }))} style={inputSt} />
+                  <div style={{ marginTop: 8, fontSize: 14, color: '#254A96', fontWeight: 700 }}>Tiempo transcurrido: {calcEdicion.transcurrido != null && calcEdicion.transcurrido > 0 ? fmtDur(calcEdicion.transcurrido) : '—'}</div>
+                </>
+              )}
+            </div>
+
+            <div style={card}>
+              <label style={labelSt}>Mecánicos</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[...new Set([...mecanicos.filter(m => m.activo).map(m => m.nombre), ...edicion.mecs])].map(n => (
+                  <button key={n} onClick={() => setEdicion(p => p && ({ ...p, mecs: p.mecs.includes(n) ? p.mecs.filter(x => x !== n) : [...p.mecs, n] }))} style={chip(edicion.mecs.includes(n))}>{n}</button>
+                ))}
+              </div>
+            </div>
+
+            <div style={card}>
+              <label style={labelSt}>{calcEdicion.cerrada ? 'Tareas y minutos' : 'Tareas'}</label>
+              {calcEdicion.tareas.map(({ t }) => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                  <div style={{ flex: 1, fontSize: 14 }}>{t.personalizada ? '★ ' : ''}{t.nombre}<div style={{ fontSize: 11, color: '#999' }}>{t.sistema}</div></div>
+                  {calcEdicion.cerrada && (
+                    <input type="number" min={1} value={edicion.mins[t.id] ?? ''} onChange={e => setEdicion(p => p && ({ ...p, mins: { ...p.mins, [t.id]: e.target.value } }))}
+                      style={{ width: 76, padding: '8px', borderRadius: 8, border: '1.5px solid #d6d6d6', textAlign: 'center', fontSize: 15 }} />
+                  )}
+                  <button title="Quitar la tarea" onClick={() => setEdicion(p => p && ({ ...p, quitadas: new Set([...p.quitadas, t.id]) }))} style={{ border: 'none', background: 'none', color: '#b91c1c', fontSize: 18, cursor: 'pointer' }}>✕</button>
+                </div>
+              ))}
+              {calcEdicion.tareas.length === 0 && <div style={{ fontSize: 13, color: '#b91c1c' }}>No queda ninguna tarea.</div>}
+              {calcEdicion.cerrada && calcEdicion.suma != null && calcEdicion.transcurrido != null && (
+                <div style={{ marginTop: 10, fontSize: 13, color: '#444' }}>
+                  Suma de tareas: <b>{fmtDur(calcEdicion.suma)}</b> · Diferencia con el tiempo transcurrido: <b style={{ color: calcEdicion.requiereMotivo ? '#b45309' : '#059669' }}>{calcEdicion.diferencia != null && calcEdicion.diferencia > 0 ? '+' : ''}{calcEdicion.diferencia != null ? fmtDur(calcEdicion.diferencia) : '—'}</b>
+                </div>
+              )}
+              {calcEdicion.requiereMotivo && (
+                <div style={{ marginTop: 10 }}>
+                  <label style={labelSt}>Motivo de la diferencia (obligatorio)</label>
+                  <input value={edicion.motivo} onChange={e => setEdicion(p => p && ({ ...p, motivo: e.target.value }))} placeholder="Ej: esperando repuesto, almuerzo…" style={inputSt} />
+                </div>
+              )}
+            </div>
+
+            <div style={card}>
+              <label style={labelSt}>Observación de inicio</label>
+              <textarea value={edicion.obs} onChange={e => setEdicion(p => p && ({ ...p, obs: e.target.value }))} rows={2} style={{ ...inputSt, resize: 'none' }} />
+              {calcEdicion.cerrada && (
+                <>
+                  <label style={{ ...labelSt, marginTop: 12 }}>Observación de cierre</label>
+                  <textarea value={edicion.obsCierre} onChange={e => setEdicion(p => p && ({ ...p, obsCierre: e.target.value }))} rows={2} style={{ ...inputSt, resize: 'none' }} />
+                </>
+              )}
+            </div>
+
+            <button onClick={guardarEdicion} disabled={guardando} style={{ ...btnPrimary, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar cambios'}</button>
+            <button onClick={() => setEdicion(null)} disabled={guardando} style={btnSecondary}>Cancelar</button>
+          </div>
+        </div>
+      )}
 
       {/* ───────── MODAL FINALIZAR ───────── */}
       {cierre && cierreCalc && (

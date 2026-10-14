@@ -56,3 +56,18 @@ export const ROL_PAGINAS: Record<string, string[]> = {
   chofer:       ['/ruteo'],
   compras:      ['/compras'],
 }
+
+
+// ── Roles combinados: rol principal (usuarios.rol) + roles adicionales (usuarios.roles_extra) ──
+export const rolesDe = (rol?: string | null, extras?: string[] | null): string[] =>
+  [...new Set([rol, ...(extras ?? [])].filter((r): r is string => !!r))]
+
+export const tieneRol = (rol: string | null | undefined, extras: string[] | null | undefined, lista: readonly string[]) =>
+  rolesDe(rol, extras).some(r => lista.includes(r))
+
+export const etiquetaRoles = (rol?: string | null, extras?: string[] | null) =>
+  rolesDe(rol, extras).map(r => ROL_LABEL[r] ?? r).join(' + ')
+
+// Cuando una pantalla distingue un solo rol: el primero de la prioridad que el usuario tenga
+export const rolSegun = (roles: string[], prioridad: readonly string[], porDefecto: string) =>
+  prioridad.find(p => roles.includes(p)) ?? porDefecto

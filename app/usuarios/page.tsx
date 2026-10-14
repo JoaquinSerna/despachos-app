@@ -5,7 +5,7 @@ import { supabase } from '../supabase' // solo para auth check
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import * as XLSX from 'xlsx'
-import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG } from '../lib/roles'
+import { ROLES, ROL_LABEL, ROL_DESCRIPCION, ROL_COLOR, ROL_BG, rolesDe } from '../lib/roles'
 import { MODULOS, MODULO_LABEL, MODULO_ICON, nivelEfectivo } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
 
@@ -23,6 +23,7 @@ interface Usuario {
   nombre: string
   email: string
   rol: string
+  roles_extra?: string[]
   sucursal: string | null
   created_at: string
   permisos?: Record<string, string>
@@ -45,7 +46,7 @@ export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([])
   const [cargando, setCargando] = useState(true)
   const [modal, setModal] = useState<{ tipo: 'crear' | 'editar'; usuario?: Usuario } | null>(null)
-  const [form, setForm] = useState({ nombre: '', email: '', password: '', rol: 'comercial', sucursal: '' })
+  const [form, setForm] = useState({ nombre: '', email: '', password: '', rol: 'comercial', roles_extra: [] as string[], sucursal: '' })
   const [guardando, setGuardando] = useState(false)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [busqueda, setBusqueda] = useState('')
@@ -162,12 +163,12 @@ export default function UsuariosPage() {
   }
 
   const abrirCrear = () => {
-    setForm({ nombre: '', email: '', password: '', rol: 'comercial', sucursal: '' })
+    setForm({ nombre: '', email: '', password: '', rol: 'comercial', roles_extra: [], sucursal: '' })
     setModal({ tipo: 'crear' })
   }
 
   const abrirEditar = (u: Usuario) => {
-    setForm({ nombre: u.nombre, email: u.email, password: '', rol: u.rol, sucursal: u.sucursal ?? '' })
+    setForm({ nombre: u.nombre, email: u.email, password: '', rol: u.rol, roles_extra: u.roles_extra ?? [], sucursal: u.sucursal ?? '' })
     setModal({ tipo: 'editar', usuario: u })
   }
 
@@ -195,6 +196,7 @@ export default function UsuariosPage() {
             email: form.email,
             password: form.password || undefined,
             rol: form.rol,
+            roles_extra: form.roles_extra.filter(r => r !== form.rol),
             sucursal: form.sucursal,
           }),
         })
@@ -389,6 +391,26 @@ export default function UsuariosPage() {
               </div>
 
               <div>
+                <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Roles adicionales (opcional)</label>
+                <div className="flex flex-wrap gap-2">
+                  {ROLES.filter(r => r !== form.rol).map(r => {
+                    const activo = form.roles_extra.includes(r)
+                    return (
+                      <button key={r} type="button"
+                        onClick={() => setForm(f => ({ ...f, roles_extra: activo ? f.roles_extra.filter(x => x !== r) : [...f.roles_extra, r] }))}
+                        className="text-xs px-3 py-1.5 rounded-full font-medium border"
+                        style={{ background: activo ? ROL_BG[r] : '#fff', color: activo ? ROL_COLOR[r] : '#999', borderColor: activo ? ROL_COLOR[r] : '#e8edf8' }}>
+                        {activo ? '✓ ' : '+ '}{ROL_LABEL[r]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-xs mt-1" style={{ color: '#B9BBB7' }}>
+                  Para quien cumple más de una función (por ejemplo ruteador y jefe de depósito): tiene el acceso de todos sus roles.
+                </p>
+              </div>
+
+              <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Sucursal</label>
                 <select value={form.sucursal}
                   onChange={e => setForm(f => ({ ...f, sucursal: e.target.value }))}
@@ -434,7 +456,7 @@ export default function UsuariosPage() {
             <div className="overflow-y-auto px-6 space-y-2" style={{ flex: 1 }}>
               {MODULOS.map(modulo => {
                 const override = permisosEdit[modulo]
-                const efectivo = nivelEfectivo(permisosEdit, modalPermisos.rol, modulo)
+                const efectivo = nivelEfectivo(permisosEdit, rolesDe(modalPermisos.rol, modalPermisos.roles_extra), modulo)
                 const esDefault = !override
                 return (
                   <div key={modulo} className="flex items-center gap-3 rounded-xl px-4 py-3 border"
@@ -565,6 +587,7 @@ export default function UsuariosPage() {
                     u.nombre?.toLowerCase().includes(q) ||
                     u.email?.toLowerCase().includes(q) ||
                     (ROL_LABEL[u.rol] ?? u.rol)?.toLowerCase().includes(q) ||
+                    (u.roles_extra ?? []).some(r => (ROL_LABEL[r] ?? r).toLowerCase().includes(q)) ||
                     u.sucursal?.toLowerCase().includes(q)
                   )
                 })
@@ -592,6 +615,12 @@ export default function UsuariosPage() {
                         style={{ background: ROL_BG[u.rol] ?? '#f4f4f3', color: ROL_COLOR[u.rol] ?? '#666' }}>
                         {ROL_LABEL[u.rol] ?? u.rol}
                       </span>
+                      {(u.roles_extra ?? []).map(r => (
+                        <span key={r} className="text-xs px-2 py-1 rounded-full font-medium ml-1"
+                          style={{ background: ROL_BG[r] ?? '#f4f4f3', color: ROL_COLOR[r] ?? '#666' }}>
+                          + {ROL_LABEL[r] ?? r}
+                        </span>
+                      ))}
                     </td>
                     <td className="px-4 py-3 text-xs" style={{ color: '#666' }}>{u.sucursal ?? 'Todas'}</td>
                     <td className="px-4 py-3 text-xs" style={{ color: '#B9BBB7' }}>

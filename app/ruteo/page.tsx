@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { logAuditoria } from '../lib/auditoria'
@@ -121,12 +122,12 @@ export default function RuteoPage() {
 
       const { data: userData } = await supabase
         .from('usuarios')
-        .select('nombre, rol, camion_codigo, permisos, sucursal')
+        .select('nombre, rol, roles_extra, camion_codigo, permisos, sucursal')
         .eq('id', user.id)
         .single()
 
       // chofer siempre tiene acceso (su vista especial); el resto usa tieneAcceso() para respetar overrides
-      if (userData?.rol !== 'chofer' && !tieneAcceso(userData?.permisos, userData?.rol, 'ruteo')) {
+      if (userData?.rol !== 'chofer' && !tieneAcceso(userData?.permisos, rolesDe(userData?.rol, userData?.roles_extra), 'ruteo')) {
         router.push('/dashboard')
         return
       }

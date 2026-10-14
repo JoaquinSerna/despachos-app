@@ -2,6 +2,9 @@
 export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia', 'guardia', 'stock', 'pallets', 'materiales', 'compras', 'recepcion'] as const
 export type Modulo = typeof MODULOS[number]
 
+// El rol puede venir como un solo rol o como la lista de roles (principal + adicionales) del usuario
+const listaRoles = (rol: string | string[] | null | undefined): string[] => Array.isArray(rol) ? rol : rol ? [rol] : []
+
 export const MODULO_LABEL: Record<Modulo, string> = {
   despachos:      'Nueva solicitud de despacho',
   pedidos:        'Listado de pedidos',
@@ -67,14 +70,14 @@ const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
  */
 export function puedeEditar(
   permisos: Record<string, string> | null | undefined,
-  rol: string,
+  rol: string | string[] | null | undefined,
   modulo: Modulo
 ): boolean {
   if (permisos && permisos[modulo] === 'none') return false
   if (permisos && modulo in permisos) {
     return permisos[modulo] === 'editor'
   }
-  return ROL_EDITOR_DEFAULT[modulo]?.includes(rol) ?? false
+  return listaRoles(rol).some(r => ROL_EDITOR_DEFAULT[modulo]?.includes(r))
 }
 
 /**
@@ -107,11 +110,11 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
  */
 export function tieneAcceso(
   permisos: Record<string, string> | null | undefined,
-  rol: string,
+  rol: string | string[] | null | undefined,
   modulo: Modulo
 ): boolean {
   if (permisos && permisos[modulo] === 'none') return false
-  if (ROL_ACCESO_DEFAULT[modulo]?.includes(rol)) return true
+  if (listaRoles(rol).some(r => ROL_ACCESO_DEFAULT[modulo]?.includes(r))) return true
   if (permisos && modulo in permisos) return true
   return false
 }
@@ -121,7 +124,7 @@ export function tieneAcceso(
  */
 export function nivelEfectivo(
   permisos: Record<string, string> | null | undefined,
-  rol: string,
+  rol: string | string[] | null | undefined,
   modulo: Modulo
 ): 'editor' | 'viewer' {
   return puedeEditar(permisos, rol, modulo) ? 'editor' : 'viewer'

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import { IngresoProveedorForm, IngresosProveedorLista } from './ProveedoresTab'
 import RecepcionTab from './RecepcionTab'
@@ -68,6 +69,8 @@ export default function GuardiaPage() {
   const router = useRouter()
   const [userId, setUserId] = useState<string | null>(null)
   const [rol, setRol] = useState<string>('')
+  const [rolesExtra, setRolesExtra] = useState<string[]>([])
+  const roles = rolesDe(rol, rolesExtra)
   const [esEditorCompras, setEsEditorCompras] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [camiones, setCamiones] = useState<string[]>([])
@@ -130,11 +133,11 @@ export default function GuardiaPage() {
     if (!esValidador) return
     ;(async () => {
       let q = supabase.from('proveedor_ingresos').select('id', { count: 'exact', head: true }).eq('validacion_estado', 'pendiente')
-      if (sucursalUsuario && !['gerencia', 'admin_flota'].includes(rol)) q = q.eq('sucursal', sucursalUsuario)
+      if (sucursalUsuario && !roles.some(r => ['gerencia', 'admin_flota'].includes(r))) q = q.eq('sucursal', sucursalUsuario)
       const { count } = await q
       setPendientesRecepcion(count ?? 0)
     })()
-  }, [esValidador, sucursalUsuario, rol, provRefresh, tab])
+  }, [esValidador, sucursalUsuario, rol, rolesExtra, provRefresh, tab])
   const [provInicial, setProvInicial] = useState<{ origen: 'externo' | 'propio'; chofer?: string; camion?: string } | null>(null)
   const [ingFotos, setIngFotos] = useState<FotoItem[]>([])
   const ingFileRef = useRef<HTMLInputElement>(null)
@@ -170,18 +173,20 @@ export default function GuardiaPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data: perfil } = await supabase.from('usuarios').select('rol, sucursal, permisos').eq('id', user.id).single()
+      const { data: perfil } = await supabase.from('usuarios').select('rol, roles_extra, sucursal, permisos').eq('id', user.id).single()
       const rolesPermitidos = ['guardia', 'gerencia', 'admin_flota', 'ruteador', 'deposito']
-      if (!rolesPermitidos.includes(perfil?.rol ?? '')) { router.push('/dashboard'); return }
+      const rs = rolesDe(perfil?.rol, perfil?.roles_extra)
+      if (!rs.some(x => rolesPermitidos.includes(x))) { router.push('/dashboard'); return }
       setUserId(user.id)
       const r = perfil?.rol ?? ''
       setRol(r)
-      setEsEditorCompras((perfil?.permisos as Record<string, string> | null)?.compras === 'editor')
-      setEsValidador(['gerencia', 'admin_flota'].includes(r) || (perfil?.permisos as Record<string, string> | null)?.recepcion === 'editor')
+      setRolesExtra(perfil?.roles_extra ?? [])
+      setEsEditorCompras(rs.some(x => ['gerencia', 'admin_flota', 'compras'].includes(x)) || (perfil?.permisos as Record<string, string> | null)?.compras === 'editor')
+      setEsValidador(rs.some(x => ['gerencia', 'admin_flota'].includes(x)) || (perfil?.permisos as Record<string, string> | null)?.recepcion === 'editor')
       const suc = perfil?.sucursal ?? ''
       setSucursalUsuario(suc)
       setInformeSucursal(suc || SUCURSALES[0])
-      if (r === 'deposito') setTab('deposito')
+      if (rs.includes('deposito') && !rs.some(x => ['ruteador', 'gerencia', 'admin_flota', 'guardia'].includes(x))) setTab('deposito')
 
       const [{ data: flota }, { data: choferesData }] = await Promise.all([
         supabase.from('camiones_flota').select('codigo').order('codigo'),
@@ -575,14 +580,15 @@ export default function GuardiaPage() {
     )
   }
 
-  const esDeposito = rol === 'deposito'
-  const verTabs = !['guardia', 'deposito'].includes(rol)
+  // Vista solo de depósito: únicamente si no tiene otro rol con más alcance (ruteador, gerencia, etc.)
+  const esDeposito = roles.includes('deposito') && !roles.some(r => ['ruteador', 'gerencia', 'admin_flota', 'guardia'].includes(r))
+  const verTabs = roles.some(r => !['guardia', 'deposito'].includes(r))
   const tabsVisibles = [
     ...(esDeposito ? ['deposito'] : verTabs ? ['guardia', 'deposito', 'proveedores'] : ['guardia', 'proveedores']),
     ...(esValidador ? ['recepcion'] : []),
   ] as ('guardia' | 'deposito' | 'proveedores' | 'recepcion')[]
   // Roles que tienen dashboard al que volver
-  const tieneDashboard = !['guardia', 'deposito'].includes(rol)
+  const tieneDashboard = roles.some(r => !['guardia', 'deposito'].includes(r))
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '14px 12px', fontSize: 16, borderRadius: 12,
@@ -749,7 +755,7 @@ export default function GuardiaPage() {
           {/* Botones de acción — solo en home y para roles con acceso completo */}
           {accion === 'home' && tieneDashboard && (
             <div style={{ display: 'flex', gap: 8 }}>
-              {(['gerencia', 'admin_flota', 'ruteador'] as string[]).includes(rol) && (
+              {roles.some(r => ['gerencia', 'admin_flota', 'ruteador'].includes(r)) && (
                 <button onClick={() => setInformeModal(true)}
                   style={{
                     background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)',
@@ -885,7 +891,7 @@ export default function GuardiaPage() {
             )}
 
             {tab === 'recepcion' && esValidador && (
-              <RecepcionTab rol={rol} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast}
+              <RecepcionTab rol={roles.find(r => ['gerencia', 'admin_flota'].includes(r)) ?? rol} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast}
                 onCambio={() => setProvRefresh(k => k + 1)} />
             )}
 
@@ -1042,7 +1048,7 @@ export default function GuardiaPage() {
                                               {tieneFotos ? '📷 ' : ''}{horaDisplay}{detalle ? ` · ${detalle}` : ''}
                                               {ev.hora_evento && <span style={{ fontSize: 10, opacity: 0.7 }}> ✎</span>}
                                             </span>
-                                            {rol === 'gerencia' && (
+                                            {roles.includes('gerencia') && (
                                               <>
                                                 <button
                                                   onClick={() => abrirEditEvento(ev, label)}

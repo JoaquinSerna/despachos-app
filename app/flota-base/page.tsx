@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { logAuditoria } from '../lib/auditoria'
@@ -56,8 +57,8 @@ export default function FlotaBasePage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, nombre').eq('id', user.id).single()
-      if (!['gerencia', 'admin_flota'].includes(data?.rol)) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra, nombre').eq('id', user.id).single()
+      if (!rolesDe(data?.rol, data?.roles_extra).some(r => ['gerencia', 'admin_flota'].includes(r))) { router.push('/dashboard'); return }
       setUserId(user.id)
       setUserNombre(data?.nombre ?? '')
       cargar()

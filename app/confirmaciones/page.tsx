@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { tieneAcceso } from '../lib/permisos'
@@ -328,8 +329,8 @@ export default function ConfirmacionesPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data: userData } = await supabase.from('usuarios').select('nombre, rol, permisos, sucursal').eq('id', user.id).single()
-      if (!tieneAcceso(userData?.permisos, userData?.rol, 'confirmaciones')) { router.push('/dashboard'); return }
+      const { data: userData } = await supabase.from('usuarios').select('nombre, rol, roles_extra, permisos, sucursal').eq('id', user.id).single()
+      if (!tieneAcceso(userData?.permisos, rolesDe(userData?.rol, userData?.roles_extra), 'confirmaciones')) { router.push('/dashboard'); return }
       setUsuario(user); setNombreUsuario(userData?.nombre ?? user.email ?? '')
       if (userData?.sucursal) setFiltroSucursal(userData.sucursal)
       cargarPedidos({ sucursal: userData?.sucursal ?? '' })

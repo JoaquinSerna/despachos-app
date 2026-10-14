@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import NotificacionBell from '../components/NotificacionBell'
@@ -50,6 +51,7 @@ interface PedidoReciente {
 export default function Dashboard() {
   const [usuario, setUsuario] = useState<any>(null)
   const [rolUsuario, setRolUsuario] = useState<string>('')
+  const [rolesUsuario, setRolesUsuario] = useState<string[]>([])
   const [nombreUsuario, setNombreUsuario] = useState<string>('')
   const [stats, setStats] = useState({ pendientes: 0, hoy: 0, enCamino: 0, entregadosHoy: 0 })
   const [recientes, setRecientes] = useState<PedidoReciente[]>([])
@@ -105,12 +107,15 @@ export default function Dashboard() {
       })
       const { perfil: userData } = await res.json()
 
-      if (userData?.rol === 'chofer') { router.push('/ruteo'); return }
-      if (userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
-      if (userData?.rol === 'guardia') { router.push('/guardia'); return }
+      // Los roles de una sola pantalla van directo a ella; con roles combinados se ve el dashboard
+      const tieneExtras = (userData?.roles_extra ?? []).length > 0
+      if (!tieneExtras && userData?.rol === 'chofer') { router.push('/ruteo'); return }
+      if (!tieneExtras && userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
+      if (!tieneExtras && userData?.rol === 'guardia') { router.push('/guardia'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')
+      setRolesUsuario(rolesDe(userData?.rol, userData?.roles_extra))
       setNombreUsuario(userData?.nombre ?? user.email?.split('@')[0] ?? 'usuario')
       setPermisosUsuario(userData?.permisos ?? null)
       setVerificando(false)
@@ -232,7 +237,7 @@ export default function Dashboard() {
     // 'none' bloquea siempre, incluso si el rol lo tendría por default
     if (modulo && permisosUsuario?.[modulo] === 'none') return false
     // Acceso por rol por defecto
-    if (c.roles.includes(rolUsuario)) return true
+    if (rolesUsuario.some(r => c.roles.includes(r))) return true
     // Acceso por permiso individual (editor o viewer)
     if (modulo && permisosUsuario?.[modulo]) return true
     return false

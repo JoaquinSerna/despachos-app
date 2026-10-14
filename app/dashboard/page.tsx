@@ -108,7 +108,6 @@ export default function Dashboard() {
       if (userData?.rol === 'chofer') { router.push('/ruteo'); return }
       if (userData?.rol === 'confirmador') { router.push('/confirmaciones'); return }
       if (userData?.rol === 'guardia') { router.push('/guardia'); return }
-      if (userData?.rol === 'compras') { router.push('/compras'); return }
 
       setUsuario(user)
       setRolUsuario(userData?.rol ?? '')

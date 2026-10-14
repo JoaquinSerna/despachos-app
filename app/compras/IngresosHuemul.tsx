@@ -18,8 +18,12 @@ const btnLine: React.CSSProperties = { padding: '8px 14px', borderRadius: 10, bo
 const th: React.CSSProperties = { padding: '10px 12px', textAlign: 'left', fontWeight: 700, whiteSpace: 'nowrap', background: '#f9f9f9', color: '#254A96' }
 const td: React.CSSProperties = { padding: '10px 12px', borderTop: '1px solid #f0f0f0', verticalAlign: 'top', fontSize: 13 }
 
-// Estado de un remito de guardia respecto de Huemul
-export const ESTADO_HUEMUL: Record<EstadoCruce, { label: string; corto: string; bg: string; fg: string }> = {
+// Estado de un remito de guardia respecto de Huemul: lo que dice el export + el check manual de quien carga en Huemul
+export type EstadoHuemul = EstadoCruce | 'marcado' | 'marcado_no_figura'
+
+export const ESTADO_HUEMUL: Record<EstadoHuemul, { label: string; corto: string; bg: string; fg: string }> = {
+  marcado: { label: '🟡 Marcado como cargado · falta confirmar con el export', corto: 'Marcado, falta confirmar', bg: '#fefce8', fg: '#854d0e' },
+  marcado_no_figura: { label: '⚠ Marcado como cargado, pero no figura en el export', corto: 'Marcado, no figura en el export', bg: '#fef2f2', fg: '#b91c1c' },
   cargado: { label: '✅ Cargado en Huemul', corto: 'Cargado', bg: '#ecfdf5', fg: '#065f46' },
   sin_cargar: { label: '❌ Sin cargar en Huemul', corto: 'Sin cargar', bg: '#fef2f2', fg: '#b91c1c' },
   posterior_al_export: { label: '⏳ Sin cargar · llegó después del último export', corto: 'Sin cargar (posterior al export)', bg: '#fffbeb', fg: '#92400e' },
@@ -95,15 +99,44 @@ export function useCruceHuemul(remitos: RemitoGuardia[], refreshKey: number) {
   return { cruce, ultima, cargando }
 }
 
-export function BadgeHuemul({ resultado, hayExport }: { resultado: ResultadoCruce | undefined; hayExport: boolean }) {
-  if (!hayExport) return <span style={{ color: '#B9BBB7', fontSize: 12 }}>Sin export</span>
-  if (!resultado) return <span style={{ color: '#B9BBB7' }}>—</span>
-  const e = ESTADO_HUEMUL[resultado.estado]
+// El export manda: si el remito figura ahí, está confirmado. Si no figura pero alguien lo marcó como cargado,
+// queda "marcado" hasta el próximo export; si ese export salió después de la marca y no lo trae, se avisa.
+export function estadoHuemulFinal(rem: any, res: ResultadoCruce | undefined, exportadoEn: string | null, hayExport: boolean): EstadoHuemul | undefined {
+  if (!rem) return undefined
+  if (res?.estado === 'cargado') return 'cargado'
+  if (rem.huemul_cargado_en) {
+    if (res?.estado === 'sin_numero' || !exportadoEn) return 'marcado'
+    return new Date(exportadoEn) > new Date(rem.huemul_cargado_en) ? 'marcado_no_figura' : 'marcado'
+  }
+  if (!hayExport) return 'sin_cargar'
+  return res?.estado
+}
+
+interface MarcaHuemul { por: string | null; en: string | null }
+
+export function BadgeHuemul({ estado, ingresos, marca }: { estado: EstadoHuemul | undefined; ingresos?: number[]; marca?: MarcaHuemul }) {
+  if (!estado) return <span style={{ color: '#B9BBB7' }}>—</span>
+  const e = ESTADO_HUEMUL[estado]
   return (
     <>
       <span style={{ background: e.bg, color: e.fg, borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{e.label}</span>
-      {resultado.ingresos.length > 0 && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>Ingreso {resultado.ingresos.map(i => `#${i}`).join(' + ')}</div>}
+      {!!ingresos?.length && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>Ingreso {ingresos.map(i => `#${i}`).join(' + ')}</div>}
+      {marca?.en && (estado === 'marcado' || estado === 'marcado_no_figura') && (
+        <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>Marcó {marca.por ?? '—'} · {fmtFechaHora(marca.en)}</div>
+      )}
     </>
+  )
+}
+
+// "Lo cargué en Huemul": el que hace los ingresos en Huemul lo tilda; después el export lo confirma
+export function CheckHuemul({ marcado, trabajando, onCambiar, grande }: { marcado: boolean; trabajando?: boolean; onCambiar: (valor: boolean) => void; grande?: boolean }) {
+  return (
+    <label onClick={e => e.stopPropagation()}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 4, cursor: trabajando ? 'wait' : 'pointer', fontSize: grande ? 15 : 12, fontWeight: 700, color: marcado ? '#854d0e' : '#254A96', opacity: trabajando ? 0.6 : 1 }}>
+      <input type="checkbox" checked={marcado} disabled={trabajando} onChange={e => onCambiar(e.target.checked)}
+        style={{ width: grande ? 22 : 17, height: grande ? 22 : 17, cursor: 'inherit' }} />
+      Lo cargué en Huemul
+    </label>
   )
 }
 

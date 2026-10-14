@@ -1,5 +1,5 @@
 // Modulos con control de permisos editor/visualizador
-export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia', 'guardia', 'stock', 'pallets', 'materiales', 'compras', 'recepcion'] as const
+export const MODULOS = ['despachos', 'pedidos', 'programacion', 'ruteo', 'confirmaciones', 'abastecimiento', 'metricas', 'flota', 'flota-base', 'fin-del-dia', 'guardia', 'stock', 'pallets', 'materiales', 'compras', 'recepcion', 'huemul'] as const
 export type Modulo = typeof MODULOS[number]
 
 // El rol puede venir como un solo rol o como la lista de roles (principal + adicionales) del usuario
@@ -22,6 +22,7 @@ export const MODULO_LABEL: Record<Modulo, string> = {
   materiales:     'Materiales',
   compras:        'Compras',
   recepcion:      'Recepción de mercadería (validar ingresos)',
+  huemul:         'Marcar remitos cargados en Huemul',
 }
 
 export const MODULO_ICON: Record<Modulo, string> = {
@@ -41,6 +42,7 @@ export const MODULO_ICON: Record<Modulo, string> = {
   materiales:     '🏷️',
   compras:        '🧾',
   recepcion:      '📥',
+  huemul:         '📦',
 }
 
 // Que roles pueden EDITAR cada modulo por defecto (sin override de permisos)
@@ -61,6 +63,7 @@ const ROL_EDITOR_DEFAULT: Record<Modulo, string[]> = {
   materiales:     ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
   compras:        ['gerencia', 'admin_flota', 'compras'],
   recepcion:      ['gerencia', 'admin_flota'],
+  huemul:         ['gerencia', 'admin_flota', 'compras'],
 }
 
 /**
@@ -101,6 +104,7 @@ const ROL_ACCESO_DEFAULT: Record<Modulo, string[]> = {
   materiales:     ['gerencia', 'admin_flota', 'ruteador', 'deposito'],
   compras:        ['gerencia', 'admin_flota', 'compras'],
   recepcion:      ['gerencia', 'admin_flota'],
+  huemul:         ['gerencia', 'admin_flota', 'compras'],
 }
 
 /**

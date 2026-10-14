@@ -16,6 +16,7 @@ const GRUPOS = [
   { key: 'acoplado', label: '🔗 Acoplado' },
   { key: 'autoelevador', label: '📦 Autoelevador' },
   { key: 'pala', label: '🚜 Pala cargadora' },
+  { key: 'puente_grua', label: '🏗️ Puente grúa' },
   { key: 'general', label: '🏭 General' },
 ]
 
@@ -43,15 +44,22 @@ interface CatItem {
   minutos_estandar: number | null; orden: number; activo: boolean
 }
 interface Mecanico { id: string; nombre: string; sucursal: string | null; activo: boolean }
-interface Equipo { id: string; codigo: string; tipo: 'autoelevador' | 'pala'; sucursal: string | null; activo: boolean }
-type TipoEquipo = 'camion' | 'autoelevador' | 'pala' | 'externo'
+type TipoTaller = 'autoelevador' | 'pala' | 'puente_grua'
+interface Equipo { id: string; codigo: string; tipo: TipoTaller; sucursal: string | null; activo: boolean }
+type TipoEquipo = 'camion' | TipoTaller | 'externo'
+const TIPOS_TALLER: { key: TipoTaller; label: string; plural: string; icon: string; prefijo: string }[] = [
+  { key: 'autoelevador', label: 'Autoelevador', plural: 'Autoelevadores', icon: '📦', prefijo: 'SA' },
+  { key: 'pala', label: 'Pala cargadora', plural: 'Palas cargadoras', icon: '🚜', prefijo: 'CF' },
+  { key: 'puente_grua', label: 'Puente grúa', plural: 'Puentes grúa', icon: '🏗️', prefijo: 'PG' },
+]
 
 // Qué grupos de tareas se ofrecen según el equipo (Service y General sirven para todos)
 const GRUPOS_POR_EQUIPO: Record<TipoEquipo, string[]> = {
   camion: ['service', 'camion', 'hidrogrua', 'acoplado', 'general'],
   autoelevador: ['service', 'autoelevador', 'general'],
   pala: ['service', 'pala', 'general'],
-  externo: ['service', 'camion', 'hidrogrua', 'acoplado', 'autoelevador', 'pala', 'general'],
+  puente_grua: ['puente_grua', 'general'],
+  externo: ['service', 'camion', 'hidrogrua', 'acoplado', 'autoelevador', 'pala', 'puente_grua', 'general'],
 }
 interface Tarea {
   id: string; orden_id: string; catalogo_id: string | null; grupo: string; sistema: string
@@ -160,7 +168,7 @@ export default function TallerPage() {
   const [mecanicos, setMecanicos] = useState<Mecanico[]>([])
   const [camiones, setCamiones] = useState<string[]>([])
   const [equipos, setEquipos] = useState<Equipo[]>([])
-  const [nuevoEquipo, setNuevoEquipo] = useState<{ codigo: string; tipo: 'autoelevador' | 'pala' }>({ codigo: '', tipo: 'autoelevador' })
+  const [nuevoEquipo, setNuevoEquipo] = useState<{ prefijo: string; numero: string; tipo: TipoTaller }>({ prefijo: 'SA', numero: '', tipo: 'autoelevador' })
   // Edición de una orden (solo administradores)
   const [edicion, setEdicion] = useState<null | {
     o: Orden; unidad: string; tipo: string; fecha: string; inicioStr: string; finStr: string
@@ -175,7 +183,9 @@ export default function TallerPage() {
   // Nueva orden
   const [unidad, setUnidad] = useState('')
   const [externa, setExterna] = useState(false)
-  const [externaTxt, setExternaTxt] = useState('')
+  const [extPref, setExtPref] = useState('')
+  const [extNum, setExtNum] = useState('')
+  const [buscaUnidad, setBuscaUnidad] = useState('')
   const [tipo, setTipo] = useState('')
   const [inicioStr, setInicioStr] = useState(valorDatetimeLocal())
   const [mecSel, setMecSel] = useState<string[]>([])
@@ -207,6 +217,7 @@ export default function TallerPage() {
   const [exportando, setExportando] = useState(false)
   const [catGrupo, setCatGrupo] = useState('service')
   const [nuevoCat, setNuevoCat] = useState({ sistema: '', nombre: '', minutos: '' })
+  const [catNueva, setCatNueva] = useState(false)
   const [nuevoMecAdmin, setNuevoMecAdmin] = useState('')
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
@@ -326,7 +337,7 @@ export default function TallerPage() {
   }
 
   const resetNueva = () => {
-    setUnidad(''); setExterna(false); setExternaTxt(''); setTipo('')
+    setUnidad(''); setExterna(false); setExtPref(''); setExtNum(''); setBuscaUnidad(''); setTipo('')
     setInicioStr(valorDatetimeLocal()); setMecSel([]); setSel({}); setBusqueda('')
     setCustomTxt(''); setObs('')
     fotosAntes.forEach(f => URL.revokeObjectURL(f.preview)); setFotosAntes([])
@@ -365,8 +376,8 @@ export default function TallerPage() {
   }
 
   const iniciarTrabajo = async () => {
-    const unidadFinal = externa ? externaTxt.trim() : unidad
-    if (!unidadFinal) { showToast('Indicá la unidad', 'err'); return }
+    const unidadFinal = externa ? (extPref && extNum ? `${extPref}-${extNum}` : '') : unidad
+    if (!unidadFinal) { showToast(externa ? 'Indicá el tipo de equipo y el número' : 'Indicá la unidad', 'err'); return }
     if (!tipo) { showToast('Elegí el tipo de intervención', 'err'); return }
     if (!mecSel.length) { showToast('Elegí al menos un mecánico', 'err'); return }
     const claves = Object.keys(sel)
@@ -558,12 +569,13 @@ export default function TallerPage() {
   }
 
   const agregarEquipo = async () => {
-    const codigo = nuevoEquipo.codigo.trim().toUpperCase()
-    if (!codigo) { showToast('Indicá el código del equipo', 'err'); return }
+    const pref = nuevoEquipo.prefijo.trim().toUpperCase(); const num = nuevoEquipo.numero.trim()
+    if (!pref || !num) { showToast('Indicá el tipo de equipo y el número', 'err'); return }
+    const codigo = `${pref}-${num}`
     const { data, error } = await supabase.from('taller_equipos').insert({ codigo, tipo: nuevoEquipo.tipo }).select('*').single()
     if (error) { showToast(error.code === '23505' ? 'Ese equipo ya existe' : 'No se pudo agregar', 'err'); return }
     setEquipos(prev => [...prev, data as Equipo].sort((a, b) => a.tipo.localeCompare(b.tipo) || a.codigo.localeCompare(b.codigo)))
-    setNuevoEquipo(p => ({ ...p, codigo: '' }))
+    setNuevoEquipo(p => ({ ...p, numero: '' }))
     showToast(`Equipo ${codigo} agregado`)
   }
 
@@ -652,7 +664,7 @@ export default function TallerPage() {
     const maxOrden = Math.max(0, ...catalogo.map(c => c.orden))
     const { error } = await supabase.from('taller_catalogo').insert({ grupo: catGrupo, sistema, nombre, minutos_estandar: min, orden: maxOrden + 1 })
     if (error) { showToast(error.message.includes('duplicate') ? 'Esa tarea ya existe' : 'No se pudo agregar', 'err'); return }
-    setNuevoCat({ sistema: nuevoCat.sistema, nombre: '', minutos: '' })
+    setNuevoCat({ sistema: nuevoCat.sistema, nombre: '', minutos: '' }); setCatNueva(false)
     await cargarCatalogo(); showToast('Tarea agregada al catálogo')
   }
 
@@ -811,19 +823,36 @@ export default function TallerPage() {
             <div style={card}>
               <label style={labelSt}>Unidad</label>
               {!externa ? (
-                <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inputSt}>
-                  <option value="">Seleccioná la unidad…</option>
-                  <optgroup label="🚛 Camiones">{camiones.map(c => <option key={c}>{c}</option>)}</optgroup>
-                  {equipos.some(e => e.activo && e.tipo === 'autoelevador') && (
-                    <optgroup label="📦 Autoelevadores">{equipos.filter(e => e.activo && e.tipo === 'autoelevador').map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup>
-                  )}
-                  {equipos.some(e => e.activo && e.tipo === 'pala') && (
-                    <optgroup label="🚜 Palas cargadoras">{equipos.filter(e => e.activo && e.tipo === 'pala').map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup>
-                  )}
-                </select>
+                <>
+                  <input value={buscaUnidad} onChange={e => setBuscaUnidad(e.target.value)} placeholder="🔍 Buscar unidad (ej: 52, SA-10, CF)…" style={{ ...inputSt, marginBottom: 8 }} />
+                  <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inputSt}>
+                    <option value="">Seleccioná la unidad…</option>
+                    {(() => {
+                      const q = buscaUnidad.trim().toLowerCase().replace(/[\s-]+/g, '')
+                      const coincide = (c: string) => !q || c.toLowerCase().replace(/[\s-]+/g, '').includes(q)
+                      const cams = camiones.filter(coincide)
+                      return (
+                        <>
+                          {cams.length > 0 && <optgroup label="🚛 Camiones">{cams.map(c => <option key={c}>{c}</option>)}</optgroup>}
+                          {TIPOS_TALLER.map(t => {
+                            const lista = equipos.filter(e => e.activo && e.tipo === t.key && coincide(e.codigo))
+                            return lista.length > 0 ? <optgroup key={t.key} label={`${t.icon} ${t.plural}`}>{lista.map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup> : null
+                          })}
+                        </>
+                      )
+                    })()}
+                  </select>
+                </>
               ) : (
-                <input value={externaTxt} onChange={e => setExternaTxt(e.target.value)} placeholder="Ej: LP-520 / equipo / otra empresa…" style={inputSt} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input value={extPref} onChange={e => setExtPref(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6))}
+                    placeholder="MX" aria-label="Tipo de equipo" style={{ ...inputSt, flex: '0 0 96px', width: 96, textAlign: 'center', textTransform: 'uppercase', fontWeight: 700 }} />
+                  <span style={{ fontSize: 22, fontWeight: 700, color: '#999' }}>-</span>
+                  <input value={extNum} onChange={e => setExtNum(e.target.value.replace(/\D/g, '').slice(0, 5))} inputMode="numeric"
+                    placeholder="12" aria-label="Número" style={{ ...inputSt, flex: '1 1 100px', fontWeight: 700 }} />
+                </div>
               )}
+              {externa && <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>Escribí el tipo de equipo y el número; el guion se pone solo. Ej: MX-12, UC-102.</div>}
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 14, color: '#555', cursor: 'pointer' }}>
                 <input type="checkbox" checked={externa} onChange={e => setExterna(e.target.checked)} />
                 Es de otra empresa o un equipo que no está en la lista
@@ -1073,10 +1102,21 @@ export default function TallerPage() {
                 </div>
               ))}
               <div style={{ borderTop: '1px dashed #d6d6d6', paddingTop: 12 }}>
-                <label style={labelSt}>Agregar tarea al catálogo ({GRUPOS.find(g => g.key === catGrupo)?.label})</label>
+                <label style={labelSt}>Agregar categoría o tarea al catálogo ({GRUPOS.find(g => g.key === catGrupo)?.label})</label>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <input list="sistemas-cat" value={nuevoCat.sistema} onChange={e => setNuevoCat(p => ({ ...p, sistema: e.target.value }))} placeholder="Sistema" style={{ ...inputSt, flex: '1 1 150px', width: 'auto', padding: '9px 12px', fontSize: 14 }} />
-                  <datalist id="sistemas-cat">{sistemasDeGrupo(catalogo, catGrupo).map(([s]) => <option key={s} value={s} />)}</datalist>
+                  {!catNueva ? (
+                    <select value={nuevoCat.sistema} onChange={e => { if (e.target.value === '__nueva') { setCatNueva(true); setNuevoCat(p => ({ ...p, sistema: '' })) } else setNuevoCat(p => ({ ...p, sistema: e.target.value })) }}
+                      style={{ ...inputSt, flex: '1 1 170px', width: 'auto', padding: '9px 12px', fontSize: 14 }}>
+                      <option value="">Categoría…</option>
+                      {sistemasDeGrupo(catalogo, catGrupo).map(([s]) => <option key={s} value={s}>{s}</option>)}
+                      <option value="__nueva">➕ Nueva categoría…</option>
+                    </select>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 4, flex: '1 1 170px' }}>
+                      <input autoFocus value={nuevoCat.sistema} onChange={e => setNuevoCat(p => ({ ...p, sistema: e.target.value }))} placeholder="Nombre de la nueva categoría" style={{ ...inputSt, width: 'auto', flex: 1, padding: '9px 12px', fontSize: 14 }} />
+                      <button onClick={() => { setCatNueva(false); setNuevoCat(p => ({ ...p, sistema: '' })) }} title="Elegir una existente" style={{ border: '1.5px solid #d6d6d6', background: '#fff', borderRadius: 10, cursor: 'pointer', padding: '0 10px' }}>✕</button>
+                    </div>
+                  )}
                   <input value={nuevoCat.nombre} onChange={e => setNuevoCat(p => ({ ...p, nombre: e.target.value }))} placeholder="Nombre de la tarea" style={{ ...inputSt, flex: '2 1 200px', width: 'auto', padding: '9px 12px', fontSize: 14 }} />
                   <input type="number" min={1} value={nuevoCat.minutos} onChange={e => setNuevoCat(p => ({ ...p, minutos: e.target.value }))} placeholder="min" style={{ ...inputSt, flex: '0 0 80px', width: 80, padding: '9px 8px', fontSize: 14, textAlign: 'center' }} />
                   <button onClick={agregarACatalogo} style={{ padding: '0 16px', borderRadius: 10, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Agregar</button>
@@ -1085,25 +1125,33 @@ export default function TallerPage() {
             </div>
 
             <div style={card}>
-              <label style={labelSt}>Equipos de taller (autoelevadores y palas)</label>
-              {(['autoelevador', 'pala'] as const).map(t => (
-                <div key={t} style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#254A96', marginBottom: 4 }}>{t === 'autoelevador' ? '📦 Autoelevadores' : '🚜 Palas cargadoras'}</div>
+              <label style={labelSt}>Equipos</label>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#254A96', marginBottom: 4 }}>🚛 Camiones (CA) <span style={{ color: '#999', fontWeight: 500 }}>· salen de la flota</span></div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {camiones.map(c => <span key={c} style={{ padding: '5px 10px', borderRadius: 14, border: '1.5px solid #d6d6d6', background: '#f4f4f3', color: '#555', fontWeight: 700, fontSize: 13 }}>{c}</span>)}
+                </div>
+              </div>
+              {TIPOS_TALLER.map(t => (
+                <div key={t.key} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#254A96', marginBottom: 4 }}>{t.icon} {t.plural} ({t.prefijo})</div>
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {equipos.filter(e => e.tipo === t).map(e => (
+                    {equipos.filter(e => e.tipo === t.key).map(e => (
                       <button key={e.id} onClick={() => toggleEquipo(e)} title={e.activo ? 'Tocá para ocultar' : 'Tocá para mostrar'}
                         style={{ padding: '5px 10px', borderRadius: 14, border: '1.5px solid ' + (e.activo ? '#254A96' : '#d6d6d6'), background: e.activo ? '#eef2fb' : '#f4f4f3', color: e.activo ? '#254A96' : '#999', fontWeight: 700, fontSize: 13, cursor: 'pointer', textDecoration: e.activo ? 'none' : 'line-through' }}>{e.codigo}</button>
                     ))}
-                    {!equipos.some(e => e.tipo === t) && <span style={{ fontSize: 12, color: '#999' }}>Sin equipos cargados</span>}
+                    {!equipos.some(e => e.tipo === t.key) && <span style={{ fontSize: 12, color: '#999' }}>Sin equipos cargados</span>}
                   </div>
                 </div>
               ))}
-              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                <input value={nuevoEquipo.codigo} onChange={e => setNuevoEquipo(p => ({ ...p, codigo: e.target.value }))} placeholder="Código (ej: SA-22)" style={{ ...inputSt, flex: '1 1 140px', padding: '9px 12px', fontSize: 14 }} />
-                <select value={nuevoEquipo.tipo} onChange={e => setNuevoEquipo(p => ({ ...p, tipo: e.target.value as 'autoelevador' | 'pala' }))} style={{ ...inputSt, flex: '0 0 150px', padding: '9px 12px', fontSize: 14, width: 'auto' }}>
-                  <option value="autoelevador">Autoelevador</option><option value="pala">Pala cargadora</option>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <select value={nuevoEquipo.tipo} onChange={e => { const t = e.target.value as TipoTaller; setNuevoEquipo(p => ({ ...p, tipo: t, prefijo: TIPOS_TALLER.find(x => x.key === t)!.prefijo })) }} style={{ ...inputSt, flex: '0 0 160px', padding: '9px 12px', fontSize: 14, width: 'auto' }}>
+                  {TIPOS_TALLER.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                 </select>
-                <button onClick={agregarEquipo} style={{ padding: '0 16px', borderRadius: 10, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Agregar</button>
+                <input value={nuevoEquipo.prefijo} onChange={e => setNuevoEquipo(p => ({ ...p, prefijo: e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6) }))} placeholder="SA" style={{ ...inputSt, flex: '0 0 70px', width: 70, padding: '9px 8px', fontSize: 14, textAlign: 'center', fontWeight: 700 }} />
+                <span style={{ fontWeight: 700, color: '#999' }}>-</span>
+                <input value={nuevoEquipo.numero} onChange={e => setNuevoEquipo(p => ({ ...p, numero: e.target.value.replace(/\D/g, '').slice(0, 5) }))} inputMode="numeric" placeholder="22" style={{ ...inputSt, flex: '0 0 80px', width: 80, padding: '9px 8px', fontSize: 14, fontWeight: 700 }} />
+                <button onClick={agregarEquipo} style={{ padding: '9px 16px', borderRadius: 10, border: 'none', background: '#254A96', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>Agregar</button>
               </div>
               <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>Los equipos tildados en azul aparecen al iniciar un trabajo. Los camiones salen de la flota.</div>
             </div>

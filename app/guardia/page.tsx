@@ -67,6 +67,7 @@ export default function GuardiaPage() {
   const router = useRouter()
   const [userId, setUserId] = useState<string | null>(null)
   const [rol, setRol] = useState<string>('')
+  const [esEditorCompras, setEsEditorCompras] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [camiones, setCamiones] = useState<string[]>([])
   const [tab, setTab] = useState<'guardia' | 'deposito' | 'proveedores'>('guardia')
@@ -155,12 +156,13 @@ export default function GuardiaPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data: perfil } = await supabase.from('usuarios').select('rol, sucursal').eq('id', user.id).single()
+      const { data: perfil } = await supabase.from('usuarios').select('rol, sucursal, permisos').eq('id', user.id).single()
       const rolesPermitidos = ['guardia', 'gerencia', 'admin_flota', 'ruteador', 'deposito']
       if (!rolesPermitidos.includes(perfil?.rol ?? '')) { router.push('/dashboard'); return }
       setUserId(user.id)
       const r = perfil?.rol ?? ''
       setRol(r)
+      setEsEditorCompras((perfil?.permisos as Record<string, string> | null)?.compras === 'editor')
       const suc = perfil?.sucursal ?? ''
       setSucursalUsuario(suc)
       setInformeSucursal(suc || SUCURSALES[0])
@@ -860,7 +862,7 @@ export default function GuardiaPage() {
             </div>
 
             {tab === 'proveedores' && !esDeposito && (
-              <IngresosProveedorLista userId={userId} rol={rol} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast} />
+              <IngresosProveedorLista userId={userId} rol={rol} esEditorCompras={esEditorCompras} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast} />
             )}
 
             {/* ── MATRIZ DE ACTIVIDAD ── */}
@@ -1067,7 +1069,7 @@ export default function GuardiaPage() {
         {accion === 'prov_ingreso' && (
           <IngresoProveedorForm
             key={provInicial ? 'propio' : 'externo'} camiones={camiones} choferes={choferes} inicial={provInicial ?? undefined}
-            userId={userId} rol={rol} sucursalUsuario={sucursalUsuario} showToast={showToast}
+            userId={userId} rol={rol} esEditorCompras={esEditorCompras} sucursalUsuario={sucursalUsuario} showToast={showToast}
             onCancel={() => setAccion('home')}
             onDone={msg => { setUltimoEvento(msg); setProvRefresh(k => k + 1); setTab('proveedores'); setAccion('home'); showToast('Ingreso de proveedor registrado') }}
           />

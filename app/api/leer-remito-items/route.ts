@@ -51,8 +51,11 @@ export async function POST(req: NextRequest) {
     if (!token) return NextResponse.json({ ok: false, error: 'No autorizado' }, { status: 401 })
     const { data: { user }, error: authErr } = await admin.auth.getUser(token)
     if (authErr || !user) return NextResponse.json({ ok: false, error: 'Token inválido' }, { status: 401 })
-    const { data: perfil } = await admin.from('usuarios').select('rol').eq('id', user.id).single()
-    if (!ROLES_PERMITIDOS.includes(perfil?.rol ?? '')) return NextResponse.json({ ok: false, error: 'Sin permiso' }, { status: 403 })
+    const { data: perfil } = await admin.from('usuarios').select('rol, permisos').eq('id', user.id).single()
+    const permCompras = (perfil?.permisos as Record<string, string> | null)?.compras
+    // Roles de Compras (salvo que se les haya sacado el módulo) o cualquiera con permiso de editor en Compras
+    const autorizado = (ROLES_PERMITIDOS.includes(perfil?.rol ?? '') && permCompras !== 'none') || permCompras === 'editor'
+    if (!autorizado) return NextResponse.json({ ok: false, error: 'Sin permiso' }, { status: 403 })
 
     const body = await req.json()
     remitoId = String(body?.remito_id ?? '')

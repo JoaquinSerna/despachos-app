@@ -24,6 +24,7 @@ const cardStyle: React.CSSProperties = { background: '#fff', borderRadius: 16, b
 interface FormProps {
   userId: string | null
   rol: string
+  esEditorCompras?: boolean
   sucursalUsuario: string
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
   onDone: (mensaje: string) => void
@@ -33,9 +34,9 @@ interface FormProps {
   inicial?: { origen?: 'externo' | 'propio'; chofer?: string; camion?: string }
 }
 
-export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, onDone, onCancel, camiones, choferes, inicial }: FormProps) {
+export function IngresoProveedorForm({ userId, rol, esEditorCompras, sucursalUsuario, showToast, onDone, onCancel, camiones, choferes, inicial }: FormProps) {
   const { lista, recargar } = useProveedores()
-  const puedeAprobar = ROLES_COMPRAS_ADMIN.includes(rol)
+  const puedeAprobar = ROLES_COMPRAS_ADMIN.includes(rol) || !!esEditorCompras
   const sucursalFija = rol === 'guardia' && SUCURSALES.includes(sucursalUsuario)
   const [sucursal, setSucursal] = useState(SUCURSALES.includes(sucursalUsuario) ? sucursalUsuario : 'Guernica')
   const [prov, setProv] = useState<any>(null)
@@ -192,19 +193,20 @@ export function IngresoProveedorForm({ userId, rol, sucursalUsuario, showToast, 
 interface ListaProps {
   userId: string | null
   rol: string
+  esEditorCompras?: boolean
   sucursalUsuario: string
   refreshKey: number
   showToast: (msg: string, tipo?: 'ok' | 'err') => void
 }
 
-export function IngresosProveedorLista({ userId, rol, sucursalUsuario, refreshKey, showToast }: ListaProps) {
+export function IngresosProveedorLista({ userId, rol, esEditorCompras, sucursalUsuario, refreshKey, showToast }: ListaProps) {
   const [fecha, setFecha] = useState(fechaLocal())
   const [items, setItems] = useState<any[]>([])
   const [cargando, setCargando] = useState(false)
   const [editando, setEditando] = useState<{ id: string; valor: string } | null>(null)
   const [visor, setVisor] = useState<string[] | null>(null)
   const [grande, setGrande] = useState<number | null>(null)
-  const esAdmin = ROLES_COMPRAS_ADMIN.includes(rol)
+  const esAdmin = ROLES_COMPRAS_ADMIN.includes(rol) || !!esEditorCompras
 
   const cargar = useCallback(async () => {
     setCargando(true)

@@ -38,8 +38,9 @@ export async function POST(req: NextRequest) {
     const admin = getAdmin()
     const { data: { user }, error: authErr } = await admin.auth.getUser(token)
     if (authErr || !user) return NextResponse.json({ ok: false, error: 'Token inválido' }, { status: 401 })
-    const { data: perfil } = await admin.from('usuarios').select('rol').eq('id', user.id).single()
-    if (!ROLES_PERMITIDOS.includes(perfil?.rol ?? '')) {
+    const { data: perfil } = await admin.from('usuarios').select('rol, permisos').eq('id', user.id).single()
+    const permCompras = (perfil?.permisos as Record<string, string> | null)?.compras
+    if (!ROLES_PERMITIDOS.includes(perfil?.rol ?? '') && permCompras !== 'editor') {
       return NextResponse.json({ ok: false, error: 'Sin permiso' }, { status: 403 })
     }
 

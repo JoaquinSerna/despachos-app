@@ -178,13 +178,14 @@ export function cruzarRemitos(
   for (const r of remitos) {
     const p = parsearRemito(r.numero_remito)
     if (p.sinNumero) { res.set(r.id, { estado: 'sin_numero', ingresos: [] }); continue }
-    if (exportadoEn && r.fecha > exportadoEn) { res.set(r.id, { estado: 'posterior_al_export', ingresos: [] }); continue }
     const clave = claveProveedor(r.proveedor_nombre)
     const candidatos = (porNumero.get(p.numero as number) ?? []).filter(h =>
       mismoRemito(p, { punto: h.punto_remito, numero: h.nro_remito, sinNumero: false }) &&
       ((r.proveedor_id && h.proveedor_id === r.proveedor_id) || (clave && h.proveedor_clave === clave)))
     const ingresos = [...new Set(candidatos.map(h => h.numero_ingreso))]
-    res.set(r.id, { estado: ingresos.length ? 'cargado' : 'sin_cargar', ingresos })
+    // Si no está y entró a guardia después del export, todavía no puede estar: se marca aparte pero sigue pendiente
+    const estado: EstadoCruce = ingresos.length ? 'cargado' : exportadoEn && r.fecha > exportadoEn ? 'posterior_al_export' : 'sin_cargar'
+    res.set(r.id, { estado, ingresos })
   }
   return res
 }

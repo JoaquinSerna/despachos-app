@@ -246,3 +246,10 @@ export async function nombresUsuarios(ids: (string | null | undefined)[]): Promi
   const { data } = await supabase.from('usuarios').select('id, nombre').in('id', unicos)
   return Object.fromEntries((data ?? []).map((u: any) => [u.id, u.nombre as string]))
 }
+
+
+// Check "Lo cargué en Huemul": lo marca quien carga los ingresos en Huemul (después se confirma con el export)
+export async function marcarRemitoHuemul(remitoId: string, cargado: boolean): Promise<void> {
+  const { error } = await supabase.rpc('marcar_remito_huemul', { p_remito: remitoId, p_cargado: cargado })
+  if (error) throw error
+}

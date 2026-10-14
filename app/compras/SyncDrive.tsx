@@ -55,7 +55,7 @@ export default function SyncDrive({ puedeEd, showToast, onSincronizado, mostrar 
     <div style={{ fontSize: 12, color: '#6b7280' }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ color: '#254A96' }}>🔄 Sincronización automática con Drive</b>
-        <span>todos los días hacia las 7:00</span>
+        <span>todos los días hacia las 6:30</span>
         {puedeEd && (
           <button onClick={sincronizarAhora} disabled={sincronizando} style={{ ...btnLine, opacity: sincronizando ? 0.6 : 1, cursor: sincronizando ? 'wait' : 'pointer' }}>
             {sincronizando ? 'Sincronizando…' : '↻ Sincronizar ahora'}

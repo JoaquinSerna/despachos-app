@@ -7,7 +7,8 @@ import { rolesDe } from '../lib/roles'
 import { puedeEditar } from '../lib/permisos'
 import ProveedorPicker from '../components/ProveedorPicker'
 import OrdenesCompra from './OrdenesCompra'
-import IngresosHuemul from './IngresosHuemul'
+import { BadgeHuemul, ImportadorHuemul, ListaIngresosHuemul, useCruceHuemul } from './IngresosHuemul'
+import type { RemitoGuardia } from '../lib/huemul-utils'
 import ProductosRemito, { type ItemRemito } from './ProductosRemito'
 import AsociarOC from './AsociarOC'
 import VisorFotoGrande from '../components/VisorFotoGrande'
@@ -21,7 +22,7 @@ import {
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 
-type Tab = 'ingresos' | 'oc' | 'huemul' | 'proveedores'
+type Tab = 'ingresos' | 'oc' | 'proveedores'
 type Fila = { ing: any; rem: any | null }
 
 const ESTADO_PROV: Record<string, { label: string; bg: string; fg: string; bd: string }> = {
@@ -67,6 +68,8 @@ function descargarCSV(contenido: string, nombre: string) {
   a.href = url; a.download = nombre; a.click()
   URL.revokeObjectURL(url)
 }
+const ESTADO_HUEMUL_CORTO: Record<string, string> = { cargado: 'Cargado', sin_cargar: 'Sin cargar', posterior_al_export: 'Sin cargar (posterior al export)', sin_numero: 'Sin número' }
+
 const csvCell = (v: any) => {
   const s = String(v ?? '').replace(/"/g, '""')
   return s.includes(';') || s.includes('\n') || s.includes('"') ? `"${s}"` : s
@@ -90,6 +93,9 @@ export default function ComprasPage() {
   const [estadoRem, setEstadoRem] = useState('todos')
   const [filtroOC, setFiltroOC] = useState('todos')
   const [filtroRecep, setFiltroRecep] = useState('todos')
+  const [filtroHuemul, setFiltroHuemul] = useState('todos')
+  const [subIng, setSubIng] = useState<'guardia' | 'huemul'>('guardia')
+  const [refreshHuemul, setRefreshHuemul] = useState(0)
   const [nombresVal, setNombresVal] = useState<Record<string, string>>({})
   const [fotosVal, setFotosVal] = useState<string[]>([])
   const [itemsRemito, setItemsRemito] = useState<ItemRemito[]>([])
@@ -160,11 +166,24 @@ export default function ComprasPage() {
   useEffect(() => { if (!cargando && tab === 'ingresos') cargarIngresos() }, [cargando, tab, cargarIngresos])
   useEffect(() => { if (!cargando && tab === 'proveedores') cargarTodosProv() }, [cargando, tab, cargarTodosProv])
 
+  // Cada remito de guardia contra lo que hay cargado en Huemul
+  const remitosGuardia: RemitoGuardia[] = useMemo(() => ingresos.flatMap(ing =>
+    (ing.proveedor_remitos ?? []).map((rem: any) => ({
+      id: rem.id as string, numero_remito: rem.numero_remito as string, fecha: ing.fecha as string,
+      proveedor_id: (ing.proveedor_id ?? null) as string | null, proveedor_nombre: (ing.proveedores?.nombre ?? null) as string | null,
+    }))), [ingresos])
+  const { cruce: cruceHuemul, ultima: ultimaHuemul } = useCruceHuemul(remitosGuardia, refreshHuemul)
+
   const filas: Fila[] = useMemo(() => {
     const todas = ingresos.flatMap(ing => (ing.proveedor_remitos?.length ? ing.proveedor_remitos : [null]).map((rem: any) => ({ ing, rem })))
     return todas.filter(({ ing, rem }) => {
       if (estadoRem !== 'todos' && (rem?.estado ?? 'registrado') !== estadoRem) return false
       if (filtroRecep !== 'todos' && (ing.validacion_estado ?? 'sin') !== filtroRecep) return false
+      if (filtroHuemul !== 'todos') {
+        const e = rem ? cruceHuemul.get(rem.id)?.estado : undefined
+        // "Sin cargar" incluye lo que llegó después del último export: todavía no puede estar en el archivo
+        if (filtroHuemul === 'sin_cargar' ? !(e === 'sin_cargar' || e === 'posterior_al_export') : e !== filtroHuemul) return false
+      }
       const nOC = rem?.proveedor_remito_ocs?.length ?? 0
       if (filtroOC === 'sin' && (nOC > 0 || rem?.sin_oc)) return false
       if (filtroOC === 'asociadas' && nOC === 0) return false
@@ -173,7 +192,7 @@ export default function ComprasPage() {
       const hay = [ing.proveedores?.nombre, rem?.numero_remito, rem?.numero_remito_leido, ing.patente, ing.camion_codigo, ing.chofer].filter(Boolean).join(' ')
       return coincideTexto(hay, texto)
     })
-  }, [ingresos, estadoRem, filtroOC, filtroRecep, texto])
+  }, [ingresos, estadoRem, filtroOC, filtroRecep, filtroHuemul, cruceHuemul, texto])
 
   const abrirDetalle = async (f: Fila) => {
     setSel(f); setFNumero(f.rem?.numero_remito ?? ''); setFObs(f.rem?.observacion_compras ?? '')
@@ -234,7 +253,7 @@ export default function ComprasPage() {
   const exportarCSV = () => {
     const cols = ['fecha', 'hora', 'sucursal', 'proveedor', 'cuit_proveedor', 'estado_proveedor', 'origen', 'patente', 'camion_propio', 'chofer',
       'numero_remito', 'numero_leido', 'corregido_por_guardia', 'cuit_leido', 'oc_citada', 'oc_asociadas', 'sin_oc', 'fecha_remito', 'estado_remito', 'observacion_compras', 'cant_fotos',
-      'recepcion', 'recepcion_nota', 'recepcion_validada_por', 'recepcion_fecha_hora']
+      'recepcion', 'recepcion_nota', 'recepcion_validada_por', 'recepcion_fecha_hora', 'huemul', 'ingresos_huemul']
     const lineas = [cols.join(';')]
     for (const { ing, rem } of filas) {
       const hora = new Date(ing.hora_ingreso)
@@ -247,6 +266,7 @@ export default function ComprasPage() {
         observacion_compras: rem?.observacion_compras, cant_fotos: (rem?.fotos?.length ?? 0) + (ing.fotos_camion?.length ?? 0),
         recepcion: ing.validacion_estado ? ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion] : 'sin validación', recepcion_nota: ing.validacion_nota,
         recepcion_validada_por: nombresVal[ing.validado_por], recepcion_fecha_hora: ing.validado_en ? new Date(ing.validado_en).toLocaleString('es-AR') : '',
+        huemul: rem && ultimaHuemul ? ESTADO_HUEMUL_CORTO[cruceHuemul.get(rem.id)?.estado ?? 'sin_cargar'] : '', ingresos_huemul: ((rem ? cruceHuemul.get(rem.id)?.ingresos : undefined) ?? []).join(' + '),
       }
       lineas.push(cols.map(c => csvCell(fila[c])).join(';'))
     }
@@ -340,7 +360,7 @@ export default function ComprasPage() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-          {([['ingresos', '📥 Ingresos'], ['oc', '📑 Órdenes de compra'], ['huemul', '📦 Ingresos en Huemul'], ['proveedores', '🏢 Proveedores']] as [Tab, string][]).map(([k, l]) => (
+          {([['ingresos', '📥 Ingresos'], ['oc', '📑 Órdenes de compra'], ['proveedores', '🏢 Proveedores']] as [Tab, string][]).map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               padding: '11px 20px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer',
               border: tab === k ? '2px solid #254A96' : '1.5px solid #e0e0e0', background: tab === k ? '#254A96' : '#fff', color: tab === k ? '#fff' : '#666',
@@ -351,6 +371,18 @@ export default function ComprasPage() {
         {/* ───────── INGRESOS ───────── */}
         {tab === 'ingresos' && (
           <>
+            <ImportadorHuemul puedeEd={puedeEd} showToast={showToast} onImportado={() => setRefreshHuemul(k => k + 1)} />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {([['guardia', '📋 Remitos de guardia sin cargar en Huemul'], ['huemul', '📦 Ingresos de Huemul']] as ['guardia' | 'huemul', string][]).map(([k, l]) => (
+                <button key={k} onClick={() => setSubIng(k)} style={{
+                  flex: 1, padding: '10px 8px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                  border: subIng === k ? '2px solid #254A96' : '1.5px solid #e0e0e0', background: subIng === k ? '#eef2fb' : '#fff', color: subIng === k ? '#254A96' : '#666',
+                }}>{l}</button>
+              ))}
+            </div>
+            {subIng === 'huemul' && <ListaIngresosHuemul showToast={showToast} refreshKey={refreshHuemul} />}
+            {subIng === 'guardia' && (
+            <>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
               <input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={{ ...inputSt, width: 'auto' }} />
               <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} style={{ ...inputSt, width: 'auto' }} />
@@ -363,6 +395,9 @@ export default function ComprasPage() {
               <select value={filtroOC} onChange={e => setFiltroOC(e.target.value)} style={{ ...inputSt, width: 'auto' }}>
                 <option value="todos">Con y sin OC</option><option value="sin">OC sin asociar</option><option value="asociadas">OC asociada</option><option value="sinoc">Marcados sin OC</option>
               </select>
+              <select value={filtroHuemul} onChange={e => setFiltroHuemul(e.target.value)} style={{ ...inputSt, width: 'auto' }}>
+                <option value="todos">Todos (cargados y sin cargar en Huemul)</option><option value="sin_cargar">❌ Sin cargar en Huemul</option><option value="cargado">✅ Cargados en Huemul</option><option value="sin_numero">❓ Sin número</option>
+              </select>
               <select value={filtroRecep} onChange={e => setFiltroRecep(e.target.value)} style={{ ...inputSt, width: 'auto' }}>
                 <option value="todos">Toda recepción</option><option value="con_rotura">⚠️ Con rotura</option><option value="pendiente">⏳ Pendiente de recepción</option><option value="ok">✅ Recibido OK</option>
               </select>
@@ -374,8 +409,8 @@ export default function ComprasPage() {
             </div>
             <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1000 }}>
-                  <thead><tr>{['Fecha / hora', 'Sucursal', 'Proveedor', 'Origen', 'N° remito', 'OC', 'Aviso', 'Estado', 'Recepción', 'Fotos'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1140 }}>
+                  <thead><tr>{['Fecha / hora', 'Sucursal', 'Proveedor', 'Origen', 'N° remito', 'OC', 'Huemul', 'Aviso', 'Estado', 'Recepción', 'Fotos'].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {filas.map(({ ing, rem }, i) => {
                       const av = aviso(ing, rem)
@@ -391,6 +426,7 @@ export default function ComprasPage() {
                             {rem?.remito_corregido && <div style={{ fontSize: 11, color: '#92400e' }}>✎ corregido por guardia (leído: {rem.numero_remito_leido})</div>}
                           </td>
                           <td style={td}>{(rem?.proveedor_remito_ocs?.length ?? 0) > 0 ? <b>{rem.proveedor_remito_ocs.map((x: any) => `OC ${x.oc_id}`).join(' + ')}</b> : rem?.sin_oc ? <span style={{ color: '#666' }}>Sin OC</span> : <span style={{ color: '#aaa' }}>sin asociar</span>}</td>
+                          <td style={td}><BadgeHuemul resultado={rem ? cruceHuemul.get(rem.id) : undefined} hayExport={!!ultimaHuemul} /></td>
                           <td style={{ ...td, color: av?.rojo ? '#b91c1c' : '#92400e', fontSize: 12 }}>{av?.texto ?? ''}</td>
                           <td style={td}><span style={{ background: rem?.estado === 'revisado' ? '#ecfdf5' : '#fffbeb', color: rem?.estado === 'revisado' ? '#065f46' : '#92400e', borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700 }}>{rem?.estado === 'revisado' ? 'Revisado' : 'Por revisar'}</span></td>
                           <td style={td}>{ing.validacion_estado ? <span style={{ borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', background: ing.validacion_estado === 'con_rotura' ? '#fef2f2' : ing.validacion_estado === 'ok' ? '#ecfdf5' : '#fffbeb', color: ing.validacion_estado === 'con_rotura' ? '#b91c1c' : ing.validacion_estado === 'ok' ? '#065f46' : '#92400e' }}>{ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion]}</span> : <span style={{ color: '#B9BBB7' }}>—</span>}{ing.validacion_estado === 'con_rotura' && ing.validacion_nota && <div style={{ marginTop: 4, fontSize: 15, fontWeight: 800, color: '#b91c1c', maxWidth: 220, overflowWrap: 'anywhere' }}>{ing.validacion_nota}</div>}</td>
@@ -398,16 +434,17 @@ export default function ComprasPage() {
                         </tr>
                       )
                     })}
-                    {filas.length === 0 && <tr><td colSpan={10} style={{ ...td, textAlign: 'center', color: '#B9BBB7', padding: 28 }}>{cargandoIng ? 'Cargando…' : 'Sin ingresos para los filtros elegidos'}</td></tr>}
+                    {filas.length === 0 && <tr><td colSpan={11} style={{ ...td, textAlign: 'center', color: '#B9BBB7', padding: 28 }}>{cargandoIng ? 'Cargando…' : 'Sin ingresos para los filtros elegidos'}</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
+            </>
+            )}
           </>
         )}
 
         {/* ───────── PROVEEDORES ───────── */}
-        {tab === 'huemul' && <IngresosHuemul puedeEd={puedeEd} showToast={showToast} />}
 
         {tab === 'oc' && <OrdenesCompra puedeEd={puedeEd} showToast={showToast} onImportado={() => { recargarProveedores(); cargarTodosProv() }} />}
 

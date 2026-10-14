@@ -20,19 +20,21 @@ const lote = <T,>(arr: T[], n: number): T[][] => {
 
 // Lee el export de compras del ERP y lo sube a la base: OC regulares con sus ítems.
 // Reimportar es seguro: las OC se actualizan por número y sus ítems se reemplazan.
-export async function importarExcelOC(file: File, onProgreso: (texto: string) => void): Promise<ResumenImport> {
+// `db` es el cliente de Supabase: el del usuario (desde la pantalla) o el de servicio (desde la API automática).
+export async function importarOCConCliente(
+  db: any, XLSX: any, buffer: ArrayBuffer, usuarioId: string | null, onProgreso: (texto: string) => void,
+): Promise<ResumenImport> {
   onProgreso('Leyendo el archivo…')
-  const XLSX = await import('xlsx')
-  const { ocs, items, ignoradas } = leerExcelOC(XLSX, await file.arrayBuffer())
+  const { ocs, items, ignoradas } = leerExcelOC(XLSX, buffer)
   if (!ocs.length) throw new Error('El archivo no tiene órdenes de compra regulares.')
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const user = { id: usuarioId }
 
   // 1) Proveedores: se vinculan por nombre y, si no, por CUIT; los que no existen se crean
   onProgreso('Vinculando proveedores…')
-  const { data: provs, error: eProv } = await supabase.from('proveedores').select('id, nombre, cuit, estado, fusionado_en')
+  const { data: provs, error: eProv } = await db.from('proveedores').select('id, nombre, cuit, estado, fusionado_en')
   if (eProv) throw eProv
-  const porId = new Map((provs ?? []).map(p => [p.id as string, p]))
+  const porId = new Map((provs ?? []).map((p: any) => [p.id as string, p]))
   const resolver = (p: any) => (p && p.estado === 'fusionado' && p.fusionado_en ? porId.get(p.fusionado_en) ?? p : p)
   const porNombre = new Map<string, any>()
   const porCuit = new Map<string, any[]>()
@@ -56,7 +58,7 @@ export async function importarExcelOC(file: File, onProgreso: (texto: string) =>
   for (const o of faltantes.values()) {
     const cuit = normalizarCuit(o.cuit_raw)
     const valido = !!cuit && cuitValido(cuit)
-    const { data, error } = await supabase.from('proveedores').insert({
+    const { data, error } = await db.from('proveedores').insert({
       nombre: (o.proveedor_nombre as string).trim(), cuit: valido ? cuit : null, estado: valido ? 'aprobado' : 'revisar',
       notas: 'Creado desde la importación de OC' + (o.cuit_raw && !valido ? ` (CUIT del ERP: ${o.cuit_raw})` : ''),
       creado_por: user?.id ?? null,
@@ -82,13 +84,13 @@ export async function importarExcelOC(file: File, onProgreso: (texto: string) =>
 
   let existentes = 0
   for (const ids of lote(filas.map(f => f.id), 500)) {
-    const { data } = await supabase.from('ordenes_compra').select('id').in('id', ids)
+    const { data } = await db.from('ordenes_compra').select('id').in('id', ids)
     existentes += data?.length ?? 0
   }
 
   let hechas = 0
   for (const parte of lote(filas, 400)) {
-    const { error } = await supabase.from('ordenes_compra').upsert(parte, { onConflict: 'id' })
+    const { error } = await db.from('ordenes_compra').upsert(parte, { onConflict: 'id' })
     if (error) throw error
     hechas += parte.length
     onProgreso(`Guardando órdenes de compra… ${hechas} de ${filas.length}`)
@@ -99,11 +101,11 @@ export async function importarExcelOC(file: File, onProgreso: (texto: string) =>
   for (const it of items) itemsPorOC.set(it.oc_id, [...(itemsPorOC.get(it.oc_id) ?? []), it])
   let itemsHechos = 0
   for (const ids of lote(filas.map(f => f.id), 100)) {
-    const { error: eDel } = await supabase.from('ordenes_compra_items').delete().in('oc_id', ids)
+    const { error: eDel } = await db.from('ordenes_compra_items').delete().in('oc_id', ids)
     if (eDel) throw eDel
     const nuevos = ids.flatMap(id => itemsPorOC.get(id) ?? [])
     for (const parte of lote(nuevos, 1000)) {
-      const { error } = await supabase.from('ordenes_compra_items').insert(parte)
+      const { error } = await db.from('ordenes_compra_items').insert(parte)
       if (error) throw error
     }
     itemsHechos += nuevos.length
@@ -114,4 +116,11 @@ export async function importarExcelOC(file: File, onProgreso: (texto: string) =>
     ocs: filas.length, nuevas: filas.length - existentes, actualizadas: existentes, items: items.length,
     ignoradas, sinSucursal: ocs.filter(o => !o.sucursal).length, proveedoresCreados,
   }
+}
+
+export async function importarExcelOC(file: File, onProgreso: (texto: string) => void): Promise<ResumenImport> {
+  onProgreso('Leyendo el archivo…')
+  const XLSX = await import('xlsx')
+  const { data: { user } } = await supabase.auth.getUser()
+  return importarOCConCliente(supabase, XLSX, await file.arrayBuffer(), user?.id ?? null, onProgreso)
 }

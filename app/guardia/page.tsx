@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '../supabase'
 import { useRouter } from 'next/navigation'
 import { IngresoProveedorForm, IngresosProveedorLista } from './ProveedoresTab'
+import RecepcionTab from './RecepcionTab'
 import VisorFotoGrande from '../components/VisorFotoGrande'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -70,7 +71,7 @@ export default function GuardiaPage() {
   const [esEditorCompras, setEsEditorCompras] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [camiones, setCamiones] = useState<string[]>([])
-  const [tab, setTab] = useState<'guardia' | 'deposito' | 'proveedores'>('guardia')
+  const [tab, setTab] = useState<'guardia' | 'deposito' | 'proveedores' | 'recepcion'>('guardia')
   const [accion, setAccion] = useState<Accion>('home')
   const [guardando, setGuardando] = useState(false)
   const [exportando, setExportando] = useState(false)
@@ -121,6 +122,19 @@ export default function GuardiaPage() {
   const [ingTipo, setIngTipo] = useState<'directo' | 'con_transferencia'>('directo')
   const [ingDeposito, setIngDeposito] = useState('')
   const [provRefresh, setProvRefresh] = useState(0)
+  const [esValidador, setEsValidador] = useState(false)
+  const [pendientesRecepcion, setPendientesRecepcion] = useState(0)
+
+  // Cantidad de ingresos esperando validación (para el número en la pestaña Recepción)
+  useEffect(() => {
+    if (!esValidador) return
+    ;(async () => {
+      let q = supabase.from('proveedor_ingresos').select('id', { count: 'exact', head: true }).eq('validacion_estado', 'pendiente')
+      if (sucursalUsuario && !['gerencia', 'admin_flota'].includes(rol)) q = q.eq('sucursal', sucursalUsuario)
+      const { count } = await q
+      setPendientesRecepcion(count ?? 0)
+    })()
+  }, [esValidador, sucursalUsuario, rol, provRefresh, tab])
   const [provInicial, setProvInicial] = useState<{ origen: 'externo' | 'propio'; chofer?: string; camion?: string } | null>(null)
   const [ingFotos, setIngFotos] = useState<FotoItem[]>([])
   const ingFileRef = useRef<HTMLInputElement>(null)
@@ -163,6 +177,7 @@ export default function GuardiaPage() {
       const r = perfil?.rol ?? ''
       setRol(r)
       setEsEditorCompras((perfil?.permisos as Record<string, string> | null)?.compras === 'editor')
+      setEsValidador(['gerencia', 'admin_flota'].includes(r) || (perfil?.permisos as Record<string, string> | null)?.recepcion === 'editor')
       const suc = perfil?.sucursal ?? ''
       setSucursalUsuario(suc)
       setInformeSucursal(suc || SUCURSALES[0])
@@ -562,6 +577,10 @@ export default function GuardiaPage() {
 
   const esDeposito = rol === 'deposito'
   const verTabs = !['guardia', 'deposito'].includes(rol)
+  const tabsVisibles = [
+    ...(esDeposito ? ['deposito'] : verTabs ? ['guardia', 'deposito', 'proveedores'] : ['guardia', 'proveedores']),
+    ...(esValidador ? ['recepcion'] : []),
+  ] as ('guardia' | 'deposito' | 'proveedores' | 'recepcion')[]
   // Roles que tienen dashboard al que volver
   const tieneDashboard = !['guardia', 'deposito'].includes(rol)
 
@@ -776,9 +795,9 @@ export default function GuardiaPage() {
             )}
 
             {/* Tabs (solo para roles que ven ambos sectores) */}
-            {!esDeposito && (
+            {tabsVisibles.length > 1 && (
               <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-                {((verTabs ? ['guardia', 'deposito', 'proveedores'] : ['guardia', 'proveedores']) as ('guardia' | 'deposito' | 'proveedores')[]).map(t => (
+                {tabsVisibles.map(t => (
                   <button key={t} onClick={() => { setTab(t) }}
                     style={{
                       flex: 1, padding: '12px 8px', borderRadius: 12, fontSize: 15, fontWeight: 700,
@@ -786,7 +805,7 @@ export default function GuardiaPage() {
                       background: tab === t ? '#254A96' : '#fff',
                       color: tab === t ? '#fff' : '#666', cursor: 'pointer',
                     }}>
-                    {t === 'guardia' ? '🔒 Guardia' : t === 'deposito' ? '🏭 Depósito' : '🧾 Proveedores'}
+                    {t === 'guardia' ? '🔒 Guardia' : t === 'deposito' ? '🏭 Depósito' : t === 'recepcion' ? `📥 Recepción${pendientesRecepcion > 0 ? ` (${pendientesRecepcion})` : ''}` : '🧾 Proveedores'}
                   </button>
                 ))}
               </div>
@@ -838,7 +857,7 @@ export default function GuardiaPage() {
               )}
 
               {/* Tab Depósito */}
-              {(tab === 'deposito' || esDeposito) && (
+              {(tab === 'deposito' || (esDeposito && tab !== 'recepcion')) && (
                 <>
                   <button onClick={() => setAccion('inicio_carga')} style={{
                     background: '#fff', border: '2px solid #0891b2', borderRadius: 16, padding: '22px 20px',
@@ -865,8 +884,13 @@ export default function GuardiaPage() {
               <IngresosProveedorLista userId={userId} rol={rol} esEditorCompras={esEditorCompras} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast} />
             )}
 
+            {tab === 'recepcion' && esValidador && (
+              <RecepcionTab rol={rol} sucursalUsuario={sucursalUsuario} refreshKey={provRefresh} showToast={showToast}
+                onCambio={() => setProvRefresh(k => k + 1)} />
+            )}
+
             {/* ── MATRIZ DE ACTIVIDAD ── */}
-            {tab !== 'proveedores' && (() => {
+            {tab !== 'proveedores' && tab !== 'recepcion' && (() => {
               const TIPOS = [
                 { key: 'inicio_carga', label: 'Inicio carga', emoji: '📦', color: '#0891b2' },
                 { key: 'fin_carga',    label: 'Fin carga',    emoji: '✅', color: '#059669' },

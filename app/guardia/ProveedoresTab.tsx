@@ -7,9 +7,9 @@ import RemitosEditor from '../components/RemitosEditor'
 import VisorFotoGrande from '../components/VisorFotoGrande'
 import { normalizarRemito, remitoIgual, ROLES_COMPRAS_ADMIN } from '../lib/compras-utils'
 import {
-  comprimirFoto, confirmarDuplicados, crearProveedor, eliminarIngreso, fechaLocal, firmarFotos,
+  comprimirFoto, confirmarDuplicados, crearProveedor, eliminarIngreso, ETIQUETA_VALIDACION, fechaLocal, firmarFotos,
   guardarIngresoProveedor, nuevoRemito, useProveedores, validarRemitos,
-  type FotoItem, type RemitoDraft,
+  type EstadoValidacion, type FotoItem, type RemitoDraft,
 } from '../lib/compras'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -293,6 +293,7 @@ export function IngresosProveedorLista({ userId, rol, esEditorCompras, sucursalU
               ))}
             </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+              {ing.validacion_estado && <span style={{ borderRadius: 10, padding: '2px 9px', fontSize: 11, fontWeight: 700, background: ing.validacion_estado === 'con_rotura' ? '#fef2f2' : ing.validacion_estado === 'ok' ? '#ecfdf5' : '#fffbeb', color: ing.validacion_estado === 'con_rotura' ? '#b91c1c' : ing.validacion_estado === 'ok' ? '#065f46' : '#92400e' }}>{ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion]}</span>}
               {nFotos > 0 && <button onClick={() => verFotos(ing)} style={{ border: 'none', background: '#eef2fb', color: '#254A96', borderRadius: 8, padding: '4px 10px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>📷 {nFotos}</button>}
               {puedeBorrar && <button onClick={() => borrar(ing)} title="Eliminar" style={{ border: 'none', background: 'none', cursor: 'pointer' }}>🗑</button>}
             </div>

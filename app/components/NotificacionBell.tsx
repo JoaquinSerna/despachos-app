@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 
@@ -55,11 +56,13 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
   const [notificaciones, setNotificaciones] = useState<Notificacion[]>([])
   const [loggedIn, setLoggedIn] = useState(false)
   const [rol, setRol] = useState<string | null>(null)
+  const [rolesExtra, setRolesExtra] = useState<string[]>([])
   const [userId, setUserId] = useState<string | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
-  const esComercial = rol === 'comercial'
-  const esLogistica = rol !== null && ROLES_LOGISTICA.includes(rol)
+  const rolesTodos = rolesDe(rol, rolesExtra)
+  const esComercial = rolesTodos.includes('comercial')
+  const esLogistica = rolesTodos.some(r => ROLES_LOGISTICA.includes(r))
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -76,15 +79,17 @@ export default function NotificacionBell({ mode = 'fixed' }: Props) {
       if (!user) return
       setLoggedIn(true)
       setUserId(user.id)
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra').eq('id', user.id).single()
       setRol(data?.rol ?? null)
+      setRolesExtra(data?.roles_extra ?? [])
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_, session) => {
       if (!session?.user) { setLoggedIn(false); setRol(null); setUserId(null); return }
       setLoggedIn(true)
       setUserId(session.user.id)
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', session.user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra').eq('id', session.user.id).single()
       setRol(data?.rol ?? null)
+      setRolesExtra(data?.roles_extra ?? [])
     })
     return () => subscription.unsubscribe()
   }, [])

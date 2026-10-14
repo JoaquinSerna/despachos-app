@@ -24,6 +24,12 @@ async function exigirGerencia(req: NextRequest): Promise<{ id: string } | NextRe
   return { id: user.id }
 }
 
+const ROLES_VALIDOS = ['gerencia', 'admin_flota', 'ruteador', 'deposito', 'comercial', 'confirmador', 'chofer', 'guardia', 'compras']
+
+// Roles adicionales: solo roles válidos, sin repetir el principal ni entre sí
+const limpiarRolesExtra = (extras: unknown, principal: string): string[] =>
+  [...new Set(Array.isArray(extras) ? extras.filter((r): r is string => typeof r === 'string' && ROLES_VALIDOS.includes(r) && r !== principal) : [])]
+
 // GET - listar todos los usuarios (bypasa RLS)
 export async function GET(req: NextRequest) {
   const acceso = await exigirGerencia(req)
@@ -45,7 +51,7 @@ export async function POST(req: NextRequest) {
   const acceso = await exigirGerencia(req)
   if (acceso instanceof NextResponse) return acceso
   try {
-    const { nombre, email, password, rol, sucursal } = await req.json()
+    const { nombre, email, password, rol, sucursal, roles_extra } = await req.json()
     if (!nombre || !email || !password || !rol)
       return NextResponse.json({ error: 'Faltan campos requeridos' }, { status: 400 })
 
@@ -59,6 +65,7 @@ export async function POST(req: NextRequest) {
       nombre,
       email,
       rol,
+      roles_extra: limpiarRolesExtra(roles_extra, rol),
       sucursal: sucursal || 'LP520', // default LP520 si no se elige sucursal
     })
     if (dbError) {
@@ -76,7 +83,7 @@ export async function PUT(req: NextRequest) {
   const acceso = await exigirGerencia(req)
   if (acceso instanceof NextResponse) return acceso
   try {
-    const { id, emailAnterior, nombre, email, password, rol, sucursal } = await req.json()
+    const { id, emailAnterior, nombre, email, password, rol, sucursal, roles_extra } = await req.json()
 
     // Solo actualizar Auth si el email o password cambiaron realmente
     // (evita disparar triggers/confirmaciones innecesarias que pueden sobreescribir la tabla)
@@ -95,6 +102,8 @@ export async function PUT(req: NextRequest) {
       sucursal: sucursal || null,   // '' → null = "Todas las sucursales"
     }
     if (email && email !== emailAnterior) dbUpdates.email = email
+    // Solo se toca si viene en el pedido (otras pantallas editan usuarios sin mandarlo)
+    if (roles_extra !== undefined) dbUpdates.roles_extra = limpiarRolesExtra(roles_extra, rol)
     const { data: updated, error } = await getAdmin()
       .from('usuarios')
       .update(dbUpdates)

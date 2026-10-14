@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await getAdmin()
       .from('usuarios')
-      .select('id, nombre, rol, sucursal, permisos')
+      .select('id, nombre, rol, roles_extra, sucursal, permisos')
       .eq('id', user.id)
       .single()
 

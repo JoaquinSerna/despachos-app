@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { tieneAcceso } from '../lib/permisos'
@@ -311,8 +312,8 @@ export default function MetricasPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, permisos, sucursal').eq('id', user.id).single()
-      if (!tieneAcceso(data?.permisos, data?.rol, 'metricas')) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra, permisos, sucursal').eq('id', user.id).single()
+      if (!tieneAcceso(data?.permisos, rolesDe(data?.rol, data?.roles_extra), 'metricas')) { router.push('/dashboard'); return }
       if (data?.sucursal) {
         setFiltroSucursal(data.sucursal)
         setExportSucursales([data.sucursal])

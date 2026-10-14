@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { puedeEditar, tieneAcceso } from '../lib/permisos'
@@ -199,11 +200,11 @@ export default function PedidosPage() {
       if (!user) { router.push('/'); return }
       setUserEmail(user.email ?? '')
       setUserId(user.id)
-      supabase.from('usuarios').select('rol, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
-        if (!tieneAcceso(data?.permisos, data?.rol, 'pedidos')) {
+      supabase.from('usuarios').select('rol, roles_extra, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
+        if (!tieneAcceso(data?.permisos, rolesDe(data?.rol, data?.roles_extra), 'pedidos')) {
           router.push('/dashboard'); return
         }
-        setPuedeEditarPedidos(puedeEditar(data?.permisos, data?.rol, 'pedidos'))
+        setPuedeEditarPedidos(puedeEditar(data?.permisos, rolesDe(data?.rol, data?.roles_extra), 'pedidos'))
         setUserRol(data?.rol ?? '')
         setUserNombre(data?.nombre ?? '')
         if (data?.sucursal) setFiltroSucursal(data.sucursal)

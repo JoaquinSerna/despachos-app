@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import { tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
@@ -60,8 +61,8 @@ export default function FlotaDia() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, permisos, nombre').eq('id', user.id).single()
-      if (!tieneAcceso(data?.permisos, data?.rol, 'flota')) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra, permisos, nombre').eq('id', user.id).single()
+      if (!tieneAcceso(data?.permisos, rolesDe(data?.rol, data?.roles_extra), 'flota')) { router.push('/dashboard'); return }
       setUserId(user.id)
       setUserNombre(data?.nombre ?? '')
     })

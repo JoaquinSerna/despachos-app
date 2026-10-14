@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { puedeEditar } from '../lib/permisos'
@@ -146,9 +147,9 @@ export default function NuevoDespacho() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUserId(user.id)
-      supabase.from('usuarios').select('rol, permisos, nombre').eq('id', user.id).single().then(({ data }) => {
+      supabase.from('usuarios').select('rol, roles_extra, permisos, nombre').eq('id', user.id).single().then(({ data }) => {
         if (data) {
-          setPuedeEditarDespachos(puedeEditar(data.permisos, data.rol, 'despachos'))
+          setPuedeEditarDespachos(puedeEditar(data.permisos, rolesDe(data.rol, data.roles_extra), 'despachos'))
           setUserNombre(data.nombre ?? '')
           setUserRol(data.rol ?? null)
         }

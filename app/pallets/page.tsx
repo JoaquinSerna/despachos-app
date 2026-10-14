@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { supabase } from '@/app/supabase'
+import { rolesDe } from '@/app/lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { logAuditoria } from '@/app/lib/auditoria'
@@ -43,6 +44,7 @@ const ROLES_RUTEADOR  = ['ruteador', 'admin_flota', 'gerencia']
 export default function PalletsPage() {
   const router = useRouter()
   const [rol, setRol]           = useState<string | null>(null)
+  const [rolesExtra, setRolesExtra] = useState<string[]>([])
   const [userId, setUserId]     = useState('')
   const [userNombre, setUserNombre] = useState('')
   const [tab, setTab]           = useState<'registrar' | 'comercial' | 'ruteador'>('registrar')
@@ -102,13 +104,15 @@ export default function PalletsPage() {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
       setUserId(user.id)
-      const { data } = await supabase.from('usuarios').select('nombre, rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('nombre, rol, roles_extra').eq('id', user.id).single()
       setUserNombre(data?.nombre ?? '')
       const r = data?.rol ?? ''
       setRol(r)
-      if (ROLES_DEPOSITO.includes(r)) setTab('registrar')
-      else if (ROLES_COMERCIAL.includes(r)) setTab('comercial')
-      else if (ROLES_RUTEADOR.includes(r)) setTab('ruteador')
+      setRolesExtra(data?.roles_extra ?? [])
+      const rs = rolesDe(r, data?.roles_extra)
+      if (rs.some(x => ROLES_DEPOSITO.includes(x))) setTab('registrar')
+      else if (rs.some(x => ROLES_COMERCIAL.includes(x))) setTab('comercial')
+      else if (rs.some(x => ROLES_RUTEADOR.includes(x))) setTab('ruteador')
     })
   }, [])
 
@@ -373,9 +377,10 @@ export default function PalletsPage() {
     </div>
   )
 
-  const puedeRegistrar   = ROLES_DEPOSITO.includes(rol)
-  const puedeVerComercial = ROLES_COMERCIAL.includes(rol)
-  const puedeVerRuteador  = ROLES_RUTEADOR.includes(rol)
+  const rolesTodos = rolesDe(rol, rolesExtra)
+  const puedeRegistrar   = rolesTodos.some(r => ROLES_DEPOSITO.includes(r))
+  const puedeVerComercial = rolesTodos.some(r => ROLES_COMERCIAL.includes(r))
+  const puedeVerRuteador  = rolesTodos.some(r => ROLES_RUTEADOR.includes(r))
 
   const tabs: { key: 'registrar' | 'comercial' | 'ruteador'; label: string; icon: string }[] = [
     ...(puedeRegistrar    ? [{ key: 'registrar' as const, label: 'Registrar',  icon: '📦' }] : []),

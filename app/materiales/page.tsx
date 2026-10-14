@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import * as XLSX from 'xlsx'
@@ -237,9 +238,9 @@ export default function MaterialesPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra').eq('id', user.id).single()
       const rolesPermitidos = ['gerencia', 'ruteador', 'admin_flota', 'deposito']
-      if (!rolesPermitidos.includes(data?.rol ?? '')) { router.push('/dashboard'); return }
+      if (!rolesDe(data?.rol, data?.roles_extra).some(r => rolesPermitidos.includes(r))) { router.push('/dashboard'); return }
       cargar()
     })
   }, [])

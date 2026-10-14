@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
+import { rolesDe } from '../lib/roles'
 import { puedeEditar } from '../lib/permisos'
 import ProveedorPicker from '../components/ProveedorPicker'
 import OrdenesCompra from './OrdenesCompra'
@@ -128,10 +129,11 @@ export default function ComprasPage() {
       const res = await fetch('/api/mi-perfil', { headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {} })
       const { perfil } = await res.json()
       const r = perfil?.rol ?? ''
+      const roles = rolesDe(r, perfil?.roles_extra)
       const permisos = perfil?.permisos ?? null
-      const acceso = ['gerencia', 'admin_flota', 'compras'].includes(r) || (permisos?.compras && permisos.compras !== 'none')
+      const acceso = roles.some(x => ['gerencia', 'admin_flota', 'compras'].includes(x)) || (permisos?.compras && permisos.compras !== 'none')
       if (!acceso || permisos?.compras === 'none') { router.push('/dashboard'); return }
-      setUserId(user.id); setRol(r); setPuedeEd(puedeEditar(permisos, r, 'compras'))
+      setUserId(user.id); setRol(r); setPuedeEd(puedeEditar(permisos, roles, 'compras'))
       setCargando(false)
     })()
   }, [])

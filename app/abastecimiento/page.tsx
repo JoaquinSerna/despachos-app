@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/app/supabase'
+import { rolesDe, rolSegun } from '@/app/lib/roles'
 import { tieneAcceso } from '@/app/lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
 
@@ -322,9 +323,11 @@ export default function AbastecimientoPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, email, permisos').eq('id', user.id).single()
-      const r = data?.rol ?? ''
-      if (!tieneAcceso(data?.permisos, r, 'abastecimiento')) { router.push('/dashboard'); return }
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra, email, permisos').eq('id', user.id).single()
+      const roles = rolesDe(data?.rol, data?.roles_extra)
+      // Esta pantalla distingue un solo rol: con roles combinados vale el que más puede hacer acá
+      const r = rolSegun(roles, ['gerencia', 'admin_flota', 'deposito', 'ruteador'], data?.rol ?? '')
+      if (!tieneAcceso(data?.permisos, roles, 'abastecimiento')) { router.push('/dashboard'); return }
       setRol(r)
       setUserEmail(data?.email ?? user.email ?? '')
     })

@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useEffect, useState, useRef, Suspense } from 'react'
 import { supabase } from '@/app/supabase'
+import { rolesDe } from '@/app/lib/roles'
 import { puedeEditar } from '@/app/lib/permisos'
 import { logAuditoria } from '@/app/lib/auditoria'
 import { filaIncluyeSucursal, tramosDeFila, sucursalEnVuelta, resumenTramos } from '@/app/lib/flota-tramos'
@@ -1968,9 +1969,9 @@ function ProgramacionInner() {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
       setUserId(user.id)
-      supabase.from('usuarios').select('rol, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
+      supabase.from('usuarios').select('rol, roles_extra, permisos, sucursal, nombre').eq('id', user.id).single().then(({ data }) => {
         if (!data) return
-        setPuedeEditarProg(puedeEditar(data.permisos, data.rol, 'programacion'))
+        setPuedeEditarProg(puedeEditar(data.permisos, rolesDe(data.rol, data.roles_extra), 'programacion'))
         setUserNombre(data.nombre ?? '')
         setUserRol(data.rol ?? '')
         // Deposito: arrancar en V1 (puede ver vueltas en solo lectura)

@@ -219,3 +219,30 @@ export async function confirmarDuplicados(proveedor: ProveedorLite, remitos: Rem
   }
   return true
 }
+
+// ── Recepción: validación del ingreso por el jefe de depósito/playa ──
+export type EstadoValidacion = 'pendiente' | 'ok' | 'con_rotura'
+export const MAX_FOTOS_ROTURA = 6
+
+export const ETIQUETA_VALIDACION: Record<EstadoValidacion, string> = {
+  pendiente: '⏳ Pendiente de recepción', ok: '✅ Recibido OK', con_rotura: '⚠️ Con mercadería rota',
+}
+
+export async function validarIngreso(ingresoId: string, estado: 'ok' | 'con_rotura', nota: string, fotos: File[]): Promise<void> {
+  const paths: string[] = []
+  for (let i = 0; i < fotos.length; i++) {
+    const path = `${ingresoId}/validacion_${Date.now()}_${i}.jpg`
+    const { error } = await supabase.storage.from(BUCKET_REMITOS).upload(path, fotos[i], { contentType: 'image/jpeg' })
+    if (error) throw error
+    paths.push(path)
+  }
+  const { error } = await supabase.rpc('validar_ingreso', { p_ingreso: ingresoId, p_estado: estado, p_nota: nota.trim() || null, p_fotos: paths })
+  if (error) throw error
+}
+
+export async function nombresUsuarios(ids: (string | null | undefined)[]): Promise<Record<string, string>> {
+  const unicos = [...new Set(ids.filter(Boolean) as string[])]
+  if (!unicos.length) return {}
+  const { data } = await supabase.from('usuarios').select('id, nombre').in('id', unicos)
+  return Object.fromEntries((data ?? []).map((u: any) => [u.id, u.nombre as string]))
+}

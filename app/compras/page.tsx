@@ -392,7 +392,7 @@ export default function ComprasPage() {
                           <td style={td}>{(rem?.proveedor_remito_ocs?.length ?? 0) > 0 ? <b>{rem.proveedor_remito_ocs.map((x: any) => `OC ${x.oc_id}`).join(' + ')}</b> : rem?.sin_oc ? <span style={{ color: '#666' }}>Sin OC</span> : <span style={{ color: '#aaa' }}>sin asociar</span>}</td>
                           <td style={{ ...td, color: av?.rojo ? '#b91c1c' : '#92400e', fontSize: 12 }}>{av?.texto ?? ''}</td>
                           <td style={td}><span style={{ background: rem?.estado === 'revisado' ? '#ecfdf5' : '#fffbeb', color: rem?.estado === 'revisado' ? '#065f46' : '#92400e', borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700 }}>{rem?.estado === 'revisado' ? 'Revisado' : 'Por revisar'}</span></td>
-                          <td style={td}>{ing.validacion_estado ? <span style={{ borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', background: ing.validacion_estado === 'con_rotura' ? '#fef2f2' : ing.validacion_estado === 'ok' ? '#ecfdf5' : '#fffbeb', color: ing.validacion_estado === 'con_rotura' ? '#b91c1c' : ing.validacion_estado === 'ok' ? '#065f46' : '#92400e' }}>{ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion]}</span> : <span style={{ color: '#B9BBB7' }}>—</span>}</td>
+                          <td style={td}>{ing.validacion_estado ? <span style={{ borderRadius: 10, padding: '1px 8px', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', background: ing.validacion_estado === 'con_rotura' ? '#fef2f2' : ing.validacion_estado === 'ok' ? '#ecfdf5' : '#fffbeb', color: ing.validacion_estado === 'con_rotura' ? '#b91c1c' : ing.validacion_estado === 'ok' ? '#065f46' : '#92400e' }}>{ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion]}</span> : <span style={{ color: '#B9BBB7' }}>—</span>}{ing.validacion_estado === 'con_rotura' && ing.validacion_nota && <div style={{ marginTop: 4, fontSize: 15, fontWeight: 800, color: '#b91c1c', maxWidth: 220, overflowWrap: 'anywhere' }}>{ing.validacion_nota}</div>}</td>
                           <td style={td}>📷 {nFotos}</td>
                         </tr>
                       )
@@ -495,7 +495,12 @@ export default function ComprasPage() {
                     Validó {nombresVal[sel.ing.validado_por] ?? '—'} · {new Date(sel.ing.validado_en).toLocaleString('es-AR')}
                   </div>
                 )}
-                {sel.ing.validacion_nota && <p style={{ margin: '8px 0 0', fontSize: 14 }}>📝 {sel.ing.validacion_nota}</p>}
+                {sel.ing.validacion_nota && (
+                  <div style={{ margin: '10px 0 0', background: '#fff', border: '2px solid #dc2626', borderRadius: 12, padding: '10px 14px' }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '.06em' }}>Mercadería rota</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, color: '#b91c1c', lineHeight: 1.2, marginTop: 2, overflowWrap: 'anywhere' }}>{sel.ing.validacion_nota}</div>
+                  </div>
+                )}
                 {fotosVal.length > 0 && (
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 8 }}>
                     {fotosVal.map((u, i) => <img key={i} src={u} alt="rotura" title="Tocá para ampliar" onClick={() => setFotoGrande({ urls: fotosVal, i })} style={{ width: 110, height: 110, objectFit: 'cover', borderRadius: 10, border: '1px solid #ddd', cursor: 'zoom-in' }} />)}

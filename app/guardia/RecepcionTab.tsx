@@ -128,7 +128,12 @@ export default function RecepcionTab({ rol, sucursalUsuario, refreshKey, showToa
             Validó {nombres[ing.validado_por] ?? '—'}{ing.validado_en ? ` · ${fmtFecha(fechaLocal(new Date(ing.validado_en)))} ${hora(ing.validado_en)}` : ''}
           </div>
         )}
-        {ing.validacion_nota && <p style={{ margin: '6px 0 0', fontSize: 13, color: '#b91c1c' }}>📝 {ing.validacion_nota}</p>}
+        {ing.validacion_nota && (
+          <div style={{ margin: '8px 0 0', background: '#fef2f2', border: '2px solid #dc2626', borderRadius: 10, padding: '8px 12px' }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '.06em' }}>Mercadería rota</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: '#b91c1c', lineHeight: 1.2, overflowWrap: 'anywhere' }}>{ing.validacion_nota}</div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <button onClick={() => verFotos(ing)} style={{ border: 'none', background: '#eef2fb', color: '#254A96', borderRadius: 8, padding: '7px 12px', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>📷 Ver fotos</button>
@@ -149,10 +154,10 @@ export default function RecepcionTab({ rol, sucursalUsuario, refreshKey, showToa
         {pendiente && abierto && rotura && (
           <div style={{ marginTop: 12, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: 12 }}>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#991b1b', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
-              ¿Qué llegó roto? (obligatorio)
+              ¿Qué y cuánto llegó roto? (obligatorio)
             </label>
             <textarea value={rotura.nota} onChange={e => setRotura({ ...rotura, nota: e.target.value })} rows={3}
-              placeholder="Ej: 4 bolsas de cemento rotas, 2 pallets de ladrillo con faltante…"
+              placeholder="Ej: 50 pallets de ladrillo hueco 18x18x33 / 4 bolsas de cemento"
               style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 10, border: '1.5px solid #fca5a5', fontSize: 14, fontFamily: 'inherit' }} />
             {rotura.fotos.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>

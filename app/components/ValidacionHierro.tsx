@@ -10,7 +10,7 @@ interface Props {
   onConfirmar: (formas: Record<number, FormaHierro>) => void
 }
 
-// Ventana obligatoria: no se puede cerrar ni seguir sin elegir derecho o doblado en cada hierro.
+// Ventana obligatoria: no se puede cerrar ni seguir sin elegir derecho, doblado o indistinto en cada hierro.
 export default function ValidacionHierro({ lineas, onConfirmar }: Props) {
   const [elegidas, setElegidas] = useState<Record<number, FormaHierro | null>>(
     () => Object.fromEntries(lineas.map(l => [l.idx, l.forma]))
@@ -20,9 +20,9 @@ export default function ValidacionHierro({ lineas, onConfirmar }: Props) {
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', padding: 20 }}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 800, color: '#254A96' }}>Hierros: ¿derechos o doblados?</h2>
+        <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 800, color: '#254A96' }}>Hierros: ¿derechos, doblados o indistintos?</h2>
         <p style={{ margin: '0 0 14px', fontSize: 13, color: '#6b7280' }}>
-          Confirmá con el cliente cómo va cada hierro. Hay que elegir una opción en todas las líneas para poder guardar el pedido.
+          Confirmá con el cliente cómo va cada hierro (indistinto = al cliente le da igual). Hay que elegir una opción en todas las líneas para poder guardar el pedido.
         </p>
 
         {lineas.map(l => (

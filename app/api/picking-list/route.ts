@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
   for (const item of allItems) {
     if (!itemsByPedido[item.pedido_id]) itemsByPedido[item.pedido_id] = []
     const rawNombre = stripPrefix(item.nombre ?? '')
-    const formaTxt = item.forma_hierro === 'doblado' ? ' — DOBLADO' : item.forma_hierro === 'derecho' ? ' — DERECHO' : ''
+    const formaTxt = item.forma_hierro === 'doblado' ? ' — DOBLADO' : item.forma_hierro === 'derecho' ? ' — DERECHO' : item.forma_hierro === 'indistinto' ? ' — INDISTINTO' : ''
     const nombre = toTitleCase(rawNombre) + formaTxt
     // Usar codigo_material si es numérico, si no buscar por nombre en materiales
     const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material))

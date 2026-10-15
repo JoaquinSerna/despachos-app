@@ -1124,7 +1124,7 @@ export default function NuevoDespacho() {
                       <button type="button" onClick={() => setHierroModal(true)}
                         className="ml-2 text-xs font-bold rounded-full px-2 py-0.5"
                         style={{ background: p.forma_hierro ? '#e8edf8' : '#fee2e2', color: p.forma_hierro ? '#254A96' : '#b91c1c', border: 'none', cursor: 'pointer' }}>
-                        {p.forma_hierro ? (p.forma_hierro === 'doblado' ? 'DOBLADO' : 'DERECHO') + ' · cambiar' : '⚠ elegir derecho/doblado'}
+                        {p.forma_hierro ? (p.forma_hierro === 'doblado' ? 'DOBLADO' : p.forma_hierro === 'indistinto' ? 'INDISTINTO' : 'DERECHO') + ' · cambiar' : '⚠ elegir derecho/doblado/indistinto'}
                       </button>
                     )}
                   </div>

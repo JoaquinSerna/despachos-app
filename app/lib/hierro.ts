@@ -1,11 +1,12 @@
 // Hierro redondo de construcción que se puede entregar derecho o doblado.
 // Quedan afuera: perfiles, mallas, alambres, clavos, chapas, hierro 4,2 mm, etc.
 export const DIAMETROS_HIERRO_FORMA = [6, 8, 10, 12, 16, 20, 25, 32]
-export type FormaHierro = 'derecho' | 'doblado'
+export type FormaHierro = 'derecho' | 'doblado' | 'indistinto'
 
 export const FORMAS_HIERRO: { valor: FormaHierro; etiqueta: string }[] = [
   { valor: 'derecho', etiqueta: 'Derecho' },
   { valor: 'doblado', etiqueta: 'Doblado' },
+  { valor: 'indistinto', etiqueta: 'Indistinto' },
 ]
 
 const EXCLUIR = /malla|alambre|clavo|bul[oó]n|perfil|[aá]ngulo|chapa|tubo|ca[ñn]o|planch|pletina|tejido/i
@@ -32,4 +33,5 @@ export const esHierroDeForma = (p: { descripcion?: string; material?: { nombre?:
 export const nombreConForma = (it: { nombre: string; forma_hierro?: string | null }) =>
   it.forma_hierro === 'doblado' ? `${it.nombre} — DOBLADO`
   : it.forma_hierro === 'derecho' ? `${it.nombre} — DERECHO`
+  : it.forma_hierro === 'indistinto' ? `${it.nombre} — INDISTINTO`
   : it.nombre

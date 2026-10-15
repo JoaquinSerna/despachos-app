@@ -588,7 +588,7 @@ export default function GuardiaPage() {
     ...(esValidador ? ['recepcion'] : []),
   ] as ('guardia' | 'deposito' | 'proveedores' | 'recepcion')[]
   // Roles que tienen dashboard al que volver
-  const tieneDashboard = roles.some(r => !['guardia', 'deposito'].includes(r))
+  const tieneDashboard = roles.some(r => r !== 'guardia')
 
   const inputStyle: React.CSSProperties = {
     width: '100%', padding: '14px 12px', fontSize: 16, borderRadius: 12,

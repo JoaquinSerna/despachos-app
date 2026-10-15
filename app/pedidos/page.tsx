@@ -84,7 +84,7 @@ const PAGO_LABEL: Record<string, string> = {
 const ESTADOS_PAGO = ['cobrado', 'cuenta_corriente', 'pendiente_cobro', 'pago_en_obra']
 
 interface Item {
-  nombre: string; cantidad: number; unidad: string; forma_hierro?: 'derecho' | 'doblado' | null
+  nombre: string; cantidad: number; unidad: string; forma_hierro?: 'derecho' | 'doblado' | 'indistinto' | null
   tipo_carga?: string; categoria?: string; subcategoria?: string; material_id?: number
 }
 
@@ -1176,7 +1176,7 @@ export default function PedidosPage() {
                                         return (
                                           <tr key={j} style={{ borderBottom: j < items.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
                                             <td className="px-4 py-2 font-mono text-xs whitespace-nowrap" style={{ color: it.material_id ? '#B9BBB7' : '#f87171' }}>{it.material_id ?? '—'}</td>
-                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}{it.forma_hierro && <span className="ml-2 text-xs font-bold rounded-full px-2 py-0.5" style={{ background: it.forma_hierro === 'doblado' ? '#fef3c7' : '#e8edf8', color: it.forma_hierro === 'doblado' ? '#92400e' : '#254A96' }}>{it.forma_hierro === 'doblado' ? 'DOBLADO' : 'DERECHO'}</span>}</td>
+                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}{it.forma_hierro && <span className="ml-2 text-xs font-bold rounded-full px-2 py-0.5" style={{ background: it.forma_hierro === 'doblado' ? '#fef3c7' : it.forma_hierro === 'indistinto' ? '#f3f4f6' : '#e8edf8', color: it.forma_hierro === 'doblado' ? '#92400e' : it.forma_hierro === 'indistinto' ? '#4b5563' : '#254A96' }}>{it.forma_hierro === 'doblado' ? 'DOBLADO' : it.forma_hierro === 'indistinto' ? 'INDISTINTO' : 'DERECHO'}</span>}</td>
                                             <td className="px-4 py-2 text-right font-medium" style={{ color: '#254A96' }}>{it.cantidad.toLocaleString('es-AR')}</td>
                                             <td className="px-4 py-2" style={{ color: '#666' }}>{it.unidad}</td>
                                             <td className="px-4 py-2">

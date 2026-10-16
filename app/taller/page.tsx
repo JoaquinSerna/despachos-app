@@ -188,6 +188,7 @@ export default function TallerPage() {
   const [extPref, setExtPref] = useState('')
   const [extNum, setExtNum] = useState('')
   const [buscaUnidad, setBuscaUnidad] = useState('')
+  const [listaUnidad, setListaUnidad] = useState(false)
   const [tipo, setTipo] = useState('')
   const [inicioStr, setInicioStr] = useState(valorDatetimeLocal())
   const [mecSel, setMecSel] = useState<string[]>([])
@@ -339,7 +340,7 @@ export default function TallerPage() {
   }
 
   const resetNueva = () => {
-    setUnidad(''); setExterna(false); setExtPref(''); setExtNum(''); setBuscaUnidad(''); setTipo('')
+    setUnidad(''); setExterna(false); setExtPref(''); setExtNum(''); setBuscaUnidad(''); setListaUnidad(false); setTipo('')
     setInicioStr(valorDatetimeLocal()); setMecSel([]); setSel({}); setBusqueda('')
     setCustomTxt(''); setObs('')
     fotosAntes.forEach(f => URL.revokeObjectURL(f.preview)); setFotosAntes([])
@@ -825,26 +826,35 @@ export default function TallerPage() {
             <div style={card}>
               <label style={labelSt}>Unidad</label>
               {!externa ? (
-                <>
-                  <input value={buscaUnidad} onChange={e => setBuscaUnidad(e.target.value)} placeholder="🔍 Buscar unidad (ej: 52, SA-10, CF)…" style={{ ...inputSt, marginBottom: 8 }} />
-                  <select value={unidad} onChange={e => setUnidad(e.target.value)} style={inputSt}>
-                    <option value="">Seleccioná la unidad…</option>
-                    {(() => {
-                      const q = buscaUnidad.trim().toLowerCase().replace(/[\s-]+/g, '')
-                      const coincide = (c: string) => !q || c.toLowerCase().replace(/[\s-]+/g, '').includes(q)
-                      const cams = camiones.filter(coincide)
-                      return (
-                        <>
-                          {cams.length > 0 && <optgroup label="🚛 Camiones">{cams.map(c => <option key={c}>{c}</option>)}</optgroup>}
-                          {TIPOS_TALLER.map(t => {
-                            const lista = equipos.filter(e => e.activo && e.tipo === t.key && coincide(e.codigo))
-                            return lista.length > 0 ? <optgroup key={t.key} label={`${t.icon} ${t.plural}`}>{lista.map(e => <option key={e.id}>{e.codigo}</option>)}</optgroup> : null
-                          })}
-                        </>
-                      )
-                    })()}
-                  </select>
-                </>
+                <div style={{ position: 'relative' }}>
+                  <input value={buscaUnidad} autoComplete="off"
+                    onChange={e => { setBuscaUnidad(e.target.value); setUnidad(''); setListaUnidad(true) }}
+                    onFocus={() => setListaUnidad(true)} onBlur={() => setTimeout(() => setListaUnidad(false), 150)}
+                    placeholder="Escribí una o dos letras de la unidad (ej: CA, 52, SA)…"
+                    style={{ ...inputSt, fontWeight: unidad ? 800 : 500, borderColor: unidad ? '#059669' : '#d6d6d6' }} />
+                  {listaUnidad && !unidad && (() => {
+                    const q = buscaUnidad.trim().toLowerCase().replace(/[\s-]+/g, '')
+                    const coincide = (c: string) => !q || c.toLowerCase().replace(/[\s-]+/g, '').includes(q)
+                    const grupos = [
+                      { label: '🚛 Camiones', lista: camiones.filter(coincide) },
+                      ...TIPOS_TALLER.map(t => ({ label: `${t.icon} ${t.plural}`, lista: equipos.filter(e => e.activo && e.tipo === t.key && coincide(e.codigo)).map(e => e.codigo) })),
+                    ].filter(g => g.lista.length > 0)
+                    return (
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: '100%', zIndex: 20, marginTop: 4, maxHeight: 260, overflowY: 'auto', background: '#fff', border: '1.5px solid #d6d6d6', borderRadius: 10, boxShadow: '0 6px 18px rgba(0,0,0,.12)' }}>
+                        {grupos.length === 0 && <div style={{ padding: '10px 12px', fontSize: 13, color: '#999' }}>Sin coincidencias. Si no está en la lista, tildá "otra empresa" abajo.</div>}
+                        {grupos.map(g => (
+                          <div key={g.label}>
+                            <div style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700, color: '#254A96', background: '#f4f6fb' }}>{g.label}</div>
+                            {g.lista.map(c => (
+                              <div key={c} onMouseDown={e => { e.preventDefault(); setUnidad(c); setBuscaUnidad(c); setListaUnidad(false) }}
+                                style={{ padding: '10px 12px', fontSize: 15, fontWeight: 700, cursor: 'pointer', borderTop: '1px solid #f3f3f3' }}>{c}</div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
+                </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input value={extPref} onChange={e => setExtPref(e.target.value.replace(/[^a-zA-Z]/g, '').toUpperCase().slice(0, 6))}

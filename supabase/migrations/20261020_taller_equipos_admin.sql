@@ -62,7 +62,7 @@ create policy taller_catalogo_update on public.taller_catalogo for update to aut
 
 -- ── Mecánicos del taller ──
 insert into public.taller_mecanicos (nombre)
-select v from unnest(array['Claudio Gomez', 'Matias Gomez', 'Cristian Bañoz', 'Ignacio Bañoz']) v
+select v from unnest(array['Claudio Gomez', 'Matias Gomez', 'Cristian Baños', 'Ignacio Baños']) v
 where not exists (select 1 from public.taller_mecanicos m where lower(m.nombre) = lower(v));
 
 -- ── Catálogo de tareas: autoelevador y pala (minutos estándar a completar desde la pestaña Catálogo) ──

@@ -37,6 +37,16 @@ const MOTIVOS = [
   'Otro',
 ]
 
+const MOTIVOS_PAUSA = [
+  'Almuerzo / descanso',
+  'Otro trabajo más urgente',
+  'Esperando repuesto',
+  'Esperando herramienta o equipo',
+  'Imprevisto',
+  'Fin de jornada (sigue otro día)',
+  'Otro',
+]
+
 type Tab = 'abiertas' | 'nueva' | 'actividad' | 'catalogo'
 
 interface CatItem {
@@ -67,6 +77,7 @@ interface Tarea {
   id: string; orden_id: string; catalogo_id: string | null; grupo: string; sistema: string
   nombre: string; personalizada: boolean; minutos: number | null; minutos_estandar: number | null
 }
+interface Pausa { id: string; orden_id: string; inicio: string; fin: string | null; motivo: string }
 interface Orden {
   id: string; created_at: string; fecha: string; sucursal: string; unidad_codigo: string
   unidad_externa: boolean; tipo: string; estado: string; inicio: string; fin: string | null
@@ -76,6 +87,8 @@ interface Orden {
   fotos_antes: string[]; fotos_despues: string[]
   registrado_por: string | null; cerrado_por: string | null
   taller_orden_tareas?: Tarea[]
+  taller_pausas?: Pausa[]
+  minutos_pausa?: number | null
   tipo_equipo?: string | null
   editado_por?: string | null; editado_en?: string | null
 }
@@ -106,6 +119,17 @@ function fmtFin(o: Orden): string {
 }
 
 const tareasDe = (o: Orden): Tarea[] => o.taller_orden_tareas ?? []
+const pausasDe = (o: Orden): Pausa[] => o.taller_pausas ?? []
+const pausaAbierta = (o: Orden) => pausasDe(o).find(p => !p.fin)
+// Minutos pausados hasta `hasta` (una pausa abierta cuenta hasta ese momento)
+const minutosPausa = (o: Orden, hasta: string | number | Date) => {
+  const tope = new Date(hasta).getTime()
+  return pausasDe(o).reduce((s, p) => {
+    const a = new Date(p.inicio).getTime()
+    const b = Math.min(p.fin ? new Date(p.fin).getTime() : tope, tope)
+    return s + Math.max(0, Math.round((b - a) / 60000))
+  }, 0)
+}
 const tipoInfo = (k: string) => TIPOS.find(t => t.key === k) ?? TIPOS[1]
 
 const comprimirFoto = (file: File): Promise<File> =>
@@ -203,6 +227,12 @@ export default function TallerPage() {
 
   // Cierre
   const [cierre, setCierre] = useState<Orden | null>(null)
+  const [pausando, setPausando] = useState<Orden | null>(null)
+  const [motivoPausa, setMotivoPausa] = useState('')
+  const [motivoPausaTxt, setMotivoPausaTxt] = useState('')
+  const [agregando, setAgregando] = useState<Orden | null>(null)
+  const [tareaAgr, setTareaAgr] = useState('')
+  const [notaAgr, setNotaAgr] = useState('')
   const [finStr, setFinStr] = useState('')
   const [minTarea, setMinTarea] = useState<Record<string, string>>({})
   const [quitadas, setQuitadas] = useState<Set<string>>(new Set())
@@ -243,7 +273,7 @@ export default function TallerPage() {
 
   const cargarAbiertas = useCallback(async (suc: string) => {
     const { data } = await supabase.from('taller_ordenes')
-      .select('*, taller_orden_tareas(*)')
+      .select('*, taller_orden_tareas(*), taller_pausas(*)')
       .eq('estado', 'abierta').eq('sucursal', suc).order('inicio', { ascending: true })
     setAbiertas((data ?? []) as Orden[])
   }, [])
@@ -251,7 +281,7 @@ export default function TallerPage() {
   const cargarDia = useCallback(async (suc: string, fecha: string) => {
     setCargandoDia(true)
     const { data } = await supabase.from('taller_ordenes')
-      .select('*, taller_orden_tareas(*)')
+      .select('*, taller_orden_tareas(*), taller_pausas(*)')
       .eq('fecha', fecha).eq('sucursal', suc).order('inicio', { ascending: true })
     setOrdenesDia((data ?? []) as Orden[])
     setCargandoDia(false)
@@ -428,14 +458,15 @@ export default function TallerPage() {
       ...extras.map(e => ({ id: e.id, nombre: e.nombre, std: null as number | null, nueva: true })),
     ]
     const fin = new Date(finStr)
-    const transcurrido = isNaN(fin.getTime()) ? 0 : minutosEntre(cierre.inicio, fin)
+    const pausa = isNaN(fin.getTime()) ? 0 : minutosPausa(cierre, fin)
+    const transcurrido = isNaN(fin.getTime()) ? 0 : minutosEntre(cierre.inicio, fin) - pausa
     const valor = (id: string) => minTarea[id] !== undefined ? minTarea[id] : (visibles.length === 1 ? String(Math.max(transcurrido, 0)) : '')
     const mins = visibles.map(v => ({ ...v, valor: valor(v.id), num: parseInt(valor(v.id), 10) }))
     const completo = mins.length > 0 && mins.every(m => Number.isFinite(m.num) && m.num >= 1)
     const suma = mins.reduce((s, m) => s + (Number.isFinite(m.num) ? m.num : 0), 0)
     const diferencia = transcurrido - suma
     const requiereMotivo = completo && Math.abs(diferencia) > TOLERANCIA_MIN
-    return { visibles: mins, transcurrido, suma, diferencia, completo, requiereMotivo, fin }
+    return { visibles: mins, transcurrido, suma, diferencia, completo, requiereMotivo, fin, pausa }
   }, [cierre, finStr, minTarea, quitadas, extras])
 
   const repartirIgual = () => {
@@ -448,7 +479,7 @@ export default function TallerPage() {
 
   const finalizarTrabajo = async () => {
     if (!cierre || !cierreCalc) return
-    const { visibles, transcurrido, suma, diferencia, completo, requiereMotivo, fin } = cierreCalc
+    const { visibles, transcurrido, suma, diferencia, completo, requiereMotivo, fin, pausa } = cierreCalc
     if (isNaN(fin.getTime())) { showToast('Hora de fin inválida', 'err'); return }
     if (fin.getTime() > Date.now() + 60000) { showToast('La hora de fin no puede ser futura', 'err'); return }
     if (transcurrido < 1) { showToast('La hora de fin debe ser posterior al inicio', 'err'); return }
@@ -479,8 +510,13 @@ export default function TallerPage() {
         const { error } = await supabase.from('taller_orden_tareas').update({ minutos: v.num }).eq('id', v.id)
         if (error) throw error
       }
+      const abierta = pausaAbierta(cierre)
+      if (abierta) {
+        const { error: ep } = await supabase.from('taller_pausas').update({ fin: fin.toISOString() }).eq('id', abierta.id)
+        if (ep) throw ep
+      }
       const { error } = await supabase.from('taller_ordenes').update({
-        estado: 'cerrada', fin: fin.toISOString(), minutos_transcurridos: transcurrido,
+        estado: 'cerrada', fin: fin.toISOString(), minutos_transcurridos: transcurrido, minutos_pausa: pausa,
         minutos_trabajados: suma, diferencia_min: diferencia, motivo_diferencia: motivo,
         observacion_cierre: obsCierre.trim() || null,
         fotos_despues: fotos.length ? fotos : cierre.fotos_despues, cerrado_por: userId,
@@ -491,6 +527,59 @@ export default function TallerPage() {
       await cargarAbiertas(sucursal)
     } catch (err: any) {
       showToast(err?.message || 'Error al guardar', 'err')
+    } finally { setGuardando(false) }
+  }
+
+  const confirmarPausa = async () => {
+    if (!pausando) return
+    if (!motivoPausa) { showToast('Indicá el motivo de la pausa', 'err'); return }
+    if (motivoPausa === 'Otro' && !motivoPausaTxt.trim()) { showToast('Escribí el motivo', 'err'); return }
+    setGuardando(true)
+    const motivo = motivoPausaTxt.trim() ? `${motivoPausa}: ${motivoPausaTxt.trim()}` : motivoPausa
+    const { error } = await supabase.from('taller_pausas').insert({ orden_id: pausando.id, inicio: new Date().toISOString(), motivo, registrado_por: userId })
+    setGuardando(false)
+    if (error) { showToast('No se pudo pausar', 'err'); return }
+    showToast(`Trabajo pausado — ${pausando.unidad_codigo}`)
+    setPausando(null)
+    await cargarAbiertas(sucursal)
+  }
+
+  const reanudarTrabajo = async (o: Orden) => {
+    const p = pausaAbierta(o)
+    if (!p) return
+    const { error } = await supabase.from('taller_pausas').update({ fin: new Date().toISOString() }).eq('id', p.id)
+    if (error) { showToast('No se pudo reanudar', 'err'); return }
+    showToast(`Trabajo reanudado — ${o.unidad_codigo}`)
+    await cargarAbiertas(sucursal)
+  }
+
+  const abrirAgregar = (o: Orden) => { setAgregando(o); setTareaAgr(''); setNotaAgr('') }
+
+  const confirmarAgregar = async () => {
+    if (!agregando) return
+    const tarea = tareaAgr.trim(); const nota = notaAgr.trim()
+    if (!tarea && !nota) { showToast('Escribí una tarea o una nota', 'err'); return }
+    setGuardando(true)
+    try {
+      if (tarea) {
+        const grupos = GRUPOS_POR_EQUIPO[(agregando.tipo_equipo as TipoEquipo) ?? 'camion'] ?? GRUPOS_POR_EQUIPO.camion
+        const cat = catActivo.find(c => grupos.includes(c.grupo) && c.nombre.toLowerCase() === tarea.toLowerCase())
+        const { error } = await supabase.from('taller_orden_tareas').insert(cat
+          ? { orden_id: agregando.id, catalogo_id: cat.id, grupo: cat.grupo, sistema: cat.sistema, nombre: cat.nombre, personalizada: false, minutos_estandar: cat.minutos_estandar }
+          : { orden_id: agregando.id, grupo: 'general', sistema: 'Tarea no prevista', nombre: tarea, personalizada: true })
+        if (error) throw error
+      }
+      if (nota) {
+        const ahoraTxt = `${ddmm(new Date().toISOString())} ${hhmm(new Date().toISOString())}`
+        const nueva = `${agregando.observacion ? agregando.observacion + '\n' : ''}[${ahoraTxt}] ${nota}`
+        const { error } = await supabase.from('taller_ordenes').update({ observacion: nueva }).eq('id', agregando.id)
+        if (error) throw error
+      }
+      showToast('Agregado al trabajo en curso')
+      setAgregando(null)
+      await cargarAbiertas(sucursal)
+    } catch (err: any) {
+      showToast(err?.message || 'No se pudo agregar', 'err')
     } finally { setGuardando(false) }
   }
 
@@ -521,7 +610,7 @@ export default function TallerPage() {
       const num = parseInt(edicion.mins[t.id] ?? '', 10)
       return { t, num }
     })
-    const transcurrido = cerrada && fin && !isNaN(fin.getTime()) && !isNaN(inicio.getTime()) ? minutosEntre(inicio, fin) : null
+    const transcurrido = cerrada && fin && !isNaN(fin.getTime()) && !isNaN(inicio.getTime()) ? minutosEntre(inicio, fin) - (edicion.o.minutos_pausa ?? 0) : null
     const suma = cerrada ? tareas.reduce((s, x) => s + (Number.isFinite(x.num) ? x.num : 0), 0) : null
     const diferencia = transcurrido != null && suma != null ? transcurrido - suma : null
     const requiereMotivo = diferencia != null && Math.abs(diferencia) > TOLERANCIA_MIN
@@ -592,7 +681,7 @@ export default function TallerPage() {
     if (!expDesde || !expHasta) { showToast('Indicá el rango de fechas', 'err'); return }
     setExportando(true)
     try {
-      let q = supabase.from('taller_ordenes').select('*, taller_orden_tareas(*)')
+      let q = supabase.from('taller_ordenes').select('*, taller_orden_tareas(*), taller_pausas(*)')
         .gte('fecha', expDesde).lte('fecha', expHasta).order('fecha').order('inicio')
       if (expSucursal !== 'Todas') q = q.eq('sucursal', expSucursal)
       const { data, error } = await q
@@ -609,7 +698,7 @@ export default function TallerPage() {
         'fecha', 'orden_id', 'sucursal', 'unidad', 'tipo_equipo', 'unidad_otra_empresa', 'tipo', 'estado',
         'inicio', 'fin', 'grupo', 'sistema', 'tarea', 'tarea_no_listada',
         'minutos_tarea', 'minutos_estandar', 'desvio_vs_estandar_min',
-        'minutos_transcurridos_orden', 'minutos_trabajados_orden', 'diferencia_orden_min', 'motivo_diferencia',
+        'minutos_transcurridos_orden', 'minutos_en_pausa_orden', 'pausas', 'minutos_trabajados_orden', 'diferencia_orden_min', 'motivo_diferencia',
         'mecanicos', 'cant_mecanicos', 'horas_hombre_orden',
         'observacion_inicio', 'observacion_cierre', 'fotos_antes', 'fotos_despues',
         'registrado_por', 'cerrado_por',
@@ -627,7 +716,8 @@ export default function TallerPage() {
             inicio: fechaHora(o.inicio), fin: fechaHora(o.fin), grupo: t.grupo, sistema: t.sistema, tarea: t.nombre,
             tarea_no_listada: t.personalizada ? 'si' : 'no', minutos_tarea: t.minutos ?? '',
             minutos_estandar: t.minutos_estandar ?? '', desvio_vs_estandar_min: desvio,
-            minutos_transcurridos_orden: o.minutos_transcurridos ?? '', minutos_trabajados_orden: o.minutos_trabajados ?? '',
+            minutos_transcurridos_orden: o.minutos_transcurridos ?? '', minutos_en_pausa_orden: o.minutos_pausa ?? 0,
+            pausas: pausasDe(o).map(p => `${hhmm(p.inicio)}-${p.fin ? hhmm(p.fin) : '…'} ${p.motivo}`).join(' | '), minutos_trabajados_orden: o.minutos_trabajados ?? '',
             diferencia_orden_min: o.diferencia_min ?? '', motivo_diferencia: o.motivo_diferencia ?? '',
             mecanicos: (o.mecanicos ?? []).join(' + '), cant_mecanicos: o.mecanicos?.length ?? 0, horas_hombre_orden: hh,
             observacion_inicio: o.observacion ?? '', observacion_cierre: o.observacion_cierre ?? '',
@@ -786,7 +876,10 @@ export default function TallerPage() {
             )}
             {abiertas.map(o => {
               const ti = tipoInfo(o.tipo)
-              const trans = minutosEntre(o.inicio, ahora)
+              const pausaAct = pausaAbierta(o)
+              const enPausa = !!pausaAct
+              const pausados = minutosPausa(o, ahora)
+              const trans = minutosEntre(o.inicio, ahora) - pausados
               const deAyer = fechaLocal(new Date(o.inicio)) !== fechaLocal(new Date(ahora))
               const tareas = tareasDe(o)
               return (
@@ -798,16 +891,26 @@ export default function TallerPage() {
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: 13, color: '#666' }}>Inició {deAyer ? `${ddmm(o.inicio)} ` : ''}{hhmm(o.inicio)}</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: deAyer ? '#b45309' : '#254A96' }}>{fmtDur(trans)}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: enPausa ? '#6b7280' : deAyer ? '#b45309' : '#254A96' }}>{fmtDur(trans)}</div>
+                      {pausados > 0 && <div style={{ fontSize: 11, color: '#6b7280' }}>⏸ {fmtDur(pausados)} en pausa</div>}
                       {deAyer && <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700 }}>⚠ abierta desde otro día</div>}
                     </div>
                   </div>
+                  {enPausa && (
+                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 10, background: '#f3f4f6', border: '1px solid #d1d5db', fontSize: 13, color: '#374151', fontWeight: 600 }}>
+                      ⏸ EN PAUSA desde las {hhmm(pausaAct!.inicio)} · {pausaAct!.motivo}
+                    </div>
+                  )}
                   <div style={{ marginTop: 10, fontSize: 13, color: '#555' }}>🧑‍🔧 {(o.mecanicos ?? []).join(', ') || '—'}</div>
                   <ul style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 14, color: '#222' }}>
                     {tareas.map(t => <li key={t.id} style={{ marginBottom: 2 }}>{t.nombre}</li>)}
                   </ul>
-                  {o.observacion && <p style={{ margin: '8px 0 0', fontSize: 13, color: '#666' }}>📝 {o.observacion}</p>}
+                  {o.observacion && <p style={{ margin: '8px 0 0', fontSize: 13, color: '#666', whiteSpace: 'pre-wrap' }}>📝 {o.observacion}</p>}
                   <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+                    {puedeEd && (enPausa
+                      ? <button onClick={() => reanudarTrabajo(o)} style={{ ...btnPrimary, background: '#254A96', flex: '1 1 100%', width: 'auto', padding: 13 }}>▶ Reanudar trabajo</button>
+                      : <button onClick={() => { setPausando(o); setMotivoPausa(''); setMotivoPausaTxt('') }} style={{ ...btnPrimary, background: '#d97706', flex: '1 1 100%', width: 'auto', padding: 13 }}>⏸ Pausar</button>)}
+                    {puedeEd && <button onClick={() => abrirAgregar(o)} style={{ padding: '13px 14px', borderRadius: 12, border: '1.5px solid #254A96', background: '#fff', color: '#254A96', fontWeight: 700, cursor: 'pointer' }}>➕ Tarea / nota</button>}
                     {puedeEd && <button onClick={() => abrirCierre(o)} style={{ ...btnPrimary, background: '#059669', flex: 1, width: 'auto', padding: 13 }}>✅ Finalizar trabajo</button>}
                     {fotosDeOrden(o).length > 0 && (
                       <button onClick={() => setVisor({ titulo: `${o.unidad_codigo} · fotos`, fotos: fotosDeOrden(o) })}
@@ -1278,6 +1381,47 @@ export default function TallerPage() {
         </div>
       )}
 
+      {/* ───────── MODAL PAUSAR ───────── */}
+      {pausando && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => !guardando && setPausando(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#f4f4f3', width: '100%', maxWidth: 560, maxHeight: '94dvh', overflowY: 'auto', borderRadius: '20px 20px 0 0', padding: '18px 16px 28px' }}>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>Pausar — {pausando.unidad_codigo}</div>
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>El tiempo en pausa no cuenta como trabajado. Reanudá cuando vuelvas a esta tarea.</div>
+            <div style={card}>
+              <label style={labelSt}>Motivo de la pausa</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {MOTIVOS_PAUSA.map(m => <button key={m} onClick={() => setMotivoPausa(m)} style={{ ...chip(motivoPausa === m, '#d97706'), fontSize: 13, padding: '7px 12px' }}>{m}</button>)}
+              </div>
+              <input value={motivoPausaTxt} onChange={e => setMotivoPausaTxt(e.target.value)} placeholder={motivoPausa === 'Otro' ? 'Escribí el motivo' : 'Detalle (opcional)'} style={{ ...inputSt, marginTop: 10 }} />
+            </div>
+            <button onClick={confirmarPausa} disabled={guardando} style={{ ...btnPrimary, background: '#d97706', opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : '⏸ Pausar trabajo'}</button>
+            <button onClick={() => setPausando(null)} style={btnSecondary}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {/* ───────── MODAL AGREGAR TAREA / NOTA ───────── */}
+      {agregando && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => !guardando && setAgregando(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#f4f4f3', width: '100%', maxWidth: 560, maxHeight: '94dvh', overflowY: 'auto', borderRadius: '20px 20px 0 0', padding: '18px 16px 28px' }}>
+            <div style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>Agregar al trabajo — {agregando.unidad_codigo}</div>
+            <div style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>Sumá tareas que fueron surgiendo o dejá una nota. Los minutos de cada tarea se cargan al finalizar.</div>
+            <div style={card}>
+              <label style={labelSt}>Tarea (opcional)</label>
+              <input list="tareas-agregar" value={tareaAgr} onChange={e => setTareaAgr(e.target.value)} placeholder="Elegí del catálogo o escribí una tarea nueva" style={inputSt} />
+              <datalist id="tareas-agregar">
+                {catActivo.filter(c => (GRUPOS_POR_EQUIPO[(agregando.tipo_equipo as TipoEquipo) ?? 'camion'] ?? GRUPOS_POR_EQUIPO.camion).includes(c.grupo)).map(c => <option key={c.id} value={c.nombre} />)}
+              </datalist>
+              <label style={{ ...labelSt, marginTop: 12 }}>Nota / imprevisto (opcional)</label>
+              <textarea value={notaAgr} onChange={e => setNotaAgr(e.target.value)} rows={3} placeholder="Ej: apareció una pérdida de aceite en la tapa; se espera junta" style={{ ...inputSt, resize: 'vertical' }} />
+              <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>La nota queda con fecha y hora.</div>
+            </div>
+            <button onClick={confirmarAgregar} disabled={guardando} style={{ ...btnPrimary, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Agregar'}</button>
+            <button onClick={() => setAgregando(null)} style={btnSecondary}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
       {/* ───────── MODAL FINALIZAR ───────── */}
       {cierre && cierreCalc && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 200, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={() => !guardando && setCierre(null)}>
@@ -1294,6 +1438,7 @@ export default function TallerPage() {
               <label style={labelSt}>Hora de fin</label>
               <input type="datetime-local" value={finStr} onChange={e => setFinStr(e.target.value)} style={inputSt} />
               <div style={{ marginTop: 8, fontSize: 14, color: '#254A96', fontWeight: 700 }}>Tiempo transcurrido: {cierreCalc.transcurrido > 0 ? fmtDur(cierreCalc.transcurrido) : '—'}</div>
+              {cierreCalc.pausa > 0 && <div style={{ marginTop: 4, fontSize: 12, color: '#6b7280' }}>Ya descontados {fmtDur(cierreCalc.pausa)} de pausas.</div>}
             </div>
 
             <div style={card}>

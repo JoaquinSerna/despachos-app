@@ -20,9 +20,10 @@ const th: React.CSSProperties = { padding: '10px 12px', textAlign: 'left', fontW
 const td: React.CSSProperties = { padding: '10px 12px', borderTop: '1px solid #f0f0f0', verticalAlign: 'top', fontSize: 13 }
 
 // Estado de un remito de guardia respecto de Huemul: lo que dice el export + el check manual de quien carga en Huemul
-export type EstadoHuemul = EstadoCruce | 'marcado' | 'marcado_no_figura'
+export type EstadoHuemul = EstadoCruce | 'marcado' | 'marcado_no_figura' | 'espera_validacion'
 
 export const ESTADO_HUEMUL: Record<EstadoHuemul, { label: string; corto: string; bg: string; fg: string }> = {
+  espera_validacion: { label: '⏳ Esperando la validación de depósito · todavía no se carga', corto: 'Esperando validación de depósito', bg: '#f3f4f6', fg: '#4b5563' },
   marcado: { label: '🟡 Marcado como cargado · falta confirmar con el export', corto: 'Marcado, falta confirmar', bg: '#fefce8', fg: '#854d0e' },
   marcado_no_figura: { label: '⚠ Marcado como cargado, pero no figura en el export', corto: 'Marcado, no figura en el export', bg: '#fef2f2', fg: '#b91c1c' },
   cargado: { label: '✅ Cargado en Huemul', corto: 'Cargado', bg: '#ecfdf5', fg: '#065f46' },

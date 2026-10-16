@@ -174,8 +174,12 @@ export default function ComprasPage() {
       proveedor_id: (ing.proveedor_id ?? null) as string | null, proveedor_nombre: (ing.proveedores?.nombre ?? null) as string | null,
     }))), [ingresos])
   const { cruce: cruceHuemul, ultima: ultimaHuemul } = useCruceHuemul(remitosGuardia, refreshHuemul)
-  const estadoDe = useCallback((rem: any) =>
-    estadoHuemulFinal(rem, rem ? cruceHuemul.get(rem.id) : undefined, ultimaHuemul?.exportado_en ?? null, !!ultimaHuemul), [cruceHuemul, ultimaHuemul])
+  // Mientras el jefe de depósito no valida la recepción, el remito no se le pide a quien carga en Huemul
+  const estadoDe = useCallback((rem: any, ing?: any) => {
+    const e = estadoHuemulFinal(rem, rem ? cruceHuemul.get(rem.id) : undefined, ultimaHuemul?.exportado_en ?? null, !!ultimaHuemul)
+    if (ing?.validacion_estado === 'pendiente' && (e === 'sin_cargar' || e === 'posterior_al_export' || e === 'sin_numero')) return 'espera_validacion' as const
+    return e
+  }, [cruceHuemul, ultimaHuemul])
 
   const filas: Fila[] = useMemo(() => {
     const todas = ingresos.flatMap(ing => (ing.proveedor_remitos?.length ? ing.proveedor_remitos : [null]).map((rem: any) => ({ ing, rem })))
@@ -183,7 +187,7 @@ export default function ComprasPage() {
       if (estadoRem !== 'todos' && (rem?.estado ?? 'registrado') !== estadoRem) return false
       if (filtroRecep !== 'todos' && (ing.validacion_estado ?? 'sin') !== filtroRecep) return false
       if (filtroHuemul !== 'todos') {
-        const e = estadoDe(rem)
+        const e = estadoDe(rem, ing)
         // "Sin cargar" incluye lo que llegó después del último export (todavía no puede estar en el archivo);
         // "Marcados" son los que alguien tildó como cargados y el export todavía no confirmó
         const coincide = filtroHuemul === 'sin_cargar' ? (e === 'sin_cargar' || e === 'posterior_al_export')
@@ -287,7 +291,7 @@ export default function ComprasPage() {
         observacion_compras: rem?.observacion_compras, cant_fotos: (rem?.fotos?.length ?? 0) + (ing.fotos_camion?.length ?? 0),
         recepcion: ing.validacion_estado ? ETIQUETA_VALIDACION[ing.validacion_estado as EstadoValidacion] : 'sin validación', recepcion_nota: ing.validacion_nota,
         recepcion_validada_por: nombresVal[ing.validado_por], recepcion_fecha_hora: ing.validado_en ? new Date(ing.validado_en).toLocaleString('es-AR') : '',
-        huemul: rem && estadoDe(rem) ? ESTADO_HUEMUL[estadoDe(rem)!].corto : '', ingresos_huemul: ((rem ? cruceHuemul.get(rem.id)?.ingresos : undefined) ?? []).join(' + '),
+        huemul: rem && estadoDe(rem, ing) ? ESTADO_HUEMUL[estadoDe(rem, ing)!].corto : '', ingresos_huemul: ((rem ? cruceHuemul.get(rem.id)?.ingresos : undefined) ?? []).join(' + '),
         huemul_marcado_por: rem ? nombresVal[rem.huemul_cargado_por] : '', huemul_marcado_en: rem?.huemul_cargado_en ? new Date(rem.huemul_cargado_en).toLocaleString('es-AR') : '',
       }
       lineas.push(cols.map(c => csvCell(fila[c])).join(';'))
@@ -418,7 +422,7 @@ export default function ComprasPage() {
                 <option value="todos">Con y sin OC</option><option value="sin">OC sin asociar</option><option value="asociadas">OC asociada</option><option value="sinoc">Marcados sin OC</option>
               </select>
               <select value={filtroHuemul} onChange={e => setFiltroHuemul(e.target.value)} style={{ ...inputSt, width: 'auto' }}>
-                <option value="todos">Todos (cargados y sin cargar en Huemul)</option><option value="sin_cargar">❌ Sin cargar en Huemul</option><option value="marcado">🟡 Marcados como cargados (falta confirmar)</option><option value="cargado">✅ Confirmados en el export</option><option value="sin_numero">❓ Sin número</option>
+                <option value="todos">Todos (cargados y sin cargar en Huemul)</option><option value="sin_cargar">❌ Sin cargar en Huemul</option><option value="espera_validacion">⏳ Esperando validación de depósito</option><option value="marcado">🟡 Marcados como cargados (falta confirmar)</option><option value="cargado">✅ Confirmados en el export</option><option value="sin_numero">❓ Sin número</option>
               </select>
               <select value={filtroRecep} onChange={e => setFiltroRecep(e.target.value)} style={{ ...inputSt, width: 'auto' }}>
                 <option value="todos">Toda recepción</option><option value="con_rotura">⚠️ Con rotura</option><option value="pendiente">⏳ Pendiente de recepción</option><option value="ok">✅ Recibido OK</option>
@@ -449,8 +453,8 @@ export default function ComprasPage() {
                           </td>
                           <td style={td}>{(rem?.proveedor_remito_ocs?.length ?? 0) > 0 ? <b>{rem.proveedor_remito_ocs.map((x: any) => `OC ${x.oc_id}`).join(' + ')}</b> : rem?.sin_oc ? <span style={{ color: '#666' }}>Sin OC</span> : <span style={{ color: '#aaa' }}>sin asociar</span>}</td>
                           <td style={td}>
-                            <BadgeHuemul estado={estadoDe(rem)} ingresos={rem ? cruceHuemul.get(rem.id)?.ingresos : undefined} marca={rem ? { por: nombresVal[rem.huemul_cargado_por] ?? null, en: rem.huemul_cargado_en } : undefined} />
-                            {puedeMarcar && rem && estadoDe(rem) !== 'cargado' && (
+                            <BadgeHuemul estado={estadoDe(rem, ing)} ingresos={rem ? cruceHuemul.get(rem.id)?.ingresos : undefined} marca={rem ? { por: nombresVal[rem.huemul_cargado_por] ?? null, en: rem.huemul_cargado_en } : undefined} />
+                            {puedeMarcar && rem && estadoDe(rem, ing) !== 'cargado' && estadoDe(rem, ing) !== 'espera_validacion' && (
                               <div><CheckHuemul marcado={!!rem.huemul_cargado_en} trabajando={marcando === rem.id} onCambiar={v => marcarHuemul(rem, v)} /></div>
                             )}
                           </td>
@@ -557,8 +561,8 @@ export default function ComprasPage() {
             {sel.rem && (
               <div style={card}>
                 <label style={labelSt}>Huemul</label>
-                <BadgeHuemul estado={estadoDe(sel.rem)} ingresos={cruceHuemul.get(sel.rem.id)?.ingresos} marca={{ por: nombresVal[sel.rem.huemul_cargado_por] ?? null, en: sel.rem.huemul_cargado_en }} />
-                {puedeMarcar && estadoDe(sel.rem) !== 'cargado' && (
+                <BadgeHuemul estado={estadoDe(sel.rem, sel.ing)} ingresos={cruceHuemul.get(sel.rem.id)?.ingresos} marca={{ por: nombresVal[sel.rem.huemul_cargado_por] ?? null, en: sel.rem.huemul_cargado_en }} />
+                {puedeMarcar && estadoDe(sel.rem, sel.ing) !== 'cargado' && estadoDe(sel.rem, sel.ing) !== 'espera_validacion' && (
                   <div><CheckHuemul grande marcado={!!sel.rem.huemul_cargado_en} trabajando={marcando === sel.rem.id} onCambiar={v => marcarHuemul(sel.rem, v)} /></div>
                 )}
               </div>

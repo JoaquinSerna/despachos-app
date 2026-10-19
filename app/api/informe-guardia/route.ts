@@ -34,6 +34,11 @@ function avg(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0) / arr.length
 }
 
+// Hora teórica de arranque de los choferes: 07:00 de lunes a viernes, 08:00 los sábados
+function horaArranque(fecha: string): number {
+  return new Date(`${fecha}T12:00:00`).getDay() === 6 ? 8 : 7
+}
+
 function round1(n: number) { return Math.round(n * 10) / 10 }
 
 function buildCiclos(eventos: any[]) {
@@ -60,7 +65,8 @@ function buildCiclos(eventos: any[]) {
       .sort((a, b) => a._ti.minutes - b._ti.minutes)
 
     const usados = new Set<number>()
-    const ARRANQUE_MIN = 7 * 60 // 07:00 — hora teórica de llegada de choferes
+    const HORA_ARRANQUE = horaArranque(fecha)
+    const ARRANQUE_MIN = HORA_ARRANQUE * 60
     let arranqueUsado = false
 
     for (const sal of salidas) {
@@ -76,11 +82,11 @@ function buildCiclos(eventos: any[]) {
       let depositoDesde: string | null = null
 
       if (!candidatos.length) {
-        // Sin ingreso previo real: arranque sintético a las 7:00, solo para la primera salida del día
+        // Sin ingreso previo real: arranque sintético a las 7:00 (8:00 los sábados), solo para la primera salida del día
         if (arranqueUsado) continue // ingreso no registrado, ciclo no medible
         arranqueUsado = true
         ingresoMin = ARRANQUE_MIN
-        ingresoDisplay = '07:00 ★'
+        ingresoDisplay = `0${HORA_ARRANQUE}:00 ★`
       } else {
         const { ing, idx } = candidatos[candidatos.length - 1]
         usados.add(idx)

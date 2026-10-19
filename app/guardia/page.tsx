@@ -352,7 +352,7 @@ export default function GuardiaPage() {
     }
     const rows = data.map((e: any) => ({ ...e, registrado_por_nombre: nombresMap[e.registrado_por] ?? '' }))
 
-    // Inyectar arranques sintéticos a las 7:00 para la primera salida sin ingreso previo
+    // Inyectar arranques sintéticos a las 7:00 (8:00 los sábados) para la primera salida sin ingreso previo
     const getMin = (e: any): number | null => {
       if (e.hora_evento) {
         const [h, m] = e.hora_evento.split(':').map(Number)
@@ -374,6 +374,7 @@ export default function GuardiaPage() {
     const sinteticos: any[] = []
     for (const [key, evs] of Object.entries(byFechaCamion)) {
       const [fechaEv, camion] = key.split('__')
+      const horaArranque = new Date(`${fechaEv}T12:00:00`).getDay() === 6 ? 8 : 7
       const salidas = evs.filter((e: any) => e.tipo === 'salida').sort((a: any, b: any) => (getMin(a) ?? 0) - (getMin(b) ?? 0))
       const ingresos = evs.filter((e: any) => e.tipo === 'ingreso').sort((a: any, b: any) => (getMin(a) ?? 0) - (getMin(b) ?? 0))
       const usados = new Set<number>()
@@ -389,7 +390,7 @@ export default function GuardiaPage() {
         if (candidatoIdx === -1) {
           if (!arranqueUsado) {
             arranqueUsado = true
-            sinteticos.push({ fecha: fechaEv, camion_codigo: camion, tipo: 'ingreso', hora_evento: '07:00:00', observacion: 'Arranque sintético (teórico 07:00)', registrado_por_nombre: '' })
+            sinteticos.push({ fecha: fechaEv, camion_codigo: camion, tipo: 'ingreso', hora_evento: `0${horaArranque}:00:00`, observacion: `Arranque sintético (teórico 0${horaArranque}:00)`, registrado_por_nombre: '' })
           }
           // salidas posteriores sin ingreso: ciclo no medible, no inyectar
         } else {

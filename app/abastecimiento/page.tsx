@@ -258,7 +258,7 @@ const DECISION_STYLE: Record<string, { bg: string; color: string; label: string 
 
 const ESTADO_LABEL: Record<string, string> = {
   pendiente:   'Pendiente',
-  conf_stock:  'Conf. Stock',
+  conf_stock:  'Aprobada',
   preparacion: 'En preparación',
   en_transito: 'En tránsito',
   entregado:   'Entregado',
@@ -1413,7 +1413,7 @@ function ProductoRow({ row, showToast, userEmail, solicitudes, onIrATransferenci
                   const req = item.requerimientos
                   const sdMatch = req.notas?.match(/SD #(\d+)/)
                   const esMisma = (req.nv && nvsSolicitudes.has(req.nv)) || (sdMatch && sdsSolicitudes.has(sdMatch[1]))
-                  const estadoLabel: Record<string, string> = { pendiente: 'Pendiente', conf_stock: 'Stock confirmado', preparacion: 'En preparación', en_transito: 'En tránsito' }
+                  const estadoLabel: Record<string, string> = { pendiente: 'Pendiente', conf_stock: 'Aprobada', preparacion: 'En preparación', en_transito: 'En tránsito' }
                   return (
                     <div key={i} className="flex flex-wrap items-center gap-2 mt-1 pt-1" style={{ borderTop: i > 0 ? '1px solid #fcd34d' : 'none' }}>
                       <span style={{ color: '#78350f' }}>
@@ -1859,7 +1859,7 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
                     onClick={() => sig === 'entregado' ? setShowFotoModal(true) : sig === 'conf_stock' ? abrirConfStockModal() : cambiarEstado(sig)}
                     className="flex-1 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                     style={{ background: sig === 'rechazado' ? '#E52322' : sig === 'entregado' ? '#10b981' : '#254A96' }}>
-                    {guardando ? '…' : `→ ${ESTADO_LABEL[sig]}`}
+                    {guardando ? '…' : sig === 'conf_stock' ? '✅ Aprobar solicitud' : sig === 'rechazado' && req.estado === 'pendiente' ? '✕ Rechazar solicitud' : `→ ${ESTADO_LABEL[sig]}`}
                   </button>
                 )
                 if (sig === 'entregado') return [btn, (
@@ -1884,7 +1884,7 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
           <div className="bg-white rounded-2xl w-full max-w-md p-6 space-y-4" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>Confirmar stock disponible</h3>
+                <h3 className="font-bold text-base" style={{ color: '#254A96' }}>Aprobar solicitud</h3>
                 <p className="text-sm mt-0.5" style={{ color: '#B9BBB7' }}>{req.sucursal_origen} → {req.sucursal_destino}</p>
               </div>
               <button onClick={() => setShowConfStockModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -1936,7 +1936,7 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
               onClick={async () => { await cambiarEstado('conf_stock', modalCantStk); setShowConfStockModal(false) }}
               className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
               style={{ background: '#254A96' }}>
-              {guardando ? '…' : '→ Conf. Stock'}
+              {guardando ? '…' : '✅ Aprobar solicitud'}
             </button>
           </div>
         </div>

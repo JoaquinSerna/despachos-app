@@ -19,9 +19,9 @@ interface Aporte { reqId: string; nv: string | null; cliente: string | null; fec
 interface Producto { clave: string; id_producto: number | null; nombre: string; total: number; aportes: Aporte[] }
 interface Ruta { origen: string; destino: string; solicitudes: number; productos: Producto[]; fechaMin: string | null; enPreparacion: Req[]; otras: number }
 
+// Solo entran al consolidado las solicitudes ya aprobadas; las pendientes todavía no se preparan
 const ESTADOS: { key: string; label: string }[] = [
-  { key: 'pendiente', label: 'Pendiente' },
-  { key: 'conf_stock', label: 'Stock confirmado' },
+  { key: 'conf_stock', label: 'Aprobada' },
   { key: 'preparacion', label: 'En preparación' },
 ]
 
@@ -48,7 +48,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
   const [error, setError] = useState('')
   const [origen, setOrigen] = useState('')
   const [destino, setDestino] = useState('')
-  const [estados, setEstados] = useState<string[]>(['pendiente', 'conf_stock', 'preparacion'])
+  const [estados, setEstados] = useState<string[]>(['conf_stock', 'preparacion'])
   const [buscar, setBuscar] = useState('')
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
   const [pedidosNV, setPedidosNV] = useState<Record<string, PedidoNV | null>>({})
@@ -97,6 +97,11 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
   useEffect(() => {
     supabase.from('camiones_flota').select('codigo').order('codigo').then(({ data }) => setCamiones((data ?? []).map((c: any) => c.codigo)))
   }, [])
+
+  // Solicitudes sin aprobar que quedan afuera del consolidado (con los mismos filtros de ruta)
+  const sinAprobar = useMemo(() => reqs.filter(r => r.estado === 'pendiente'
+    && (!origen || r.sucursal_origen === origen) && (!destino || r.sucursal_destino === destino)
+    && (r.requerimiento_items ?? []).some(it => Number(it.cantidad_aprobada ?? it.cantidad_solicitada ?? 0) > 0)).length, [reqs, origen, destino])
 
   const rutas: Ruta[] = useMemo(() => {
     const q = norm(buscar.trim())
@@ -244,7 +249,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
       <div className="mb-5">
         <h2 className="text-lg font-semibold mb-1" style={{ color: '#254A96' }}>Consolidado de transferencias</h2>
         <p className="text-sm" style={{ color: '#6b7280' }}>
-          Une las solicitudes pendientes entre las mismas dos sucursales y suma los materiales a mover. Debajo de cada producto se ve qué NV pidió cada cantidad y para qué fecha.
+          Une las solicitudes aprobadas entre las mismas dos sucursales y suma los materiales a mover. Debajo de cada producto se ve qué NV pidió cada cantidad y para qué fecha.
         </p>
       </div>
 
@@ -280,11 +285,16 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
         </div>
       </div>
 
+      {sinAprobar > 0 && (
+        <div className="rounded-lg px-4 py-2.5 mb-4 text-sm" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+          ⏳ Hay <b>{sinAprobar}</b> solicitud{sinAprobar !== 1 ? 'es' : ''} pendiente{sinAprobar !== 1 ? 's' : ''} de aprobar que no se incluye{sinAprobar !== 1 ? 'n' : ''} acá. Se aprueban o rechazan en la pestaña Transferencias.
+        </div>
+      )}
       {error && <div className="rounded-lg px-4 py-3 mb-4 text-sm" style={{ background: '#fde8e8', color: '#E52322' }}>{error}</div>}
       {cargando && <div className="text-sm text-center py-10" style={{ color: '#B9BBB7' }}>Cargando solicitudes…</div>}
       {!cargando && !error && rutas.length === 0 && (
         <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
-          <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay transferencias pendientes con esos filtros.</p>
+          <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay solicitudes aprobadas con esos filtros.</p>
         </div>
       )}
 

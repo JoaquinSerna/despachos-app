@@ -4000,7 +4000,7 @@ function TransferCard({ req }: { req: any }) {
   }
   const ESTADO_LABEL: Record<string, string> = {
     pendiente:   'Pendiente',
-    conf_stock:  'Conf. Stock',
+    conf_stock:  'Aprobada',
     preparacion: 'En preparación',
     en_transito: 'En tránsito',
     entregado:   'Entregado',

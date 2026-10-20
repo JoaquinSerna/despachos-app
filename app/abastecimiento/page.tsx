@@ -7,6 +7,7 @@ import { supabase } from '@/app/supabase'
 import { rolesDe, rolSegun } from '@/app/lib/roles'
 import { tieneAcceso } from '@/app/lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
+import TabConsolidado from './TabConsolidado'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -307,7 +308,7 @@ export default function AbastecimientoPage() {
   const router = useRouter()
   const [rol, setRol] = useState('')
   const [userEmail, setUserEmail] = useState('')
-  const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion'>('verificacion')
+  const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion' | 'consolidado'>('verificacion')
   const [highlightNv, setHighlightNv] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
 
@@ -336,6 +337,7 @@ export default function AbastecimientoPage() {
   const TABS = [
     { key: 'verificacion',   label: '📋 Verificación SD' },
     { key: 'transferencias', label: 'Transferencias' },
+    { key: 'consolidado',    label: '🧮 Consolidado' },
     { key: 'transito',       label: 'En tránsito' },
     { key: 'historial',      label: 'Historial' },
     { key: 'preparacion',    label: '📦 Preparación' },
@@ -397,6 +399,9 @@ export default function AbastecimientoPage() {
         )}
         {tab === 'preparacion' && (
           <TabPreparacion />
+        )}
+        {tab === 'consolidado' && (
+          <TabConsolidado />
         )}
         {tab === 'importar' && (
           <TabImportar rol={rol} showToast={showToast} />

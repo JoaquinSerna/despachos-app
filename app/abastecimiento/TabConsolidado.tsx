@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import type { jsPDF as JsPDFType } from 'jspdf'
+import { supabase } from '@/app/supabase'
 
 // Consolidado de transferencias: junta las solicitudes pendientes que van de una misma sucursal a otra
 // y arma el listado total de materiales a mover, con el detalle de qué NV pidió cada cantidad.
@@ -13,9 +14,10 @@ interface Req {
   id: string; nv: string | null; cliente: string | null; sucursal_origen: string; sucursal_destino: string
   estado: string; fecha_solicitada: string | null; fecha_req: string; notas: string | null; requerimiento_items: ReqItem[]
 }
-interface Aporte { reqId: string; nv: string | null; cliente: string | null; fecha: string | null; cantidad: number; estado: string }
+interface PedidoNV { fecha: string | null; estado: string }
+interface Aporte { reqId: string; nv: string | null; cliente: string | null; fecha: string | null; fuente: 'pedido' | 'solicitud' | null; pedidoEstado: string | null; cantidad: number; estado: string }
 interface Producto { clave: string; id_producto: number | null; nombre: string; total: number; aportes: Aporte[] }
-interface Ruta { origen: string; destino: string; solicitudes: number; productos: Producto[]; fechaMin: string | null }
+interface Ruta { origen: string; destino: string; solicitudes: number; productos: Producto[]; fechaMin: string | null; enPreparacion: Req[]; otras: number }
 
 const ESTADOS: { key: string; label: string }[] = [
   { key: 'pendiente', label: 'Pendiente' },
@@ -27,7 +29,20 @@ const fmtFecha = (iso: string | null | undefined) => { if (!iso) return '—'; c
 const nf = (n: number) => n.toLocaleString('es-AR')
 const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
 
-export default function TabConsolidado() {
+const PEDIDO_ACTIVO = ['pendiente', 'programado', 'en_camino']
+const hoyISO = () => new Date().toISOString().slice(0, 10)
+
+// Si la NV tiene varios pedidos (reprogramados, separados), se toma el próximo pedido todavía activo
+function elegirPedido(lista: { fecha_entrega: string | null; estado: string }[]): PedidoNV | null {
+  if (!lista.length) return null
+  const activos = lista.filter(p => PEDIDO_ACTIVO.includes(p.estado) && p.fecha_entrega).sort((a, b) => a.fecha_entrega!.localeCompare(b.fecha_entrega!))
+  const hoy = hoyISO()
+  const elegido = activos.find(p => p.fecha_entrega! >= hoy) ?? activos[activos.length - 1]
+    ?? [...lista].filter(p => p.fecha_entrega).sort((a, b) => b.fecha_entrega!.localeCompare(a.fecha_entrega!))[0]
+  return elegido ? { fecha: elegido.fecha_entrega, estado: elegido.estado } : null
+}
+
+export default function TabConsolidado({ rol, showToast }: { rol: string; showToast: (msg: string, tipo?: 'ok' | 'err') => void }) {
   const [reqs, setReqs] = useState<Req[]>([])
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState('')
@@ -36,6 +51,14 @@ export default function TabConsolidado() {
   const [estados, setEstados] = useState<string[]>(['pendiente', 'conf_stock', 'preparacion'])
   const [buscar, setBuscar] = useState('')
   const [abiertos, setAbiertos] = useState<Record<string, boolean>>({})
+  const [pedidosNV, setPedidosNV] = useState<Record<string, PedidoNV | null>>({})
+  const [recarga, setRecarga] = useState(0)
+  const [camiones, setCamiones] = useState<string[]>([])
+  const [transito, setTransito] = useState<Ruta | null>(null)
+  const [nViaje, setNViaje] = useState('')
+  const [vehiculo, setVehiculo] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const puedeMover = rol === 'deposito' || rol === 'gerencia'
 
   useEffect(() => {
     let vivo = true
@@ -50,6 +73,29 @@ export default function TabConsolidado() {
       if (vivo) setCargando(false)
     })()
     return () => { vivo = false }
+  }, [recarga])
+
+  // Fecha de entrega del pedido de cada NV (la solicitud muchas veces no trae fecha propia)
+  useEffect(() => {
+    const nvs = [...new Set(reqs.map(r => r.nv).filter((n): n is string => !!n && !!n.trim()))]
+    if (!nvs.length) { setPedidosNV({}); return }
+    let vivo = true
+    ;(async () => {
+      const por: Record<string, { fecha_entrega: string | null; estado: string }[]> = {}
+      for (let i = 0; i < nvs.length; i += 200) {
+        const { data } = await supabase.from('pedidos').select('nv, estado, fecha_entrega').in('nv', nvs.slice(i, i + 200))
+        for (const p of (data ?? []) as any[]) { const k = String(p.nv); (por[k] ??= []).push({ fecha_entrega: p.fecha_entrega, estado: p.estado }) }
+      }
+      if (!vivo) return
+      const mapa: Record<string, PedidoNV | null> = {}
+      for (const nv of nvs) mapa[nv] = elegirPedido(por[nv] ?? [])
+      setPedidosNV(mapa)
+    })()
+    return () => { vivo = false }
+  }, [reqs])
+
+  useEffect(() => {
+    supabase.from('camiones_flota').select('codigo').order('codigo').then(({ data }) => setCamiones((data ?? []).map((c: any) => c.codigo)))
   }, [])
 
   const rutas: Ruta[] = useMemo(() => {
@@ -60,7 +106,7 @@ export default function TabConsolidado() {
       if (origen && r.sucursal_origen !== origen) continue
       if (destino && r.sucursal_destino !== destino) continue
       const k = `${r.sucursal_origen}→${r.sucursal_destino}`
-      if (!mapa.has(k)) mapa.set(k, { origen: r.sucursal_origen, destino: r.sucursal_destino, solicitudes: 0, productos: [], fechaMin: null, prods: new Map() })
+      if (!mapa.has(k)) mapa.set(k, { origen: r.sucursal_origen, destino: r.sucursal_destino, solicitudes: 0, productos: [], fechaMin: null, enPreparacion: [], otras: 0, prods: new Map() })
       const ruta = mapa.get(k)!
       let aporto = false
       for (const it of r.requerimiento_items ?? []) {
@@ -71,12 +117,17 @@ export default function TabConsolidado() {
         if (!ruta.prods.has(clave)) ruta.prods.set(clave, { clave, id_producto: it.id_producto, nombre: it.nombre_producto, total: 0, aportes: [] })
         const p = ruta.prods.get(clave)!
         p.total += cant
-        p.aportes.push({ reqId: r.id, nv: r.nv, cliente: r.cliente, fecha: r.fecha_solicitada, cantidad: cant, estado: r.estado })
+        const ped = r.nv ? pedidosNV[r.nv] : null
+        const fecha = ped?.fecha ?? r.fecha_solicitada ?? null
+        p.aportes.push({ reqId: r.id, nv: r.nv, cliente: r.cliente, fecha, fuente: ped?.fecha ? 'pedido' : r.fecha_solicitada ? 'solicitud' : null,
+          pedidoEstado: ped?.estado ?? null, cantidad: cant, estado: r.estado })
         aporto = true
       }
       if (aporto) {
         ruta.solicitudes++
-        if (r.fecha_solicitada && (!ruta.fechaMin || r.fecha_solicitada < ruta.fechaMin)) ruta.fechaMin = r.fecha_solicitada
+        if (r.estado === 'preparacion') ruta.enPreparacion.push(r); else ruta.otras++
+        const f = (r.nv ? pedidosNV[r.nv]?.fecha : null) ?? r.fecha_solicitada
+        if (f && (!ruta.fechaMin || f < ruta.fechaMin)) ruta.fechaMin = f
       }
     }
     return [...mapa.values()]
@@ -88,11 +139,36 @@ export default function TabConsolidado() {
       }))
       .filter(r => r.productos.length > 0)
       .sort((a, b) => a.origen.localeCompare(b.origen) || a.destino.localeCompare(b.destino))
-  }, [reqs, estados, origen, destino, buscar])
+  }, [reqs, estados, origen, destino, buscar, pedidosNV])
 
   const toggleEstado = (k: string) => setEstados(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k])
   const claveRuta = (r: Ruta) => `${r.origen}→${r.destino}`
+  const textoFecha = (a: Aporte) => a.nv && !a.fecha ? '⚠ sin fecha (la NV no tiene pedido cargado)'
+    : !a.fecha ? '' : `${a.fuente === 'pedido' ? 'entrega del pedido' : 'entrega solicitada'} ${fmtFecha(a.fecha)}`
   const etiquetaAporte = (a: Aporte) => a.nv ? `NV ${a.nv}${a.cliente ? ` · ${a.cliente}` : ''}` : 'Sin NV (reposición)'
+
+  async function marcarEnTransito() {
+    if (!transito) return
+    setEnviando(true)
+    let ok = 0
+    const fallos: string[] = []
+    for (const r of transito.enPreparacion) {
+      try {
+        const res = await fetch('/api/requerimientos', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: r.id, estado: 'en_transito', n_viaje: nViaje.trim() || null, cod_vehiculo: vehiculo.trim() || null }),
+        })
+        const j = await res.json()
+        if (!j.success) throw new Error(j.error ?? 'error')
+        ok++
+      } catch { fallos.push(r.nv ? `NV ${r.nv}` : r.id.slice(0, 6)) }
+    }
+    setEnviando(false)
+    if (fallos.length) showToast(`${ok} en tránsito. No se pudieron pasar: ${fallos.join(', ')}`, 'err')
+    else showToast(`${ok} solicitud${ok !== 1 ? 'es' : ''} en tránsito (${transito.origen} → ${transito.destino})`)
+    setTransito(null); setNViaje(''); setVehiculo('')
+    setRecarga(x => x + 1)
+  }
 
   async function exportarExcel() {
     const XLSX = await import('xlsx')
@@ -104,7 +180,7 @@ export default function TabConsolidado() {
         totales.push({ 'Origen': r.origen, 'Destino': r.destino, 'ID Producto': p.id_producto ?? '', 'Producto': p.nombre, 'Cantidad total': p.total, 'Solicitudes': p.aportes.length })
         for (const a of p.aportes) {
           detalle.push({ 'Origen': r.origen, 'Destino': r.destino, 'ID Producto': p.id_producto ?? '', 'Producto': p.nombre, 'Cantidad': a.cantidad,
-            'NV': a.nv ?? 'Sin NV', 'Cliente': a.cliente ?? '', 'Entrega solicitada': a.fecha ? fmtFecha(a.fecha) : '', 'Estado': ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado })
+            'NV': a.nv ?? 'Sin NV', 'Cliente': a.cliente ?? '', 'Fecha de entrega': a.fecha ? fmtFecha(a.fecha) : '', 'Origen de la fecha': a.fuente === 'pedido' ? 'Pedido de la NV' : a.fuente === 'solicitud' ? 'Solicitud' : '', 'Estado': ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado })
         }
       }
     }
@@ -147,7 +223,7 @@ export default function TabConsolidado() {
         if (p.aportes.length > 1 || p.aportes[0]?.nv) {
           for (const a of p.aportes) {
             asegurar(4.5)
-            doc.text(`   ${nf(a.cantidad)}  ·  ${etiquetaAporte(a)}${a.fecha ? `  ·  entrega ${fmtFecha(a.fecha)}` : ''}`, ML, y)
+            doc.text(`   ${nf(a.cantidad)}  ·  ${etiquetaAporte(a)}${textoFecha(a) ? `  ·  ${textoFecha(a)}` : ''}`, ML, y)
             y += 4
           }
         }
@@ -212,15 +288,56 @@ export default function TabConsolidado() {
         </div>
       )}
 
+      {transito && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => !enviando && setTransito(null)}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-5" style={{ width: '100%', maxWidth: 460 }}>
+            <h3 className="font-bold mb-1" style={{ color: '#254A96', fontSize: 17 }}>Marcar en tránsito — {transito.origen} → {transito.destino}</h3>
+            <p className="text-sm mb-3" style={{ color: '#6b7280' }}>
+              Se van a pasar <b>{transito.enPreparacion.length}</b> solicitud{transito.enPreparacion.length !== 1 ? 'es' : ''} a "En tránsito" con el mismo viaje y vehículo:
+            </p>
+            <div className="text-xs mb-3 rounded-lg p-2" style={{ background: '#f4f6fb', color: '#444', maxHeight: 110, overflowY: 'auto' }}>
+              {transito.enPreparacion.map(r => <div key={r.id}>{r.nv ? `NV ${r.nv}` : 'Sin NV'}{r.cliente ? ` · ${r.cliente}` : ''} — {r.requerimiento_items?.length ?? 0} producto{(r.requerimiento_items?.length ?? 0) !== 1 ? 's' : ''}</div>)}
+            </div>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <div>
+                <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>N° Viaje (ERP)</label>
+                <input value={nViaje} onChange={e => setNViaje(e.target.value)} placeholder="ej: 1360" className="w-full border rounded-lg px-2.5 py-1.5 text-sm" style={{ borderColor: '#e8edf8' }} />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>Vehículo</label>
+                <input value={vehiculo} onChange={e => setVehiculo(e.target.value)} list="camiones-consolidado" placeholder="Código o texto libre" className="w-full border rounded-lg px-2.5 py-1.5 text-sm" style={{ borderColor: '#e8edf8' }} />
+                <datalist id="camiones-consolidado">{camiones.map(c => <option key={c} value={c} />)}</datalist>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setTransito(null)} disabled={enviando} className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg border" style={{ borderColor: '#d6d6d6', color: '#555' }}>Cancelar</button>
+              <button onClick={marcarEnTransito} disabled={enviando} className="flex-1 px-4 py-2.5 text-sm font-semibold rounded-lg text-white disabled:opacity-60" style={{ background: '#1d4ed8' }}>{enviando ? 'Pasando…' : '🚚 Pasar a en tránsito'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {rutas.map(r => (
         <div key={claveRuta(r)} className="bg-white rounded-xl border overflow-hidden mb-5" style={{ borderColor: '#e8edf8' }}>
           <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-2" style={{ background: '#e8edf8' }}>
             <span className="font-bold" style={{ color: '#254A96', fontSize: 16 }}>{r.origen} → {r.destino}</span>
             <span className="text-xs" style={{ color: '#254A96' }}>
               {r.solicitudes} solicitud{r.solicitudes !== 1 ? 'es' : ''} · {r.productos.length} producto{r.productos.length !== 1 ? 's' : ''}
-              {r.fechaMin && <> · primera entrega solicitada <b>{fmtFecha(r.fechaMin)}</b></>}
+              {r.fechaMin && <> · primera entrega <b>{fmtFecha(r.fechaMin)}</b></>}
             </span>
           </div>
+          {puedeMover && (
+            <div className="px-4 py-2 flex flex-wrap items-center gap-3" style={{ background: '#f9fafc', borderTop: '1px solid #e8edf8' }}>
+              <button onClick={() => { setTransito(r); setNViaje(''); setVehiculo('') }} disabled={r.enPreparacion.length === 0}
+                className="px-4 py-2 text-sm font-semibold rounded-lg text-white disabled:opacity-40" style={{ background: '#1d4ed8' }}>
+                🚚 Marcar en tránsito ({r.enPreparacion.length})
+              </button>
+              <span className="text-xs" style={{ color: '#6b7280' }}>
+                {r.enPreparacion.length === 0 ? 'Ninguna está en preparación todavía.' : 'Pasa a en tránsito todas las solicitudes de esta ruta que están en preparación.'}
+                {r.otras > 0 && r.enPreparacion.length > 0 && <> Las otras {r.otras} todavía no están en preparación y no se tocan.</>}
+              </span>
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead>
               <tr style={{ background: '#f9fafc' }}>
@@ -256,7 +373,7 @@ export default function TabConsolidado() {
                               {a.nv
                                 ? <span className="rounded-full px-2 py-0.5 font-semibold" style={{ background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>NV {a.nv}{a.cliente ? ` · ${a.cliente}` : ''}</span>
                                 : <span style={{ color: '#9ca3af' }}>Sin NV (reposición)</span>}
-                              {a.fecha && <span style={{ color: '#6b7280' }}>📅 entrega {fmtFecha(a.fecha)}</span>}
+                              {textoFecha(a) && <span style={{ color: a.nv && !a.fecha ? '#b45309' : '#6b7280' }}>📅 {textoFecha(a).replace('⚠ ', '')}{a.pedidoEstado && !PEDIDO_ACTIVO.includes(a.pedidoEstado) ? ' (pedido ya ' + a.pedidoEstado.replace('_', ' ') + ')' : ''}</span>}
                               {a.estado !== 'pendiente' && <span style={{ color: '#9ca3af' }}>· {ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado}</span>}
                             </div>
                           ))}

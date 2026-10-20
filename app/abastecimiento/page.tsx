@@ -401,7 +401,7 @@ export default function AbastecimientoPage() {
           <TabPreparacion />
         )}
         {tab === 'consolidado' && (
-          <TabConsolidado />
+          <TabConsolidado rol={rol} showToast={showToast} />
         )}
         {tab === 'importar' && (
           <TabImportar rol={rol} showToast={showToast} />

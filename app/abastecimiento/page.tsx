@@ -337,7 +337,7 @@ export default function AbastecimientoPage() {
   const TABS = [
     { key: 'verificacion',   label: '📋 Verificación SD' },
     { key: 'transferencias', label: 'Transferencias' },
-    { key: 'consolidado',    label: '🧮 Consolidado' },
+    { key: 'consolidado',    label: '🧮 Consolidado transferencias' },
     { key: 'transito',       label: 'En tránsito' },
     { key: 'historial',      label: 'Historial' },
     { key: 'preparacion',    label: '📦 Preparación' },

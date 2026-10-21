@@ -2392,6 +2392,25 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlight
     setModalNueva(true)
   }
 
+  // Búsqueda por descripción: sugiere productos del catálogo mientras se escribe el nombre
+  const [sugerencias, setSugerencias] = useState<{ idx: number; lista: { id: number; nombre: string; activo: boolean }[] } | null>(null)
+  const temporizadorSug = useRef<any>(null)
+  function buscarPorNombre(idx: number, texto: string) {
+    if (temporizadorSug.current) clearTimeout(temporizadorSug.current)
+    if (texto.trim().length < 2) { setSugerencias(null); return }
+    temporizadorSug.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/productos-catalogo?q=${encodeURIComponent(texto.trim())}`)
+        const data = res.ok ? await res.json() : []
+        setSugerencias(Array.isArray(data) && data.length ? { idx, lista: data } : null)
+      } catch { setSugerencias(null) }
+    }, 250)
+  }
+  function elegirSugerencia(idx: number, prod: { id: number; nombre: string }) {
+    setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: prod.nombre, codigo: String(prod.id), id_producto: prod.id, notFound: false } : it))
+    setSugerencias(null)
+  }
+
   async function buscarPorCodigo(idx: number, codigo: string) {
     if (!codigo.trim()) return
     setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, buscando: true, notFound: false } : it))
@@ -2623,7 +2642,7 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlight
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs font-semibold" style={{ color: '#254A96' }}>Productos</label>
-                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Código ID del producto (del ERP) → nombre se completa solo</span>
+                  <span className="text-xs" style={{ color: '#B9BBB7' }}>Escribí el código ID del ERP o buscá el producto por nombre</span>
                 </div>
                 <div className="space-y-2">
                   {nfItems.map((item, idx) => (
@@ -2645,18 +2664,34 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlight
                           }}
                         />
                         {/* Nombre (auto-filled o manual) */}
-                        <input
-                          value={item.nombre}
-                          onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: e.target.value } : it))}
-                          placeholder={item.buscando ? 'Buscando…' : 'Nombre del producto'}
-                          disabled={item.buscando}
-                          className="flex-1 border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
-                          style={{
-                            borderColor: '#e8edf8',
-                            background: item.id_producto ? '#f0fdf4' : 'white',
-                            color: item.id_producto ? '#166534' : undefined,
-                          }}
-                        />
+                        <div className="flex-1 relative">
+                          <input
+                            value={item.nombre}
+                            onChange={e => { setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, nombre: e.target.value, id_producto: null, notFound: false } : it)); buscarPorNombre(idx, e.target.value) }}
+                            onBlur={() => setTimeout(() => setSugerencias(s => (s && s.idx === idx ? null : s)), 200)}
+                            placeholder={item.buscando ? 'Buscando…' : 'Buscar por nombre o descripción…'}
+                            disabled={item.buscando}
+                            autoComplete="off"
+                            className="w-full border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
+                            style={{
+                              borderColor: '#e8edf8',
+                              background: item.id_producto ? '#f0fdf4' : 'white',
+                              color: item.id_producto ? '#166534' : undefined,
+                            }}
+                          />
+                          {sugerencias && sugerencias.idx === idx && (
+                            <div className="absolute left-0 right-0 z-20 mt-1 rounded-lg border bg-white shadow-lg overflow-y-auto" style={{ borderColor: '#d6d6d6', maxHeight: 220 }}>
+                              {sugerencias.lista.map(sg => (
+                                <button key={sg.id} type="button" onMouseDown={e => { e.preventDefault(); elegirSugerencia(idx, sg) }}
+                                  className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-gray-50" style={{ borderBottom: '1px solid #f3f3f3', opacity: sg.activo ? 1 : 0.55 }}>
+                                  <span className="font-mono text-xs shrink-0" style={{ color: '#9ca3af', minWidth: 42 }}>{sg.id}</span>
+                                  <span className="flex-1">{sg.nombre}</span>
+                                  {!sg.activo && <span className="text-xs" style={{ color: '#b45309' }}>inactivo</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         {/* Cantidad */}
                         <input type="number" min={1} value={item.cantidad}
                           onChange={e => setNfItems(prev => prev.map((it, i) => i === idx ? { ...it, cantidad: parseInt(e.target.value) || 1 } : it))}
@@ -2980,8 +3015,8 @@ function TabPreparacion() {
     doc.text('Construyo al Costo', PW - MR, 22, { align: 'right' })
 
     // Tabla
-    const colX = [ML, ML + 110, ML + 140]
-    const colW = [110, 30, 40]
+    const colX = [ML, ML + 28, ML + 128, ML + 156]
+    const colW = [28, 100, 28, 24]
     const ROW_H = 8
     let y = MT + 32 + 6
 
@@ -2991,9 +3026,10 @@ function TabPreparacion() {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(9)
     doc.setTextColor(37, 74, 150)
-    doc.text('Material', colX[0] + 2, y + 5.5)
-    doc.text('Cantidad', colX[1] + 2, y + 5.5)
-    doc.text('Unidad', colX[2] + 2, y + 5.5)
+    doc.text('Código', colX[0] + 2, y + 5.5)
+    doc.text('Material', colX[1] + 2, y + 5.5)
+    doc.text('Cantidad', colX[2] + 2, y + 5.5)
+    doc.text('Unidad', colX[3] + 2, y + 5.5)
     y += ROW_H
 
     doc.setFont('helvetica', 'normal')
@@ -3017,11 +3053,14 @@ function TabPreparacion() {
       doc.setFillColor(bg[0], bg[1], bg[2])
       doc.rect(ML, y, PW - ML - MR, ROW_H, 'F')
       doc.setTextColor(30, 30, 30)
-      doc.text(p.nombre, colX[0] + 2, y + 5.5)
+      doc.setTextColor(90, 90, 90)
+      doc.text(String(p.codigo_material ?? '—').slice(0, 14), colX[0] + 2, y + 5.5)
+      doc.setTextColor(30, 30, 30)
+      doc.text(doc.splitTextToSize(p.nombre, colW[1] - 3)[0] as string, colX[1] + 2, y + 5.5)
       doc.setFont('helvetica', 'bold')
-      doc.text(String(p.cantidad), colX[1] + 2, y + 5.5)
+      doc.text(String(p.cantidad), colX[2] + 2, y + 5.5)
       doc.setFont('helvetica', 'normal')
-      doc.text(p.unidad ?? 'u', colX[2] + 2, y + 5.5)
+      doc.text(p.unidad ?? 'u', colX[3] + 2, y + 5.5)
       y += ROW_H
     })
 
@@ -3073,7 +3112,7 @@ function TabPreparacion() {
         let iy = y + 15
         ret.items.slice(0, 5).forEach(item => {
           doc.setTextColor(40, 40, 40)
-          doc.text(`• ${item.nombre}  ${item.cantidad} ${item.unidad}`, ML + 4, iy)
+          doc.text(`• ${item.codigo_material ? item.codigo_material + '  ' : ''}${item.nombre}  ${item.cantidad} ${item.unidad}`, ML + 4, iy)
           iy += 5.5
         })
         if (ret.items.length > 5) {
@@ -3179,6 +3218,7 @@ function TabPreparacion() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: '#e8edf8' }}>
+                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Código</th>
                     <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Material</th>
                     <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Cantidad</th>
                     <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Unidad</th>
@@ -3187,6 +3227,7 @@ function TabPreparacion() {
                 <tbody>
                   {productos.map((p, i) => (
                     <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafc', borderTop: '1px solid #f0f0f0' }}>
+                      <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap" style={{ color: p.codigo_material ? '#4b5563' : '#d1d5db' }}>{p.codigo_material ?? '—'}</td>
                       <td className="px-4 py-2.5" style={{ color: '#1e1e1e' }}>{p.nombre}</td>
                       <td className="px-4 py-2.5 text-right font-semibold" style={{ color: '#254A96' }}>
                         {p.cantidad.toLocaleString('es-AR')}
@@ -3195,6 +3236,7 @@ function TabPreparacion() {
                     </tr>
                   ))}
                   <tr style={{ background: '#e8edf8', borderTop: '2px solid #d4dbef' }}>
+                    <td className="px-4 py-2.5" />
                     <td className="px-4 py-2.5 font-semibold text-xs" style={{ color: '#254A96' }}>TOTAL</td>
                     <td className="px-4 py-2.5 text-right font-bold" style={{ color: '#254A96' }}>
                       {totalUnidades.toLocaleString('es-AR')}
@@ -3240,6 +3282,7 @@ function TabPreparacion() {
                         {ret.items.map((item, j) => (
                           <div key={j} className="flex items-center gap-2 py-0.5 text-sm">
                             <span style={{ color: '#999' }}>•</span>
+                            {item.codigo_material && <span className="font-mono text-xs" style={{ color: '#9ca3af' }}>{item.codigo_material}</span>}
                             <span className="flex-1" style={{ color: '#333' }}>{item.nombre}</span>
                             <span className="font-semibold" style={{ color: '#E52322' }}>{item.cantidad}</span>
                             <span className="text-xs" style={{ color: '#B9BBB7' }}>{item.unidad}</span>

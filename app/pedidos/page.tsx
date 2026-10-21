@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { puedeEditar, tieneAcceso } from '../lib/permisos'
 import { logAuditoria } from '../lib/auditoria'
+import { FORMAS_HIERRO, requiereFormaHierro, type FormaHierro } from '../lib/hierro'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const ESTADOS = ['pendiente', 'programado', 'en_camino', 'entregado', 'entregado_parcial', 'rechazado', 'cancelado']
@@ -84,7 +85,7 @@ const PAGO_LABEL: Record<string, string> = {
 const ESTADOS_PAGO = ['cobrado', 'cuenta_corriente', 'pendiente_cobro', 'pago_en_obra']
 
 interface Item {
-  nombre: string; cantidad: number; unidad: string; forma_hierro?: 'derecho' | 'doblado' | 'indistinto' | null
+  id?: string; nombre: string; cantidad: number; unidad: string; forma_hierro?: 'derecho' | 'doblado' | 'indistinto' | null
   tipo_carga?: string; categoria?: string; subcategoria?: string; material_id?: number
 }
 
@@ -272,11 +273,26 @@ export default function PedidosPage() {
     }
   }
 
+  // Cambia cómo va un hierro (derecho / doblado / indistinto) directo desde el detalle del pedido
+  const [guardandoForma, setGuardandoForma] = useState<string | null>(null)
+  async function cambiarFormaHierro(p: any, it: Item, valor: string) {
+    if (!it.id) return
+    const nueva = (valor || null) as FormaHierro | null
+    if (nueva === (it.forma_hierro ?? null)) return
+    setGuardandoForma(it.id)
+    const { error } = await supabase.from('pedido_items').update({ forma_hierro: nueva }).eq('id', it.id)
+    setGuardandoForma(null)
+    if (error) { showToast('No se pudo guardar la forma del hierro', 'err'); return }
+    setItemsMap(prev => ({ ...prev, [p.id]: (prev[p.id] ?? []).map(x => x.id === it.id ? { ...x, forma_hierro: nueva } : x) }))
+    if (userId) logAuditoria(userId, userNombre, 'Cambió forma de hierro', 'Pedidos', { nv: p.nv, cliente: p.cliente, producto: it.nombre, de: it.forma_hierro ?? null, a: nueva })
+    showToast('Forma del hierro actualizada')
+  }
+
   async function cargarDetalle(ids: string[]) {
     setDetalleCargando(true)
     try {
     const [{ data: rawItems, error: itemsErr }, { data: mats }, { data: rawFotos }] = await Promise.all([
-      supabase.from('pedido_items').select('pedido_id, nombre, cantidad, unidad, forma_hierro').in('pedido_id', ids),
+      supabase.from('pedido_items').select('id, pedido_id, nombre, cantidad, unidad, forma_hierro').in('pedido_id', ids),
       supabase.from('materiales').select('id, nombre, tipo_carga, categoria, subcategoria'),
       supabase.from('pedido_fotos').select('pedido_id, url, label').in('pedido_id', ids).order('created_at'),
     ])
@@ -297,7 +313,7 @@ export default function PedidosPage() {
       const categoria = mat?.categoria ?? null
       const subcategoria = mat?.subcategoria ?? null
       if (!newItemsMap[item.pedido_id]) newItemsMap[item.pedido_id] = []
-      newItemsMap[item.pedido_id].push({ nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, forma_hierro: item.forma_hierro ?? null, tipo_carga: tipo, categoria: categoria ?? undefined, subcategoria: subcategoria ?? undefined, material_id: mat?.id ?? undefined })
+      newItemsMap[item.pedido_id].push({ id: item.id, nombre: item.nombre, cantidad: item.cantidad, unidad: item.unidad, forma_hierro: item.forma_hierro ?? null, tipo_carga: tipo, categoria: categoria ?? undefined, subcategoria: subcategoria ?? undefined, material_id: mat?.id ?? undefined })
       if (!newCatMap[item.pedido_id]) newCatMap[item.pedido_id] = new Map()
       // No mostrar badge para categoría Logística
       if (categoria !== 'Logística') {
@@ -1176,7 +1192,16 @@ export default function PedidosPage() {
                                         return (
                                           <tr key={j} style={{ borderBottom: j < items.length - 1 ? '1px solid #f4f4f3' : 'none' }}>
                                             <td className="px-4 py-2 font-mono text-xs whitespace-nowrap" style={{ color: it.material_id ? '#B9BBB7' : '#f87171' }}>{it.material_id ?? '—'}</td>
-                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}{it.forma_hierro && <span className="ml-2 text-xs font-bold rounded-full px-2 py-0.5" style={{ background: it.forma_hierro === 'doblado' ? '#fef3c7' : it.forma_hierro === 'indistinto' ? '#f3f4f6' : '#e8edf8', color: it.forma_hierro === 'doblado' ? '#92400e' : it.forma_hierro === 'indistinto' ? '#4b5563' : '#254A96' }}>{it.forma_hierro === 'doblado' ? 'DOBLADO' : it.forma_hierro === 'indistinto' ? 'INDISTINTO' : 'DERECHO'}</span>}</td>
+                                            <td className="px-4 py-2" style={{ color: '#1a1a1a' }}>{it.nombre}
+                                              {puedeEditarPedidos && it.id && requiereFormaHierro(it.nombre) ? (
+                                                <select value={it.forma_hierro ?? ''} disabled={guardandoForma === it.id}
+                                                  onChange={e => cambiarFormaHierro(p, it, e.target.value)}
+                                                  className="ml-2 text-xs font-bold rounded-full px-2 py-0.5 border focus:outline-none"
+                                                  style={{ borderColor: it.forma_hierro ? '#d0daf5' : '#fca5a5', background: it.forma_hierro ? '#f0f4ff' : '#fee2e2', color: it.forma_hierro ? '#254A96' : '#b91c1c', cursor: 'pointer' }}>
+                                                  <option value="">⚠ Sin definir</option>
+                                                  {FORMAS_HIERRO.map(f => <option key={f.valor} value={f.valor}>{f.etiqueta}</option>)}
+                                                </select>
+                                              ) : it.forma_hierro && <span className="ml-2 text-xs font-bold rounded-full px-2 py-0.5" style={{ background: it.forma_hierro === 'doblado' ? '#fef3c7' : it.forma_hierro === 'indistinto' ? '#f3f4f6' : '#e8edf8', color: it.forma_hierro === 'doblado' ? '#92400e' : it.forma_hierro === 'indistinto' ? '#4b5563' : '#254A96' }}>{it.forma_hierro === 'doblado' ? 'DOBLADO' : it.forma_hierro === 'indistinto' ? 'INDISTINTO' : 'DERECHO'}</span>}</td>
                                             <td className="px-4 py-2 text-right font-medium" style={{ color: '#254A96' }}>{it.cantidad.toLocaleString('es-AR')}</td>
                                             <td className="px-4 py-2" style={{ color: '#666' }}>{it.unidad}</td>
                                             <td className="px-4 py-2">

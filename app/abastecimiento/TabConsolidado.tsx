@@ -17,7 +17,7 @@ interface Req {
 interface PedidoNV { fecha: string | null; estado: string }
 interface Aporte { reqId: string; nv: string | null; cliente: string | null; fecha: string | null; fuente: 'pedido' | 'solicitud' | null; pedidoEstado: string | null; cantidad: number; estado: string }
 interface Producto { clave: string; id_producto: number | null; nombre: string; total: number; aportes: Aporte[] }
-interface Ruta { origen: string; destino: string; solicitudes: number; productos: Producto[]; fechaMin: string | null; enPreparacion: Req[]; otras: number }
+interface Ruta { origen: string; destino: string; solicitudes: number; productos: Producto[]; fechaMin: string | null; candidatas: Req[] }
 
 // Solo entran al consolidado las solicitudes ya aprobadas; las pendientes todavía no se preparan
 const ESTADOS: { key: string; label: string }[] = [
@@ -55,6 +55,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
   const [recarga, setRecarga] = useState(0)
   const [camiones, setCamiones] = useState<string[]>([])
   const [transito, setTransito] = useState<Ruta | null>(null)
+  const [seleccion, setSeleccion] = useState<Set<string>>(new Set())
   const [nViaje, setNViaje] = useState('')
   const [vehiculo, setVehiculo] = useState('')
   const [enviando, setEnviando] = useState(false)
@@ -111,15 +112,16 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
       if (origen && r.sucursal_origen !== origen) continue
       if (destino && r.sucursal_destino !== destino) continue
       const k = `${r.sucursal_origen}→${r.sucursal_destino}`
-      if (!mapa.has(k)) mapa.set(k, { origen: r.sucursal_origen, destino: r.sucursal_destino, solicitudes: 0, productos: [], fechaMin: null, enPreparacion: [], otras: 0, prods: new Map() })
+      if (!mapa.has(k)) mapa.set(k, { origen: r.sucursal_origen, destino: r.sucursal_destino, solicitudes: 0, productos: [], fechaMin: null, candidatas: [], prods: new Map() })
       const ruta = mapa.get(k)!
       let aporto = false
       for (const it of r.requerimiento_items ?? []) {
         if (q && !norm(`${it.nombre_producto} ${it.id_producto ?? ''}`).includes(q)) continue
         const cant = Number(it.cantidad_aprobada ?? it.cantidad_solicitada ?? 0)
         if (!(cant > 0)) continue
-        const clave = it.id_producto != null ? `id:${it.id_producto}` : `n:${norm(it.nombre_producto)}`
-        if (!ruta.prods.has(clave)) ruta.prods.set(clave, { clave, id_producto: it.id_producto, nombre: it.nombre_producto, total: 0, aportes: [] })
+        const idValido = it.id_producto != null && Number(it.id_producto) > 0
+        const clave = idValido ? `id:${it.id_producto}` : `n:${norm(it.nombre_producto)}`
+        if (!ruta.prods.has(clave)) ruta.prods.set(clave, { clave, id_producto: idValido ? it.id_producto : null, nombre: it.nombre_producto, total: 0, aportes: [] })
         const p = ruta.prods.get(clave)!
         p.total += cant
         const ped = r.nv ? pedidosNV[r.nv] : null
@@ -130,7 +132,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
       }
       if (aporto) {
         ruta.solicitudes++
-        if (r.estado === 'preparacion') ruta.enPreparacion.push(r); else ruta.otras++
+        ruta.candidatas.push(r)
         const f = (r.nv ? pedidosNV[r.nv]?.fecha : null) ?? r.fecha_solicitada
         if (f && (!ruta.fechaMin || f < ruta.fechaMin)) ruta.fechaMin = f
       }
@@ -152,12 +154,25 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
     : !a.fecha ? '' : `${a.fuente === 'pedido' ? 'entrega del pedido' : 'entrega solicitada'} ${fmtFecha(a.fecha)}`
   const etiquetaAporte = (a: Aporte) => a.nv ? `NV ${a.nv}${a.cliente ? ` · ${a.cliente}` : ''}` : 'Sin NV (reposición)'
 
+  const abrirTransito = (r: Ruta) => {
+    setTransito(r); setNViaje(''); setVehiculo('')
+    // Por defecto van las que ya están en preparación; las aprobadas se tildan a mano
+    setSeleccion(new Set(r.candidatas.filter(c => c.estado === 'preparacion').map(c => c.id)))
+  }
+  const alternar = (id: string) => setSeleccion(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const resumenItems = (r: Req) => {
+    const l = (r.requerimiento_items ?? []).map(i => `${nf(Number(i.cantidad_aprobada ?? i.cantidad_solicitada ?? 0))} ${i.nombre_producto}`)
+    return l.slice(0, 3).join(' · ') + (l.length > 3 ? ` · +${l.length - 3} más` : '')
+  }
+
   async function marcarEnTransito() {
     if (!transito) return
+    if (!seleccion.size) { showToast('Elegí al menos una solicitud', 'err'); return }
     setEnviando(true)
     let ok = 0
     const fallos: string[] = []
-    for (const r of transito.enPreparacion) {
+    const elegidas = transito.candidatas.filter(r => seleccion.has(r.id))
+    for (const r of elegidas) {
       try {
         const res = await fetch('/api/requerimientos', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -300,14 +315,39 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
 
       {transito && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => !enviando && setTransito(null)}>
-          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-5" style={{ width: '100%', maxWidth: 460 }}>
+          <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-5" style={{ width: '100%', maxWidth: 580, maxHeight: '92vh', overflowY: 'auto' }}>
             <h3 className="font-bold mb-1" style={{ color: '#254A96', fontSize: 17 }}>Marcar en tránsito — {transito.origen} → {transito.destino}</h3>
-            <p className="text-sm mb-3" style={{ color: '#6b7280' }}>
-              Se van a pasar <b>{transito.enPreparacion.length}</b> solicitud{transito.enPreparacion.length !== 1 ? 'es' : ''} a "En tránsito" con el mismo viaje y vehículo:
-            </p>
-            <div className="text-xs mb-3 rounded-lg p-2" style={{ background: '#f4f6fb', color: '#444', maxHeight: 110, overflowY: 'auto' }}>
-              {transito.enPreparacion.map(r => <div key={r.id}>{r.nv ? `NV ${r.nv}` : 'Sin NV'}{r.cliente ? ` · ${r.cliente}` : ''} — {r.requerimiento_items?.length ?? 0} producto{(r.requerimiento_items?.length ?? 0) !== 1 ? 's' : ''}</div>)}
+            <p className="text-sm mb-2" style={{ color: '#6b7280' }}>Tildá las solicitudes que <b>van en el camión</b>. Todas salen con el mismo viaje y vehículo.</p>
+            <div className="flex items-center gap-3 mb-2 text-xs">
+              <button onClick={() => setSeleccion(new Set(transito.candidatas.map(c => c.id)))} className="underline" style={{ color: '#254A96' }}>Tildar todas</button>
+              <button onClick={() => setSeleccion(new Set())} className="underline" style={{ color: '#254A96' }}>Destildar todas</button>
+              <span className="ml-auto font-semibold" style={{ color: '#254A96' }}>{seleccion.size} de {transito.candidatas.length} en el camión</span>
             </div>
+            <div className="mb-3 rounded-lg" style={{ border: '1px solid #e8edf8', maxHeight: 280, overflowY: 'auto' }}>
+              {transito.candidatas.map(r => {
+                const on = seleccion.has(r.id)
+                return (
+                  <label key={r.id} className="flex items-start gap-3 px-3 py-2 cursor-pointer" style={{ background: on ? '#eff6ff' : '#fff', borderBottom: '1px solid #f0f0f0' }}>
+                    <input type="checkbox" checked={on} onChange={() => alternar(r.id)} style={{ marginTop: 3, width: 16, height: 16 }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap text-sm">
+                        <b style={{ color: '#254A96' }}>{r.nv ? `NV ${r.nv}` : 'Sin NV'}</b>
+                        {r.cliente && <span style={{ color: '#6b7280' }}>{r.cliente}</span>}
+                        <span className="text-xs font-semibold rounded-full px-2 py-0.5" style={r.estado === 'preparacion' ? { background: '#ede9fe', color: '#7c3aed' } : { background: '#e0f2fe', color: '#0369a1' }}>
+                          {r.estado === 'preparacion' ? 'En preparación' : 'Aprobada'}
+                        </span>
+                      </div>
+                      <div className="text-xs mt-0.5" style={{ color: '#666' }}>{resumenItems(r)}</div>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+            {transito.candidatas.some(c => c.estado !== 'preparacion' && seleccion.has(c.id)) && (
+              <p className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+                Las solicitudes <b>Aprobadas</b> que tildaste van directo a tránsito, sin pasar por preparación.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2 mb-4">
               <div>
                 <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>N° Viaje (ERP)</label>
@@ -321,7 +361,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
             </div>
             <div className="flex gap-2">
               <button onClick={() => setTransito(null)} disabled={enviando} className="flex-1 px-4 py-2.5 text-sm font-medium rounded-lg border" style={{ borderColor: '#d6d6d6', color: '#555' }}>Cancelar</button>
-              <button onClick={marcarEnTransito} disabled={enviando} className="flex-1 px-4 py-2.5 text-sm font-semibold rounded-lg text-white disabled:opacity-60" style={{ background: '#1d4ed8' }}>{enviando ? 'Pasando…' : '🚚 Pasar a en tránsito'}</button>
+              <button onClick={marcarEnTransito} disabled={enviando || seleccion.size === 0} className="flex-1 px-4 py-2.5 text-sm font-semibold rounded-lg text-white disabled:opacity-50" style={{ background: '#1d4ed8' }}>{enviando ? 'Pasando…' : `🚚 Pasar ${seleccion.size} a en tránsito`}</button>
             </div>
           </div>
         </div>
@@ -338,13 +378,12 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
           </div>
           {puedeMover && (
             <div className="px-4 py-2 flex flex-wrap items-center gap-3" style={{ background: '#f9fafc', borderTop: '1px solid #e8edf8' }}>
-              <button onClick={() => { setTransito(r); setNViaje(''); setVehiculo('') }} disabled={r.enPreparacion.length === 0}
+              <button onClick={() => abrirTransito(r)} disabled={r.candidatas.length === 0}
                 className="px-4 py-2 text-sm font-semibold rounded-lg text-white disabled:opacity-40" style={{ background: '#1d4ed8' }}>
-                🚚 Marcar en tránsito ({r.enPreparacion.length})
+                🚚 Marcar en tránsito
               </button>
               <span className="text-xs" style={{ color: '#6b7280' }}>
-                {r.enPreparacion.length === 0 ? 'Ninguna está en preparación todavía.' : 'Pasa a en tránsito todas las solicitudes de esta ruta que están en preparación.'}
-                {r.otras > 0 && r.enPreparacion.length > 0 && <> Las otras {r.otras} todavía no están en preparación y no se tocan.</>}
+                Elegís cuáles de las {r.candidatas.length} solicitudes van en el camión ({r.candidatas.filter(c => c.estado === 'preparacion').length} en preparación, {r.candidatas.filter(c => c.estado !== 'preparacion').length} aprobadas).
               </span>
             </div>
           )}
@@ -366,8 +405,8 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
                       <div className="flex items-start gap-2 flex-wrap">
                         <span style={{ color: '#1e1e1e', fontWeight: 600 }}>{p.nombre}</span>
                         {p.id_producto != null && <span className="text-xs" style={{ color: '#B9BBB7' }}>#{p.id_producto}</span>}
-                        {p.aportes.length > 1 && (
-                          <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ background: '#ede9fe', color: '#6d28d9' }}>{p.aportes.length} solicitudes unidas</span>
+                        {new Set(p.aportes.map(a => a.reqId)).size > 1 && (
+                          <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ background: '#ede9fe', color: '#6d28d9' }}>{new Set(p.aportes.map(a => a.reqId)).size} solicitudes unidas</span>
                         )}
                         {hayNV && (
                           <button onClick={() => setAbiertos(prev => ({ ...prev, [k]: !abierto }))} className="text-xs underline" style={{ color: '#254A96', background: 'none', border: 'none', cursor: 'pointer' }}>

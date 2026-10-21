@@ -13,6 +13,11 @@ function stripPrefix(nombre: string): string {
   return nombre.replace(/^\d+\./, '').trim()
 }
 
+// Clave para comparar nombres: sin acentos, minúsculas y solo letras y números
+function claveNombre(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
 function toTitleCase(s: string): string {
   return s.toLowerCase().replace(/(?:^|\s)\S/g, c => c.toUpperCase())
 }
@@ -36,17 +41,28 @@ export async function GET(request: NextRequest) {
     .neq('estado', 'rechazado')
   if (sucursal) qBase = qBase.eq('sucursal', sucursal)
 
-  const [{ data: todos, error: pedErr }, { data: materialesData }] = await Promise.all([
-    qBase,
-    admin.from('materiales').select('id, nombre'),
-  ])
-
+  const { data: todos, error: pedErr } = await qBase
   if (pedErr) return NextResponse.json({ error: pedErr.message }, { status: 500 })
 
-  // Mapa nombre en mayúsculas → id para fallback cuando codigo_material es null/"undefined"
-  const matIdMap: Record<string, number> = {}
-  for (const m of materialesData ?? []) {
-    if (m.nombre && m.id) matIdMap[m.nombre.toUpperCase().trim()] = m.id
+  // Catálogo de productos del ERP: su id es el código que se usa en Huemul.
+  // Se busca por nombre normalizado; si hay varios con el mismo nombre se prefieren los activos
+  // y, si siguen siendo varios, se muestran todos los códigos para no inventar uno.
+  const catalogo = new Map<string, { id: number; activo: boolean }[]>()
+  for (let from = 0; ; from += 1000) {
+    const { data: lote } = await admin.from('productos_catalogo').select('id, nombre, activo').order('id').range(from, from + 999)
+    for (const c of lote ?? []) {
+      if (!c.nombre) continue
+      const k = claveNombre(c.nombre)
+      if (!catalogo.has(k)) catalogo.set(k, [])
+      catalogo.get(k)!.push({ id: c.id, activo: c.activo !== false })
+    }
+    if (!lote || lote.length < 1000) break
+  }
+  const codigoDeCatalogo = (nombre: string): string | null => {
+    const lista = catalogo.get(claveNombre(nombre))
+    if (!lista?.length) return null
+    const activos = lista.filter(x => x.activo)
+    return (activos.length ? activos : lista).map(x => x.id).join(' / ')
   }
 
   if (!todos || todos.length === 0) {
@@ -77,10 +93,10 @@ export async function GET(request: NextRequest) {
     const rawNombre = stripPrefix(item.nombre ?? '')
     const formaTxt = item.forma_hierro === 'doblado' ? ' — DOBLADO' : item.forma_hierro === 'derecho' ? ' — DERECHO' : item.forma_hierro === 'indistinto' ? ' — INDISTINTO' : ''
     const nombre = toTitleCase(rawNombre) + formaTxt
-    // Usar codigo_material si es numérico, si no buscar por nombre en materiales
+    // Usar codigo_material si es numérico; si no, buscar el código ERP por nombre en el catálogo de productos
     const codigoNum = item.codigo_material && !isNaN(Number(item.codigo_material))
       ? item.codigo_material
-      : (matIdMap[rawNombre.toUpperCase()] ? String(matIdMap[rawNombre.toUpperCase()]) : null)
+      : codigoDeCatalogo(rawNombre)
     if (nombre) itemsByPedido[item.pedido_id].push({ nombre, cantidad: Number(item.cantidad) || 0, unidad: item.unidad ?? 'u', codigo_material: codigoNum })
   }
 

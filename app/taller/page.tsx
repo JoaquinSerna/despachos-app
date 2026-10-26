@@ -186,6 +186,7 @@ export default function TallerPage() {
   const [rol, setRol] = useState('')
   const [permisos, setPermisos] = useState<Record<string, string> | null>(null)
   const [sucursal, setSucursal] = useState('Guernica')
+  const [sucursalLibre, setSucursalLibre] = useState(false) // usuario con "Todas las sucursales": puede cambiar de obra
   const [tab, setTab] = useState<Tab>('abiertas')
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [ahora, setAhora] = useState(Date.now())
@@ -301,7 +302,7 @@ export default function TallerPage() {
       if (!acceso || perfil?.permisos?.taller === 'none') { router.push('/dashboard'); return }
       setUserId(user.id); setRol(r); setPermisos(perfil?.permisos ?? null)
       const suc = SUCURSALES.includes(perfil?.sucursal) ? perfil.sucursal : 'Guernica'
-      setSucursal(suc); setExpSucursal(suc)
+      setSucursal(suc); setExpSucursal(suc); setSucursalLibre(!perfil?.sucursal)
       const { data: flota } = await supabase.from('camiones_flota').select('codigo').order('codigo')
       setCamiones((flota ?? []).map((c: any) => c.codigo))
       const { data: eq } = await supabase.from('taller_equipos').select('*').order('tipo').order('codigo')
@@ -827,7 +828,7 @@ export default function TallerPage() {
             <h1 style={{ color: '#fff', fontSize: 20, fontWeight: 700, margin: 0 }}>🔧 Taller</h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {esAdmin ? (
+            {esAdmin || sucursalLibre ? (
               <select value={sucursal} onChange={e => setSucursal(e.target.value)}
                 style={{ padding: '7px 10px', borderRadius: 10, border: 'none', fontSize: 14, fontWeight: 600 }}>
                 {SUCURSALES.map(s => <option key={s}>{s}</option>)}

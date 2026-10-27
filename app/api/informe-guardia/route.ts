@@ -155,7 +155,8 @@ async function fetchEventos(admin: any, userIds: string[], desde: string, hasta:
     .order('fecha', { ascending: true })
     .order('created_at', { ascending: true })
   if (error) throw new Error(error.message)
-  return data ?? []
+  // Los retiros de clientes con vehículo propio no son ciclos de la flota
+  return (data ?? []).filter((e: any) => e.categoria !== 'retira_cliente')
 }
 
 export async function GET(req: NextRequest) {

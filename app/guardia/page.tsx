@@ -36,7 +36,7 @@ function toCSV(rows: any[]): string {
     'fecha', 'hora', 'tipo', 'camion_codigo', 'cant_pedidos',
     'tipo_ingreso', 'deposito_desde',
     'lleva_transferencia', 'deposito_destino',
-    'chofer_apellido', 'categoria', 'motivo', 'remito', 'nv', 'observacion',
+    'chofer_apellido', 'categoria', 'cliente', 'motivo', 'remito', 'nv', 'observacion',
     'cant_posiciones', 'paquetes_hierro', 'registrado_por_nombre',
   ]
   const header = cols.join(';')
@@ -118,6 +118,16 @@ export default function GuardiaPage() {
   const [salDepositoDestino, setSalDepositoDestino] = useState('')
   const [salFotos, setSalFotos] = useState<FotoItem[]>([])
   const salFileRef = useRef<HTMLInputElement>(null)
+
+  // Salida: retira un cliente con su propio vehículo (no es un camión de la flota)
+  const [salModo, setSalModo] = useState<'camion' | 'cliente'>('camion')
+  const [rcCliente, setRcCliente] = useState('')
+  const [rcVehiculo, setRcVehiculo] = useState('')
+  const [rcQuien, setRcQuien] = useState('')
+  const [rcNV, setRcNV] = useState('')
+  const [rcObs, setRcObs] = useState('')
+  const [rcFotos, setRcFotos] = useState<FotoItem[]>([])
+  const rcFileRef = useRef<HTMLInputElement>(null)
 
   // Ingreso
   const [ingChofer, setIngChofer] = useState('')
@@ -259,6 +269,9 @@ export default function GuardiaPage() {
     setSalConTransferencia(false); setSalDepositoDestino('')
     salFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setSalFotos([])
+    setSalModo('camion'); setRcCliente(''); setRcVehiculo(''); setRcQuien(''); setRcNV(''); setRcObs('')
+    rcFotos.forEach(f => URL.revokeObjectURL(f.preview))
+    setRcFotos([])
     setIngChofer(''); setIngCamion(''); setIngTipo('directo'); setIngDeposito('')
     ingFotos.forEach(f => URL.revokeObjectURL(f.preview))
     setIngFotos([])
@@ -366,7 +379,7 @@ export default function GuardiaPage() {
     }
     const byFechaCamion: Record<string, any[]> = {}
     for (const e of rows) {
-      if (!e.camion_codigo) continue
+      if (!e.camion_codigo || e.categoria === 'retira_cliente') continue
       const key = `${e.fecha}__${e.camion_codigo}`
       if (!byFechaCamion[key]) byFechaCamion[key] = []
       byFechaCamion[key].push(e)
@@ -412,7 +425,7 @@ export default function GuardiaPage() {
     setMatrizLoading(true)
     const { data } = await supabase
       .from('guardia_eventos')
-      .select('id, camion_codigo, tipo, created_at, hora_evento, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls, observacion, motivo, nv, remito, categoria')
+      .select('id, camion_codigo, tipo, created_at, hora_evento, cant_pedidos, tipo_ingreso, cant_posiciones, paquetes_hierro, lleva_transferencia, deposito_destino, registrado_por, chofer_apellido, fotos_urls, observacion, motivo, nv, remito, categoria, cliente')
       .eq('fecha', fecha)
       .order('created_at', { ascending: true })
     setMatrizData(data ?? [])
@@ -465,6 +478,31 @@ export default function GuardiaPage() {
       showToast('Error al guardar', 'err')
     }
     finally { setGuardando(false) }
+  }
+
+  const registrarRetiraCliente = async () => {
+    const cliente = rcCliente.trim(); const vehiculo = rcVehiculo.trim().toUpperCase()
+    if (!cliente) { showToast('Indicá el cliente que retira', 'err'); return }
+    if (!vehiculo) { showToast('Indicá el vehículo (patente o descripción)', 'err'); return }
+    setGuardando(true)
+    try {
+      const eventoId = crypto.randomUUID()
+      const fotosUrls = rcFotos.length > 0 ? await subirFotos(rcFotos, eventoId) : []
+      const { error } = await supabase.from('guardia_eventos').insert({
+        id: eventoId, fecha: hoy(), tipo: 'salida',
+        camion_codigo: vehiculo, chofer_apellido: rcQuien.trim() || null,
+        categoria: 'retira_cliente', cliente,
+        nv: rcNV.trim() || null, observacion: rcObs.trim() || null,
+        cant_pedidos: null, lleva_transferencia: false, deposito_destino: null,
+        fotos_urls: fotosUrls, registrado_por: userId,
+      })
+      if (error) throw error
+      setUltimoEvento(`✅ Retiró ${cliente} con ${vehiculo}${rcNV.trim() ? ` · NV ${rcNV.trim()}` : ''} — ${horaLocal()}`)
+      resetForms(); setAccion('home')
+      showToast(`Salida registrada — retira ${cliente}`)
+    } catch (err: any) {
+      showToast(err?.message || 'Error al guardar', 'err')
+    } finally { setGuardando(false) }
   }
 
   const registrarIngreso = async () => {
@@ -1013,7 +1051,7 @@ export default function GuardiaPage() {
                           {camionesConActividad.map((camion, idx) => (
                             <tr key={camion} style={{ borderTop: '1px solid #f5f5f5', background: idx % 2 === 0 ? '#fff' : '#fafafa' }}>
                               <td style={{ padding: '10px 14px', fontWeight: 700, color: '#1a1a1a', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: idx % 2 === 0 ? '#fff' : '#fafafa', borderRight: '1px solid #e8edf8', zIndex: 1 }}>
-                                {camion}
+                                {matrizData.some((e: any) => e.camion_codigo === camion && e.categoria === 'retira_cliente') ? '🧍 ' : ''}{camion}
                               </td>
                               {TIPOS.map(t => {
                                 const evs = byKey[camion]?.[t.key] ?? []
@@ -1026,7 +1064,9 @@ export default function GuardiaPage() {
                                   <td key={t.key} style={{ padding: '8px 12px', textAlign: 'center' }}>
                                     {evs.map((ev: any, i: number) => {
                                       let detalle = ''
-                                      if (ev.tipo === 'salida') {
+                                      if (ev.tipo === 'salida' && ev.categoria === 'retira_cliente') {
+                                        detalle = `🧍 ${ev.cliente ?? 'retira cliente'}`
+                                      } else if (ev.tipo === 'salida') {
                                         const base = ev.cant_pedidos > 0 ? `${ev.cant_pedidos} ped.` : 'vacío'
                                         const transf = ev.lleva_transferencia ? ` 🔀${ev.deposito_destino ? ' → ' + ev.deposito_destino : ''}` : ''
                                         detalle = base + transf
@@ -1109,6 +1149,47 @@ export default function GuardiaPage() {
         {/* SALIDA */}
         {accion === 'salida' && (
           <div style={{ background: '#fff', borderRadius: 16, padding: '20px 16px', border: '1px solid #e0e0e0' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              {([{ key: 'camion', label: '🚛 Camión propio' }, { key: 'cliente', label: '🧍 Retira cliente' }] as const).map(o => (
+                <button key={o.key} onClick={() => setSalModo(o.key)}
+                  style={{ flex: 1, padding: '13px 6px', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                    border: salModo === o.key ? '2px solid #254A96' : '1.5px solid #e0e0e0',
+                    background: salModo === o.key ? '#eef2fb' : '#fff', color: salModo === o.key ? '#254A96' : '#666' }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
+            {salModo === 'cliente' ? (
+              <>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Cliente que retira</label>
+                  <input value={rcCliente} onChange={e => setRcCliente(e.target.value)} placeholder="Nombre o razón social" style={inputStyle} />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Vehículo del cliente</label>
+                  <input value={rcVehiculo} onChange={e => setRcVehiculo(e.target.value.toUpperCase())} placeholder="Patente (ej: AB123CD) o descripción" style={inputStyle} autoCapitalize="characters" />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Quién retira <span style={{ color: '#888', fontWeight: 400 }}>(opcional)</span></label>
+                  <input value={rcQuien} onChange={e => setRcQuien(e.target.value)} placeholder="Nombre del que viene a retirar" style={inputStyle} />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>NV <span style={{ color: '#888', fontWeight: 400 }}>(opcional)</span></label>
+                  <input value={rcNV} onChange={e => setRcNV(e.target.value)} inputMode="numeric" placeholder="ej: 63365" style={inputStyle} />
+                </div>
+                <div style={fieldStyle}>
+                  <label style={labelStyle}>Observación <span style={{ color: '#888', fontWeight: 400 }}>(opcional)</span></label>
+                  <input value={rcObs} onChange={e => setRcObs(e.target.value)} placeholder="ej: retira 10 bolsas de cemento" style={inputStyle} />
+                </div>
+                <FotoSection fotos={rcFotos} setter={setRcFotos} fileRef={rcFileRef} color="#254A96" />
+                <button onClick={registrarRetiraCliente} disabled={guardando} style={btnPrimary}>
+                  {guardando ? 'Guardando…' : 'Registrar retiro de cliente'}
+                </button>
+                <button onClick={() => { setAccion('home'); resetForms() }} style={btnSecondary}>Cancelar</button>
+              </>
+            ) : (
+              <>
             <div style={fieldStyle}>
               <label style={labelStyle}>Chofer</label>
               <SearchSelect
@@ -1179,6 +1260,8 @@ export default function GuardiaPage() {
               {guardando ? 'Guardando…' : salVacio && salConTransferencia ? 'Registrar salida vacío + transferencia' : salConTransferencia ? 'Registrar salida con transferencia' : salVacio ? 'Registrar salida vacío' : 'Registrar salida'}
             </button>
             <button onClick={() => { setAccion('home'); resetForms() }} style={btnSecondary}>Cancelar</button>
+              </>
+            )}
           </div>
         )}
 
@@ -1380,7 +1463,8 @@ export default function GuardiaPage() {
               const campos = [
                 ev.nv && { label: 'NV', value: ev.nv },
                 ev.remito && { label: 'Remito', value: ev.remito },
-                ev.categoria && { label: 'Categoría', value: ev.categoria },
+                ev.cliente && { label: 'Cliente', value: ev.cliente },
+                ev.categoria && { label: 'Categoría', value: ev.categoria === 'retira_cliente' ? 'Retira cliente' : ev.categoria },
                 ev.tipo_ingreso && { label: 'Tipo ingreso', value: ev.tipo_ingreso },
                 ev.motivo && { label: 'Motivo', value: ev.motivo },
                 ev.observacion && { label: 'Observación', value: ev.observacion },

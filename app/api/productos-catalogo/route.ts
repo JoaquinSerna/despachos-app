@@ -117,6 +117,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data ?? [])
   }
 
+  // Búsqueda por descripción: todas las palabras tienen que estar en el nombre
+  const q = searchParams.get('q')
+  if (q !== null) {
+    const palabras = q.trim().split(/\s+/).map(w => w.replace(/[%_,()]/g, '')).filter(w => w.length >= 1).slice(0, 6)
+    if (!palabras.length || q.trim().length < 2) return NextResponse.json([])
+    let consulta = admin.from('productos_catalogo').select('id, nombre, activo')
+    for (const w of palabras) consulta = consulta.ilike('nombre', `%${w}%`)
+    const { data, error } = await consulta.order('activo', { ascending: false }).order('nombre').limit(12)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json(data ?? [])
+  }
+
   const codigo = searchParams.get('codigo')
   if (codigo) {
     const trimmed = codigo.trim()

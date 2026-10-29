@@ -34,3 +34,20 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## API: lectura de pedidos para el Tablero de Abastecimiento
+
+`GET /api/pedidos-export?desde=AAAA-MM-DD&hasta=AAAA-MM-DD`
+
+Solo lectura. Devuelve los pedidos programados (misma consulta que la hoja "Pedidos" del export Excel de Métricas: por fecha de entrega, sin cancelados) con la **sucursal desde la que realmente sale cada pedido**, para vincularla por SD con lo que figura en Huemul.
+
+- **Autenticación:** header `x-api-secret` con el valor de la variable de entorno `DESPACHOS_PEDIDOS_SECRET` (Vercel). Sin secreto o con uno incorrecto responde `401`. Si la variable no está configurada, siempre `401`.
+- **Parámetros:** `desde` y `hasta` sobre la fecha de entrega. Por defecto, de hace 45 días a 30 días hacia adelante. Formato inválido → `400`.
+- **Respuesta:** `generadoEn`, `desde`, `hasta`, `total`, `truncado` (tope de 20.000 filas) y `pedidos[]` con `sd` (texto; puede tener letra, p. ej. `50008B`), `nv` (número), `sucursal` (`Guernica`, `Cañuelas`, `Pinamar`, `LP520`, `LP139`), `fecha`, `vuelta` (`V1`, `V2`… o `Sin asignar`), `camion`, `estado`, `tipo` (`entrega` o `retiro`) y `creadoEn`. Una fila por pedido: una SD con entregas divididas devuelve varias filas.
+- No incluye datos personales ni de ubicación (cliente, dirección, coordenadas, notas). La tabla `pedidos` no guarda fecha de modificación, por eso no hay `actualizadoEn` ni filtro `actualizadoDesde`.
+- `Cache-Control: no-store`.
+
+```bash
+curl -H "x-api-secret: $DESPACHOS_PEDIDOS_SECRET" \
+  "https://despachos-app-omega.vercel.app/api/pedidos-export?desde=2026-10-19&hasta=2026-10-25"
+```

@@ -563,7 +563,9 @@ export default function PedidosPage() {
     if (data.error) {
       showToast(`Error: ${data.error}`, 'err')
     } else {
-      showToast(`Transferencia solicitada desde ${transOrigen} → ${modalTransfer.sucursal}`)
+      showToast(data.aprobada_automaticamente
+        ? `Transferencia ${transOrigen} → ${modalTransfer.sucursal} aprobada automáticamente (tiene la venta NV ${modalTransfer.nv})${data.id_extra ? '. La cantidad de más quedó pendiente de aprobar' : ''}`
+        : `Transferencia solicitada desde ${transOrigen} → ${modalTransfer.sucursal}`)
       setModalTransfer(null)
     }
   }

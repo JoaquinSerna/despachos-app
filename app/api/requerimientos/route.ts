@@ -43,28 +43,100 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(data ?? [])
 }
 
+// Clave para comparar nombres de producto: sin número de línea, acentos ni signos
+const claveNombre = (n: string) => (n ?? '').replace(/^\s*\d+\s*[.)-]\s*/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+type ItemNuevo = { id_producto?: number | null; nombre_producto: string; cantidad_solicitada: number; [k: string]: any }
+
+// Una transferencia que tiene una venta (NV) asignada se aprueba sola por la cantidad que esa venta necesita
+// (menos lo que ya se pidió por transferencia para la misma NV). Lo que se pidió de más queda pendiente de aprobar.
+async function repartirSegunVenta(admin: ReturnType<typeof getAdmin>, nv: string, items: ItemNuevo[]) {
+  const { data: pedidos } = await admin.from('pedidos').select('id').eq('nv', nv).neq('estado', 'cancelado').neq('estado', 'rechazado')
+  const ids = (pedidos ?? []).map((p: any) => p.id)
+  if (!ids.length) return null
+
+  const { data: itemsVenta } = await admin.from('pedido_items').select('nombre, cantidad, codigo_material').in('pedido_id', ids)
+  if (!itemsVenta?.length) return null
+
+  const { data: previos } = await admin.from('requerimientos')
+    .select('requerimiento_items(id_producto, nombre_producto, cantidad_solicitada, cantidad_aprobada)')
+    .eq('nv', nv).neq('estado', 'rechazado')
+
+  const mismoProducto = (it: { id_producto?: number | null; nombre_producto?: string | null }, venta: any) => {
+    if (it.id_producto && venta.codigo_material && String(it.id_producto) === String(venta.codigo_material)) return true
+    return !!it.nombre_producto && claveNombre(it.nombre_producto) === claveNombre(venta.nombre ?? venta.nombre_producto ?? '')
+  }
+
+  const auto: ItemNuevo[] = []
+  const extra: ItemNuevo[] = []
+  for (const it of items) {
+    const pedido = (itemsVenta as any[]).filter(v => mismoProducto(it, v)).reduce((sum, v) => sum + (Number(v.cantidad) || 0), 0)
+    const yaPedido = (previos ?? []).flatMap((r: any) => r.requerimiento_items ?? [])
+      .filter((x: any) => mismoProducto(it, { codigo_material: x.id_producto, nombre: x.nombre_producto }))
+      .reduce((sum: number, x: any) => sum + (Number(x.cantidad_aprobada ?? x.cantidad_solicitada) || 0), 0)
+    const cant = Number(it.cantidad_solicitada) || 0
+    const aprobable = Math.min(cant, Math.max(0, pedido - yaPedido))
+    if (aprobable > 0) auto.push({ ...it, cantidad_solicitada: aprobable })
+    if (cant - aprobable > 0) extra.push({ ...it, cantidad_solicitada: cant - aprobable })
+  }
+  return { auto, extra }
+}
+
+async function crearRequerimiento(admin: ReturnType<typeof getAdmin>, reqData: any, items: any[]) {
+  const { data: req_, error: reqErr } = await admin.from('requerimientos').insert(reqData).select().single()
+  if (reqErr) return { error: reqErr.message as string }
+  if (items.length > 0) {
+    const { error: itemsErr } = await admin.from('requerimiento_items').insert(items.map(it => ({ ...it, requerimiento_id: req_.id })))
+    if (itemsErr) return { error: itemsErr.message as string }
+  }
+  return { id: req_.id as string }
+}
+
 // POST /api/requerimientos — crear nuevo requerimiento con sus items
 export async function POST(req: NextRequest) {
   const admin = getAdmin()
   const body = await req.json()
   const { items, ...reqData } = body
 
-  const { data: req_, error: reqErr } = await admin
-    .from('requerimientos')
-    .insert(reqData)
-    .select()
-    .single()
+  // Con una venta asignada: se aprueba sola por lo que la venta necesita y lo extra queda pendiente
+  const conVenta = !!reqData.nv && String(reqData.nv).trim() !== '' && (reqData.estado ?? 'pendiente') === 'pendiente' && Array.isArray(items) && items.length > 0
+  if (conVenta) {
+    let reparto: Awaited<ReturnType<typeof repartirSegunVenta>> = null
+    try { reparto = await repartirSegunVenta(admin, String(reqData.nv).trim(), items) } catch { reparto = null }
+    if (reparto && reparto.auto.length > 0) {
+      const notaBase = reqData.notas ? `${reqData.notas}\n` : ''
+      const aprobada = await crearRequerimiento(admin, {
+        ...reqData, estado: 'conf_stock',
+        notas: `${notaBase}✅ Aprobada automáticamente: tiene la venta NV ${reqData.nv} asignada.`,
+      }, reparto.auto.map(it => ({ ...it, cantidad_aprobada: it.cantidad_solicitada })))
+      if (aprobada.error) return NextResponse.json({ error: aprobada.error }, { status: 500 })
 
-  if (reqErr) return NextResponse.json({ error: reqErr.message }, { status: 500 })
+      let idExtra: string | null = null
+      if (reparto.extra.length > 0) {
+        // La cantidad de más no corresponde a la venta: va como solicitud aparte, pendiente de aprobar
+        const extra = await crearRequerimiento(admin, {
+          ...reqData, nv: null, cliente: null, estado: 'pendiente',
+          notas: `${notaBase}Cantidad pedida de más sobre la venta NV ${reqData.nv}: queda pendiente de aprobar.`,
+        }, reparto.extra)
+        if (extra.error) return NextResponse.json({ error: `La transferencia se aprobó, pero no se pudo crear la parte extra: ${extra.error}`, id: aprobada.id }, { status: 500 })
+        idExtra = extra.id ?? null
+      }
 
-  if (items?.length > 0) {
-    const { error: itemsErr } = await admin
-      .from('requerimiento_items')
-      .insert(items.map((it: any) => ({ ...it, requerimiento_id: req_.id })))
-    if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 500 })
+      // Peso y posiciones de lo aprobado (igual que cuando se aprueba a mano)
+      try {
+        await fetch(new URL('/api/recalcular-posiciones', req.url), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requerimiento_id: aprobada.id }),
+        })
+      } catch { /* no bloquea la creación */ }
+
+      return NextResponse.json({ success: true, id: aprobada.id, aprobada_automaticamente: true, id_extra: idExtra })
+    }
   }
 
-  return NextResponse.json({ success: true, id: req_.id })
+  const creada = await crearRequerimiento(admin, reqData, Array.isArray(items) ? items : [])
+  if (creada.error) return NextResponse.json({ error: creada.error }, { status: 500 })
+  return NextResponse.json({ success: true, id: creada.id })
 }
 
 // PATCH /api/requerimientos — actualizar estado u otros campos

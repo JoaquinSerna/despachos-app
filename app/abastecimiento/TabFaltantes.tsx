@@ -102,27 +102,48 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
     if (!(cant > 0)) { showToast('Ingresá una cantidad válida', 'err'); return }
     setEnviando(true)
     try {
-      const nvs = [...new Set(modal.linea.pedidos.map(p => String(p.nv)))]
       const idNum = modal.v.codigo && /^\d+$/.test(modal.v.codigo) ? Number(modal.v.codigo) : null
-      const res = await fetch('/api/requerimientos', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tipo: 'abastecimiento', sucursal_origen: origen, sucursal_destino: modal.v.sucursal, estado: 'pendiente',
-          fecha_req: hoyISO(), fecha_solicitada: fechaSol || null, solicitado_por: userEmail,
-          nv: nvs.length === 1 ? nvs[0] : null,
-          cliente: nvs.length === 1 ? modal.linea.pedidos[0].cliente : null,
-          notas: notaTr.trim() || null,
-          items: [{ id_producto: idNum, nombre_producto: modal.v.nombre, cantidad_solicitada: cant }],
-        }),
-      })
-      const j = await res.json()
-      if (!res.ok || !j.id) throw new Error(j.error ?? 'No se pudo crear la transferencia')
+      const crear = async (extra: { nv: string | null; cliente: string | null }, cantidadItem: number) => {
+        const res = await fetch('/api/requerimientos', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tipo: 'abastecimiento', sucursal_origen: origen, sucursal_destino: modal.v.sucursal, estado: 'pendiente',
+            fecha_req: hoyISO(), fecha_solicitada: fechaSol || null, solicitado_por: userEmail,
+            nv: extra.nv, cliente: extra.cliente, notas: notaTr.trim() || null,
+            items: [{ id_producto: idNum, nombre_producto: modal.v.nombre, cantidad_solicitada: cantidadItem }],
+          }),
+        })
+        const j = await res.json()
+        if (!res.ok || !j.id) throw new Error(j.error ?? 'No se pudo crear la transferencia')
+        return j as { id: string; aprobada_automaticamente?: boolean; id_extra?: string | null }
+      }
+      // Una transferencia por cada venta (NV) afectada: se aprueba sola por lo que esa venta necesita.
+      // Lo que sobra de la cantidad pedida va aparte, sin venta, y queda pendiente de aprobar.
+      let resto = cant
+      let primeraId = ''
+      let aprobadas = 0
+      let pendientes = 0
+      for (const p of modal.linea.pedidos) {
+        if (resto <= 0) break
+        const asignar = Math.min(resto, p.cantidad)
+        const j = await crear({ nv: String(p.nv), cliente: p.cliente }, asignar)
+        resto -= asignar
+        primeraId = primeraId || j.id
+        if (j.aprobada_automaticamente) aprobadas++; else pendientes++
+        if (j.id_extra) pendientes++
+      }
+      if (resto > 0) {
+        const j = await crear({ nv: null, cliente: null }, resto)
+        primeraId = primeraId || j.id
+        pendientes++
+      }
+      const j = { id: primeraId }
       const { error } = await supabase.from('prep_validaciones').update({
         decision: 'transferencia', decision_nota: `${cant} desde ${origen}`, decision_req_id: j.id, decision_por: userId, decision_en: new Date().toISOString(),
       }).eq('id', modal.v.id)
       if (error) throw new Error('La transferencia se creó, pero no se pudo marcar la decisión')
       if (userId) logAuditoria(userId, userNombre, 'Pidió transferencia por faltante', 'Abastecimiento', { sucursal: modal.v.sucursal, fecha: modal.v.fecha, producto: modal.v.nombre, cantidad: cant, origen, requerimiento: j.id })
-      showToast(`Transferencia pedida desde ${origen} — queda pendiente de aprobar`)
+      showToast(`Transferencia desde ${origen}: ${aprobadas} aprobada${aprobadas !== 1 ? 's' : ''} automáticamente por tener venta${pendientes > 0 ? ` y ${pendientes} pendiente${pendientes !== 1 ? 's' : ''} de aprobar` : ''}`)
       setModal(null)
       await cargar()
     } catch (e: any) { showToast(e.message ?? 'Error', 'err') }

@@ -33,10 +33,17 @@ export default function ValidacionPrepView({ pedidos, sucursal, desde, hasta, pu
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState<string | null>(null)
   const [parte, setParte] = useState<{ id: string; valor: string } | null>(null)
-  const [verValidados, setVerValidados] = useState(true)
+  const [filtro, setFiltro] = useState<'pendientes' | 'validados' | 'todos'>('pendientes')
 
   const dias = useMemo(() => demandaPorDia(pedidos, sucursal), [pedidos, sucursal])
   const fechas = useMemo(() => [...dias.keys()].sort(), [dias])
+  const conteo = useMemo(() => {
+    let pendientes = 0; let validados = 0
+    for (const [fecha, lineas] of dias) for (const l of lineas.values()) {
+      if (estadoLinea(l.cantidad, validaciones[`${fecha}|${l.clave}`]).completa) validados++; else pendientes++
+    }
+    return { pendientes, validados, todos: pendientes + validados }
+  }, [dias, validaciones])
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -103,23 +110,37 @@ export default function ValidacionPrepView({ pedidos, sucursal, desde, hasta, pu
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3 text-xs" style={{ color: '#6b7280' }}>
-        <span>
-          {puedeValidar
-            ? 'Marcá lo que tenés físicamente. Si entran más pedidos del mismo producto, solo vas a validar la diferencia.'
-            : 'Solo consulta: la validación la hace el depósito de la sucursal.'}
-        </span>
-        <label className="flex items-center gap-1.5 ml-auto cursor-pointer">
-          <input type="checkbox" checked={verValidados} onChange={e => setVerValidados(e.target.checked)} /> Mostrar ya validados
-        </label>
+      <p className="text-xs" style={{ color: '#6b7280' }}>
+        {puedeValidar
+          ? 'Marcá lo que tenés físicamente. Si entran más pedidos del mismo producto, solo vas a validar la diferencia.'
+          : 'Solo consulta: la validación la hace el depósito de la sucursal.'}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {([
+          { k: 'pendientes', label: '⏳ Pendientes de validar', n: conteo.pendientes },
+          { k: 'validados', label: '✅ Ya validados', n: conteo.validados },
+          { k: 'todos', label: 'Todos', n: conteo.todos },
+        ] as const).map(o => (
+          <button key={o.k} onClick={() => setFiltro(o.k)}
+            style={{ padding: '11px 18px', borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: 'pointer',
+              border: `2px solid ${filtro === o.k ? '#254A96' : '#d6d6d6'}`, background: filtro === o.k ? '#254A96' : '#fff', color: filtro === o.k ? '#fff' : '#555' }}>
+            {o.label} <span style={{ opacity: 0.8, fontWeight: 600 }}>({o.n})</span>
+          </button>
+        ))}
       </div>
+      {filtro !== 'todos' && conteo[filtro] === 0 && (
+        <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
+          <p className="text-sm" style={{ color: '#6b7280' }}>{filtro === 'pendientes' ? '👌 No queda nada pendiente de validar en este período.' : 'Todavía no hay productos validados en este período.'}</p>
+        </div>
+      )}
 
       {fechas.map(fecha => {
         const lineas = [...dias.get(fecha)!.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
         const estados = lineas.map(l => estadoLinea(l.cantidad, validaciones[`${fecha}|${l.clave}`]))
         const nComp = estados.filter(e => e.completa).length
         const nFalt = estados.filter(e => e.faltanteDeclarado > 0).length
-        const visibles = lineas.filter((l, i) => verValidados || !estados[i].completa)
+        const visibles = lineas.filter((l, i) => filtro === 'todos' || (filtro === 'validados' ? estados[i].completa : !estados[i].completa))
+        if (visibles.length === 0) return null
         return (
           <div key={fecha} className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>
             <div className="px-4 py-3 flex flex-wrap items-center gap-3" style={{ background: '#e8edf8' }}>

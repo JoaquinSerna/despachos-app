@@ -129,6 +129,8 @@ export async function GET(request: NextRequest) {
   const pedidosDetalle = pedidosNormales
     .filter(ped => (itemsByPedido[ped.id] ?? []).length > 0)
     .map(ped => ({
+      id: ped.id,
+      estado: ped.estado ?? '',
       nv: ped.nv ?? '',
       cliente: ped.cliente ?? '',
       direccion: ped.direccion ?? '',

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/app/supabase'
@@ -8,6 +8,8 @@ import { rolesDe, rolSegun } from '@/app/lib/roles'
 import { tieneAcceso } from '@/app/lib/permisos'
 import type { jsPDF as JsPDFType } from 'jspdf'
 import TabConsolidado from './TabConsolidado'
+import TabFaltantes from './TabFaltantes'
+import ValidacionPrepView from './ValidacionPrep'
 
 // ─── Constantes ────────────────────────────────────────────────────────────────
 const SUCURSALES = ['LP139', 'LP520', 'Guernica', 'Cañuelas', 'Pinamar']
@@ -78,38 +80,6 @@ function calcDeadline(from: string, to: string, fechaDespacho: string): { date: 
 }
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────────
-type DecisionTipo = 'aprobado' | 'reasignado' | 'rechazado' | ''
-interface ItemDecision { tipo: DecisionTipo; sucursal_asignada: string }
-
-interface SdItem {
-  id_producto: number
-  nombre_producto: string
-  categoria: string
-  subcategoria: string
-  cantidad_solicitada: number
-  cantidad_entregada: number
-  hojas_de_ruta: string
-}
-interface SdSolicitud {
-  id: number
-  fecha_despacho: string | null
-  horario: string
-  prioridad: string
-  estado: string
-  id_venta: number | null
-  cliente: string
-  destino: string
-  direccion: string
-  sucursal: string   // sucursal_origen normalizada
-  items: SdItem[]
-}
-
-interface CatalogoEntry { id: number; nombre: string; activo: boolean }
-// stock[String(id_producto)][sucursal] = cantidad — siempre string para evitar type mismatch
-type StockMap = Record<string, Record<string, number>>
-// decisions[solId] = sol-level; decisions[`${solId}|${prodId}`] = item-level override
-type DecisionsMap = Record<string, ItemDecision>
-
 interface ReqItem {
   id: string
   id_producto: number | null
@@ -138,124 +108,6 @@ interface Requerimiento {
   requerimiento_items: ReqItem[]
 }
 
-// ─── Tipo para vista agregada (Sugerencias) ───────────────────────────────────
-interface SugerenciaRow {
-  id_producto: number
-  nombre_producto: string
-  categoria: string
-  sucursal: string
-  demandado: number
-  stock_local: number
-  deficit: number
-  disponible_otros: number
-  sucursal_mejor: string
-  cobertura: 'cubierto' | 'parcial' | 'sin_stock'
-  activo: boolean
-  sol_ids: number[]
-}
-
-/** Agrega demanda por (sucursal, producto) y calcula cobertura vs stock */
-function buildSugerencias(
-  solicitudes: SdSolicitud[],
-  stock: StockMap,
-  catalogo: Record<number, CatalogoEntry>,
-): SugerenciaRow[] {
-  // Clave única por producto: id_producto si es válido, sino "name:<nombre>"
-  // Esto evita que todos los ítems sin ID colapsen en una sola fila por sucursal
-  function prodKey(item: SdItem): string {
-    return (item.id_producto && item.id_producto > 0 && !isNaN(item.id_producto))
-      ? String(item.id_producto)
-      : `name:${item.nombre_producto.trim().toLowerCase()}`
-  }
-
-  const demand: Record<string, Record<string, SugerenciaRow>> = {}
-  for (const sol of solicitudes) {
-    for (const item of sol.items) {
-      if (!item.nombre_producto || item.nombre_producto === 'Transporte por km') continue
-      if (!demand[sol.sucursal]) demand[sol.sucursal] = {}
-      const key = prodKey(item)
-      if (!demand[sol.sucursal][key]) {
-        demand[sol.sucursal][key] = {
-          id_producto: item.id_producto, nombre_producto: item.nombre_producto,
-          categoria: item.categoria, sucursal: sol.sucursal,
-          demandado: 0, stock_local: 0, deficit: 0, disponible_otros: 0,
-          sucursal_mejor: '', cobertura: 'sin_stock',
-          activo: catalogo[item.id_producto]?.activo !== false, sol_ids: [],
-        }
-      }
-      demand[sol.sucursal][key].demandado += item.cantidad_solicitada
-      if (!demand[sol.sucursal][key].sol_ids.includes(sol.id))
-        demand[sol.sucursal][key].sol_ids.push(sol.id)
-    }
-  }
-  const rows: SugerenciaRow[] = []
-  for (const [suc, prods] of Object.entries(demand)) {
-    for (const [, row] of Object.entries(prods)) {
-      const pid = String(row.id_producto)
-      row.stock_local = stock[pid]?.[suc] ?? 0
-      row.deficit = Math.max(0, row.demandado - row.stock_local)
-      const others = Object.entries(stock[pid] ?? {})
-        .filter(([s]) => s !== suc)
-        .sort(([, a], [, b]) => (b as number) - (a as number))
-      if (others.length > 0) { row.disponible_otros = others[0][1] as number; row.sucursal_mejor = others[0][0] }
-      row.cobertura = row.stock_local >= row.demandado ? 'cubierto' : row.stock_local > 0 ? 'parcial' : 'sin_stock'
-      rows.push(row)
-    }
-  }
-  return rows
-}
-
-// ─── Helpers de decisión ───────────────────────────────────────────────────────
-/** Decide automáticamente basado en stock disponible */
-function autoSuggest(item: SdItem, sucursalOrigen: string, stock: StockMap): ItemDecision {
-  const stockProd = stock[String(item.id_producto)] ?? {}
-  const stockOrigen = stockProd[sucursalOrigen] ?? 0
-
-  if (stockOrigen >= item.cantidad_solicitada) {
-    return { tipo: 'aprobado', sucursal_asignada: sucursalOrigen }
-  }
-
-  // Buscar otra sucursal con más stock
-  const alternatives = Object.entries(stockProd)
-    .filter(([s]) => s !== sucursalOrigen)
-    .sort(([, a], [, b]) => (b as number) - (a as number))
-
-  if (alternatives.length > 0 && (alternatives[0][1] as number) >= item.cantidad_solicitada) {
-    return { tipo: 'reasignado', sucursal_asignada: alternatives[0][0] }
-  }
-
-  // Sin stock suficiente en ninguna sucursal → aprobar igual (operador decide)
-  return { tipo: 'aprobado', sucursal_asignada: sucursalOrigen }
-}
-
-/** Obtiene la decisión efectiva para un item (item-level override > sol-level) */
-function getDecision(decisions: DecisionsMap, solId: number, prodId: number): ItemDecision {
-  const itemKey = `${solId}|${prodId}`
-  if (decisions[itemKey]?.tipo) return decisions[itemKey]
-  const solKey = `${solId}`
-  if (decisions[solKey]?.tipo) return decisions[solKey]
-  return { tipo: '', sucursal_asignada: '' }
-}
-
-/** Estado general de una solicitud (para el badge) */
-function estadoGeneral(sol: SdSolicitud, decisions: DecisionsMap): 'sinverif' | 'aprobado' | 'reasignado' | 'rechazado' | 'mixto' {
-  const tipos = sol.items.map(it => getDecision(decisions, sol.id, it.id_producto).tipo)
-  const unique = new Set(tipos)
-  if (unique.has('rechazado') && unique.size === 1) return 'rechazado'
-  if (unique.has('') ) return 'sinverif'
-  if (unique.size === 1) return unique.values().next().value as any
-  return 'mixto'
-}
-
-// ─── Estilos de estado ─────────────────────────────────────────────────────────
-const DECISION_STYLE: Record<string, { bg: string; color: string; label: string }> = {
-  aprobado:  { bg: '#d1fae5', color: '#065f46', label: 'Aprobado' },
-  reasignado:{ bg: '#fef3c7', color: '#b45309', label: 'Reasignado' },
-  rechazado: { bg: '#fde8e8', color: '#E52322', label: 'Rechazado' },
-  sinverif:  { bg: '#f4f4f3', color: '#B9BBB7', label: 'Sin verificar' },
-  mixto:     { bg: '#e8edf8', color: '#254A96', label: 'Mixto' },
-}
-
 const ESTADO_LABEL: Record<string, string> = {
   pendiente:   'Pendiente',
   conf_stock:  'Aprobada',
@@ -274,16 +126,6 @@ const ESTADO_COLOR: Record<string, { bg: string; text: string }> = {
 }
 
 // ─── Componentes auxiliares ────────────────────────────────────────────────────
-function BadgeDecision({ tipo }: { tipo: string }) {
-  const s = DECISION_STYLE[tipo] ?? DECISION_STYLE['sinverif']
-  return (
-    <span className="text-xs px-2 py-0.5 rounded-full font-medium"
-      style={{ background: s.bg, color: s.color }}>
-      {s.label}
-    </span>
-  )
-}
-
 function BadgeEstado({ estado }: { estado: string }) {
   const c = ESTADO_COLOR[estado] ?? { bg: '#f4f4f3', text: '#666' }
   return (
@@ -308,14 +150,12 @@ export default function AbastecimientoPage() {
   const router = useRouter()
   const [rol, setRol] = useState('')
   const [userEmail, setUserEmail] = useState('')
-  const [tab, setTab] = useState<'verificacion' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion' | 'consolidado'>('verificacion')
+  const [userId, setUserId] = useState('')
+  const [userNombre, setUserNombre] = useState('')
+  const [miSucursal, setMiSucursal] = useState<string | null>(null)
+  const [tab, setTab] = useState<'faltantes' | 'transferencias' | 'transito' | 'historial' | 'importar' | 'preparacion' | 'consolidado'>('preparacion')
   const [highlightNv, setHighlightNv] = useState<string | null>(null)
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
-
-  function irATransferencia(nv: string) {
-    setHighlightNv(nv)
-    setTab('transferencias')
-  }
 
   const showToast = (msg: string, tipo: 'ok' | 'err' = 'ok') => {
     setToast({ msg, tipo }); setTimeout(() => setToast(null), 3500)
@@ -324,23 +164,24 @@ export default function AbastecimientoPage() {
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) { router.push('/'); return }
-      const { data } = await supabase.from('usuarios').select('rol, roles_extra, email, permisos').eq('id', user.id).single()
+      const { data } = await supabase.from('usuarios').select('rol, roles_extra, email, permisos, nombre, sucursal').eq('id', user.id).single()
       const roles = rolesDe(data?.rol, data?.roles_extra)
       // Esta pantalla distingue un solo rol: con roles combinados vale el que más puede hacer acá
       const r = rolSegun(roles, ['gerencia', 'admin_flota', 'deposito', 'ruteador'], data?.rol ?? '')
       if (!tieneAcceso(data?.permisos, roles, 'abastecimiento')) { router.push('/dashboard'); return }
       setRol(r)
       setUserEmail(data?.email ?? user.email ?? '')
+      setUserId(user.id); setUserNombre(data?.nombre ?? ''); setMiSucursal(data?.sucursal ?? null)
     })
   }, [])
 
   const TABS = [
-    { key: 'verificacion',   label: '📋 Verificación SD' },
+    { key: 'preparacion',    label: '📦 Preparación' },
+    { key: 'faltantes',      label: '⚠ Faltantes' },
     { key: 'transferencias', label: 'Transferencias' },
     { key: 'consolidado',    label: '🧮 Consolidado transferencias' },
     { key: 'transito',       label: 'En tránsito' },
     { key: 'historial',      label: 'Historial' },
-    { key: 'preparacion',    label: '📦 Preparación' },
     { key: 'importar',       label: '⬆ Importar' },
   ]
 
@@ -384,8 +225,9 @@ export default function AbastecimientoPage() {
 
       {/* Contenido */}
       <div className="flex-1 overflow-auto">
-        {tab === 'verificacion' && (
-          <TabVerificacion rol={rol} userEmail={userEmail} showToast={showToast} onIrATransferencia={irATransferencia} />
+        {tab === 'faltantes' && (
+          <TabFaltantes rol={rol} userEmail={userEmail} userId={userId} userNombre={userNombre} miSucursal={miSucursal} showToast={showToast}
+            onIrATransferencias={() => setTab('transferencias')} />
         )}
         {tab === 'transferencias' && (
           <TabRequerimientos filtroEstados={['pendiente', 'conf_stock', 'preparacion']} rol={rol} showToast={showToast} userEmail={userEmail}
@@ -398,7 +240,7 @@ export default function AbastecimientoPage() {
           <TabRequerimientos filtroEstados={['entregado', 'rechazado']} rol={rol} showToast={showToast} userEmail={userEmail} />
         )}
         {tab === 'preparacion' && (
-          <TabPreparacion />
+          <TabPreparacion rol={rol} userId={userId} userNombre={userNombre} miSucursal={miSucursal} showToast={showToast} />
         )}
         {tab === 'consolidado' && (
           <TabConsolidado rol={rol} showToast={showToast} />
@@ -407,1081 +249,6 @@ export default function AbastecimientoPage() {
           <TabImportar rol={rol} showToast={showToast} />
         )}
       </div>
-    </div>
-  )
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TAB: VERIFICACIÓN SD — vista Sugerencias de Transferencias
-// ═══════════════════════════════════════════════════════════════════════════════
-function TabVerificacion({ rol, userEmail, showToast, onIrATransferencia }: {
-  rol: string; userEmail: string; showToast: (msg: string, tipo?: 'ok' | 'err') => void
-  onIrATransferencia?: (nv: string) => void
-}) {
-  const [vistaSD, setVistaSD] = useState<'excel' | 'comercial'>('excel')
-  const [fechaDesde, setFechaDesde] = useState('')
-  const [fechaHasta, setFechaHasta] = useState('')
-  const [filtrosSucursal, setFiltrosSucursal] = useState<string[]>([])
-  const [filtrosCategorias, setFiltrosCategorias] = useState<string[]>([])
-  const [filtrosCoberturas, setFiltrosCoberturas] = useState<string[]>([])
-  const [filtrosEstado, setFiltrosEstado] = useState<string[]>([])
-  const [filtroActivo, setFiltroActivo] = useState('')
-  const [filtroTexto, setFiltroTexto] = useState('')
-
-  function togFiltro(arr: string[], val: string) {
-    return arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]
-  }
-  const [solicitudes, setSolicitudes] = useState<SdSolicitud[]>([])
-  const [stock, setStock] = useState<StockMap>({})
-  const [catalogo, setCatalogo] = useState<Record<number, CatalogoEntry>>({})
-  const [decisions, setDecisions] = useState<DecisionsMap>({})
-  const [fechasDeadline, setFechasDeadline] = useState<Record<string, string>>({})
-  const [pedidosSucursalMap, setPedidosSucursalMap] = useState<Record<string, { sucursal: string; estado: string; fecha_entrega?: string | null }>>({})
-  const [filtrosEstadoComercial, setFiltrosEstadoComercial] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [confirmando, setConfirmando] = useState(false)
-  const [stockFecha, setStockFecha] = useState<string | null>(null)
-  const [expandedBranches, setExpandedBranches] = useState<Set<string>>(new Set(SUCURSALES))
-
-  useEffect(() => {
-    supabase.from('stock_sucursal')
-      .select('actualizado_en').order('actualizado_en', { ascending: false }).limit(1)
-      .then(({ data }) => {
-        if (data?.[0]?.actualizado_en) setStockFecha(data[0].actualizado_en.split('T')[0])
-      })
-  }, [])
-
-  async function cargarSolicitudes() {
-    setLoading(true)
-    try {
-      const PAGE = 1000
-      let sols: any[] = []
-
-      if (vistaSD === 'comercial') {
-        // Modo comercial: ir directo a pedidos (vendedor_id IS NOT NULL), filtrar por fecha_entrega.
-        // No depende de solicitudes_importadas — aparecen TODOS los pedidos de comercial.
-        let peds: any[] = []
-        const PAGE_PEDS = 1000
-        let fromPeds = 0
-        while (true) {
-          let q = supabase.from('pedidos')
-            .select('id, nv, cliente, direccion, sucursal, estado, fecha_entrega')
-            .not('vendedor_id', 'is', null)
-            .neq('estado', 'cancelado')
-            .neq('estado', 'rechazado')
-            .order('fecha_entrega', { ascending: true })
-            .order('nv', { ascending: true })
-            .range(fromPeds, fromPeds + PAGE_PEDS - 1)
-          if (fechaDesde) q = q.gte('fecha_entrega', fechaDesde)
-          if (fechaHasta) q = q.lte('fecha_entrega', fechaHasta)
-          const { data: pedsPage, error: pedsErr } = await q
-          if (pedsErr) { showToast(`Error pedidos: ${pedsErr.message}`, 'err'); break }
-          if (!pedsPage || pedsPage.length === 0) break
-          peds = peds.concat(pedsPage)
-          if (pedsPage.length < PAGE_PEDS) break
-          fromPeds += PAGE_PEDS
-        }
-
-        // pedidosSucursalMap keyed by NV (primero por NV gana)
-        const pedMap: Record<string, { sucursal: string; estado: string; fecha_entrega: string | null }> = {}
-        for (const p of peds) {
-          if (!pedMap[String(p.nv)]) pedMap[String(p.nv)] = { sucursal: p.sucursal, estado: p.estado, fecha_entrega: p.fecha_entrega }
-        }
-        setPedidosSucursalMap(pedMap)
-
-        if (!peds.length) { setSolicitudes([]); setStock({}); setCatalogo({}); setDecisions({}); setFechasDeadline({}); setLoading(false); return }
-
-        // Cargar pedido_items para todos los pedidos
-        const pedIds = peds.map(p => p.id)
-        let allPedItems: any[] = []
-        const PED_BATCH = 200
-        for (let i = 0; i < pedIds.length; i += PED_BATCH) {
-          const { data: batch } = await supabase.from('pedido_items')
-            .select('pedido_id, codigo_material, nombre, cantidad, unidad')
-            .in('pedido_id', pedIds.slice(i, i + PED_BATCH))
-          if (batch) allPedItems = allPedItems.concat(batch)
-        }
-        const itemsByPedido: Record<string, any[]> = {}
-        for (const it of allPedItems) {
-          if (!itemsByPedido[it.pedido_id]) itemsByPedido[it.pedido_id] = []
-          itemsByPedido[it.pedido_id].push(it)
-        }
-
-        // Resolver nombre → id_producto: exact match primero, luego case-insensitive con catálogo completo
-        const uniqueNames = [...new Set(allPedItems.map((it: any) => it.nombre).filter(Boolean))]
-        const nameToId: Record<string, number> = {}
-        const NAME_BATCH = 200
-        for (let i = 0; i < uniqueNames.length; i += NAME_BATCH) {
-          const nameBatch = uniqueNames.slice(i, i + NAME_BATCH)
-          const [{ data: mats }, { data: aliases }] = await Promise.all([
-            supabase.from('materiales').select('id, nombre').in('nombre', nameBatch),
-            supabase.from('material_aliases').select('descripcion_pdf, material_id').in('descripcion_pdf', nameBatch),
-          ])
-          for (const m of mats ?? []) nameToId[m.nombre] = m.id
-          for (const a of aliases ?? []) if (a.material_id && !nameToId[a.descripcion_pdf]) nameToId[a.descripcion_pdf] = a.material_id
-        }
-        // Fallback case-insensitive: bajar catálogo completo y matchear los que quedaron sin resolver
-        const unresolvedNames = uniqueNames.filter(n => !nameToId[n])
-        if (unresolvedNames.length > 0) {
-          const [{ data: allMats }, { data: allAliases }, { data: allCatProds }] = await Promise.all([
-            supabase.from('materiales').select('id, nombre'),
-            supabase.from('material_aliases').select('descripcion_pdf, material_id'),
-            supabase.from('productos_catalogo').select('id, nombre'),
-          ])
-          const matByLower: Record<string, number> = {}
-          for (const m of allMats ?? []) matByLower[m.nombre.toLowerCase()] = m.id
-          const aliasByLower: Record<string, number> = {}
-          for (const a of allAliases ?? []) if (a.material_id) aliasByLower[a.descripcion_pdf.toLowerCase()] = a.material_id
-          const catByLower: Record<string, number> = {}
-          for (const p of allCatProds ?? []) catByLower[p.nombre.toLowerCase()] = p.id
-          // Intentos en orden: materiales/aliases → productos_catalogo, con strip de prefijo numérico y normalización coma→punto
-          const stripPrefix = (s: string) => s.replace(/^[\d.\/]+\s*/, '').trim()
-          const normDec = (s: string) => s.replace(/,/g, '.')
-          for (const name of unresolvedNames) {
-            const low = name.toLowerCase()
-            const stripped = stripPrefix(name).toLowerCase()
-            const lowNorm = normDec(low)
-            const strippedNorm = normDec(stripped)
-            const id = matByLower[low] ?? aliasByLower[low]
-              ?? matByLower[lowNorm] ?? aliasByLower[lowNorm]
-              ?? matByLower[stripped] ?? aliasByLower[stripped]
-              ?? matByLower[strippedNorm] ?? aliasByLower[strippedNorm]
-              ?? catByLower[low] ?? catByLower[lowNorm]
-              ?? catByLower[stripped] ?? catByLower[strippedNorm]
-            if (id) nameToId[name] = id
-          }
-        }
-
-        // Mapear pedidos a SdSolicitud con id_producto resuelto
-        const solsConItems: SdSolicitud[] = peds.map((p: any, idx: number) => ({
-          id: idx + 1,
-          fecha_despacho: p.fecha_entrega ?? null,
-          horario: '', prioridad: '',
-          estado: p.estado ?? '',
-          id_venta: isNaN(Number(p.nv)) ? null : Number(p.nv),
-          cliente: p.cliente ?? '',
-          destino: p.direccion ?? '',
-          direccion: p.direccion ?? '',
-          sucursal: p.sucursal ?? '',
-          items: (itemsByPedido[p.id] ?? []).map((it: any) => ({
-            id_producto: (it.codigo_material && !isNaN(Number(it.codigo_material)) ? Number(it.codigo_material) : null) ?? nameToId[it.nombre] ?? 0,
-            nombre_producto: it.nombre ?? '',
-            categoria: '', subcategoria: '',
-            cantidad_solicitada: Number(it.cantidad) || 0,
-            cantidad_entregada: 0,
-            hojas_de_ruta: '',
-          })),
-        }))
-
-        // Cargar stock y catálogo para los productos resueltos
-        const prodIds = [...new Set(Object.values(nameToId))]
-        const stockMap: StockMap = {}
-        const STOCK_BATCH = 150
-        for (let i = 0; i < prodIds.length; i += STOCK_BATCH) {
-          const { data: stockBatch } = await supabase.from('stock_sucursal')
-            .select('id_producto, sucursal, cantidad')
-            .in('id_producto', prodIds.slice(i, i + STOCK_BATCH))
-          for (const s of stockBatch ?? []) {
-            const key = String(s.id_producto)
-            if (!stockMap[key]) stockMap[key] = {}
-            stockMap[key][s.sucursal] = Number(s.cantidad)
-          }
-        }
-        setStock(stockMap)
-
-        if (prodIds.length > 0) {
-          const CAT_BATCH = 300
-          const catMap: Record<number, CatalogoEntry> = {}
-          for (let i = 0; i < prodIds.length; i += CAT_BATCH) {
-            const res = await fetch(`/api/productos-catalogo?ids=${prodIds.slice(i, i + CAT_BATCH).join(',')}`)
-            if (res.ok) { const catRaw: CatalogoEntry[] = await res.json(); for (const c of catRaw) catMap[c.id] = c }
-          }
-          setCatalogo(catMap)
-        }
-
-        setSolicitudes(solsConItems)
-        setDecisions({})
-        setFechasDeadline({})
-        setLoading(false)
-        return
-      } else {
-        // Modo Excel: filtrar solicitudes por fecha_despacho (comportamiento original)
-        let from = 0
-        while (true) {
-          let q = supabase.from('solicitudes_importadas').select('*').order('id').range(from, from + PAGE - 1)
-          if (fechaDesde) q = q.gte('fecha_despacho', fechaDesde)
-          if (fechaHasta) q = q.lte('fecha_despacho', fechaHasta)
-          const { data: page } = await q
-          if (!page || page.length === 0) break
-          sols = sols.concat(page)
-          if (page.length < PAGE) break
-          from += PAGE
-        }
-        setPedidosSucursalMap({})
-      }
-
-      if (!sols.length) { setSolicitudes([]); setLoading(false); return }
-
-      const solIds = sols.map((s: any) => s.id)
-      // Paginar items para evitar truncado por max_rows=1000 de PostgREST
-      // IN_BATCH pequeño + range pagination para garantizar que no se pierden items
-      let allItemsRaw: any[] = []
-      const IN_BATCH = 100
-      const ITEMS_PAGE = 1000
-      for (let i = 0; i < solIds.length; i += IN_BATCH) {
-        let fromItems = 0
-        while (true) {
-          const { data: batchData } = await supabase
-            .from('solicitudes_importadas_items')
-            .select('*')
-            .in('id_solicitud', solIds.slice(i, i + IN_BATCH))
-            .order('id')
-            .range(fromItems, fromItems + ITEMS_PAGE - 1)
-          if (!batchData || batchData.length === 0) break
-          allItemsRaw = allItemsRaw.concat(batchData)
-          if (batchData.length < ITEMS_PAGE) break
-          fromItems += ITEMS_PAGE
-        }
-      }
-      const itemsRaw = allItemsRaw
-
-      const prodIds = [...new Set((itemsRaw ?? []).map((it: any) => it.id_producto).filter(Boolean))]
-      // Batch stock query: 150 IDs × 5 sucursales = 750 rows per batch (under PostgREST 1000-row cap)
-      const stockMap: StockMap = {}
-      const STOCK_BATCH = 150
-      for (let i = 0; i < prodIds.length; i += STOCK_BATCH) {
-        const { data: stockBatch } = await supabase
-          .from('stock_sucursal')
-          .select('id_producto, sucursal, cantidad')
-          .in('id_producto', prodIds.slice(i, i + STOCK_BATCH))
-        for (const s of stockBatch ?? []) {
-          const key = String(s.id_producto)
-          if (!stockMap[key]) stockMap[key] = {}
-          stockMap[key][s.sucursal] = Number(s.cantidad)
-        }
-      }
-      setStock(stockMap)
-
-      // Batch catalogo query same way (URL length + row cap)
-      if (prodIds.length > 0) {
-        const CAT_BATCH = 300
-        const catMap: Record<number, CatalogoEntry> = {}
-        for (let i = 0; i < prodIds.length; i += CAT_BATCH) {
-          const res = await fetch(`/api/productos-catalogo?ids=${prodIds.slice(i, i + CAT_BATCH).join(',')}`)
-          if (res.ok) {
-            const catRaw: CatalogoEntry[] = await res.json()
-            for (const c of catRaw) catMap[c.id] = c
-          }
-        }
-        setCatalogo(catMap)
-      }
-
-      const fechas = [...new Set(sols.map((s: any) => s.fecha_despacho).filter(Boolean))]
-      const decMap: DecisionsMap = {}
-      for (const f of fechas) {
-        const res = await fetch(`/api/sd-decisiones?fecha=${f}`)
-        const decRaw: any[] = res.ok ? await res.json() : []
-        for (const d of decRaw) {
-          const key = d.id_producto ? `${d.id_solicitud}|${d.id_producto}` : `${d.id_solicitud}`
-          decMap[key] = { tipo: d.tipo, sucursal_asignada: d.sucursal_asignada }
-        }
-      }
-
-      const itemsBySol: Record<number, SdItem[]> = {}
-      for (const it of (itemsRaw ?? [])) {
-        if (!itemsBySol[it.id_solicitud]) itemsBySol[it.id_solicitud] = []
-        itemsBySol[it.id_solicitud].push({
-          id_producto: it.id_producto, nombre_producto: it.nombre_producto ?? '',
-          categoria: it.categoria ?? '', subcategoria: it.subcategoria ?? '',
-          cantidad_solicitada: it.cantidad_solicitada ?? 0, cantidad_entregada: it.cantidad_entregada ?? 0,
-          hojas_de_ruta: it.hojas_de_ruta ?? '',
-        })
-      }
-
-      const solsConItems: SdSolicitud[] = sols.map((s: any) => ({
-        id: s.id, fecha_despacho: s.fecha_despacho, horario: s.horario ?? '',
-        prioridad: s.prioridad ?? '', estado: s.estado ?? '', id_venta: s.id_venta,
-        cliente: s.cliente ?? '', destino: s.destino ?? '', direccion: s.direccion ?? '',
-        sucursal: s.sucursal ?? '', items: itemsBySol[s.id] ?? [],
-      }))
-      setSolicitudes(solsConItems)
-
-      const newDec = { ...decMap }
-      for (const sol of solsConItems) {
-        for (const item of sol.items) {
-          if (item.nombre_producto === 'Transporte por km') continue
-          const itemKey = `${sol.id}|${item.id_producto}`
-          const solKey = `${sol.id}`
-          if (!newDec[itemKey] && !newDec[solKey])
-            newDec[itemKey] = autoSuggest(item, sol.sucursal, stockMap)
-        }
-      }
-      setDecisions(newDec)
-
-      const dl: Record<string, string> = {}
-      for (const sol of solsConItems) {
-        const branches = new Set<string>()
-        for (const item of sol.items) {
-          const dec = newDec[`${sol.id}|${item.id_producto}`] ?? newDec[`${sol.id}`]
-          if (dec?.tipo === 'reasignado' && dec.sucursal_asignada && dec.sucursal_asignada !== sol.sucursal)
-            branches.add(dec.sucursal_asignada)
-        }
-        for (const branch of branches) {
-          const key = `${sol.id}|${branch}`
-          if (!dl[key]) dl[key] = calcDeadline(branch, sol.sucursal, sol.fecha_despacho ?? '').date
-        }
-      }
-      setFechasDeadline(dl)
-
-      // pedidosSucursalMap ya fue construido al inicio según el modo de vista
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'err')
-    }
-    setLoading(false)
-  }
-
-  async function confirmar() {
-    setConfirmando(true)
-    try {
-      const decToSave: any[] = []
-      for (const sol of solicitudes) {
-        const solDec = decisions[`${sol.id}`]
-        if (solDec) decToSave.push({ id_solicitud: sol.id, id_producto: null, tipo: solDec.tipo, sucursal_asignada: solDec.sucursal_asignada, fecha_sd: sol.fecha_despacho, operador: userEmail })
-        for (const item of sol.items) {
-          const itemDec = decisions[`${sol.id}|${item.id_producto}`]
-          if (itemDec) decToSave.push({ id_solicitud: sol.id, id_producto: item.id_producto, tipo: itemDec.tipo, sucursal_asignada: itemDec.sucursal_asignada, fecha_sd: sol.fecha_despacho, operador: userEmail })
-        }
-      }
-      const savedRes = await fetch('/api/sd-decisiones', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decisions: decToSave }),
-      })
-      if (!savedRes.ok) throw new Error('Error guardando decisiones')
-
-      const reqGrupos: Map<string, { sol: SdSolicitud; fromBranch: string; items: { nombre: string; id_producto: number; cantidad: number }[] }> = new Map()
-      for (const sol of solicitudes) {
-        for (const item of sol.items) {
-          if (item.nombre_producto === 'Transporte por km') continue
-          const dec = getDecision(decisions, sol.id, item.id_producto)
-          if (dec.tipo !== 'reasignado' || !dec.sucursal_asignada || dec.sucursal_asignada === sol.sucursal) continue
-          const key = `${sol.id}|${dec.sucursal_asignada}`
-          if (!reqGrupos.has(key)) reqGrupos.set(key, { sol, fromBranch: dec.sucursal_asignada, items: [] })
-          reqGrupos.get(key)!.items.push({ nombre: item.nombre_producto, id_producto: item.id_producto, cantidad: item.cantidad_solicitada })
-        }
-      }
-
-      // Verificar solicitudes activas antes de crear
-      const todosIds = [...reqGrupos.values()].flatMap(g => g.items.map(it => it.id_producto))
-      if (todosIds.length > 0) {
-        const { data: itemsActivos } = await supabase
-          .from('requerimiento_items')
-          .select('nombre_producto, requerimientos!inner(nv, estado, sucursal_destino)')
-          .in('id_producto', todosIds)
-        const activos = (itemsActivos ?? []).filter((it: any) =>
-          ['pendiente', 'conf_stock', 'preparacion', 'en_transito'].includes(it.requerimientos.estado)
-        )
-        if (activos.length > 0) {
-          const nombres = [...new Set(activos.map((it: any) => it.nombre_producto))].join(', ')
-          showToast(`⚠ Materiales con transferencia activa: ${nombres}`, 'err')
-        }
-      }
-
-      let reqCreados = 0
-      for (const [, grupo] of reqGrupos) {
-        const { sol, fromBranch } = grupo
-        const dlKey = `${sol.id}|${fromBranch}`
-        const fechaSolicitada = fechasDeadline[dlKey] || calcDeadline(fromBranch, sol.sucursal, sol.fecha_despacho ?? '').date
-        const res = await fetch('/api/requerimientos', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tipo: 'abastecimiento', nv: String(sol.id_venta), cliente: sol.cliente,
-            sucursal_origen: fromBranch, sucursal_destino: sol.sucursal,
-            estado: 'pendiente', vuelta: 0, fecha_req: hoy(), fecha_solicitada: fechaSolicitada || null,
-            solicitado_por: userEmail, notas: `Generado desde SD #${sol.id} — despacho ${fmtFecha(sol.fecha_despacho)}`,
-            items: grupo.items.map(it => ({ id_producto: it.id_producto, nombre_producto: it.nombre, cantidad_solicitada: it.cantidad })),
-          }),
-        })
-        if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando requerimiento') }
-        reqCreados++
-      }
-      showToast(`✓ ${decToSave.length} decisiones guardadas${reqCreados > 0 ? ` · ${reqCreados} transferencias generadas` : ''}`)
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'err')
-    }
-    setConfirmando(false)
-  }
-
-  // ── Datos derivados ────────────────────────────────────────────────────────
-  const estadosDisp = [...new Set(solicitudes.map(s => s.estado).filter(Boolean))].sort()
-
-  // Aplicar filtros de sucursal y estado ANTES de buildSugerencias
-  // En vista "comercial": solicitudes ya tienen sucursal/estado del pedido directamente
-  const solicitudesParaSugerencias = solicitudes
-    .filter(s => vistaSD !== 'comercial' || filtrosEstadoComercial.length === 0 || filtrosEstadoComercial.includes(s.estado))
-    .filter(s => filtrosSucursal.length === 0 || filtrosSucursal.includes(s.sucursal))
-    .filter(s => vistaSD === 'comercial' || filtrosEstado.length === 0 || filtrosEstado.includes(s.estado))
-    .filter(s => {
-      if (!filtroTexto) return true
-      const q = filtroTexto.toLowerCase()
-      if (s.id_venta && String(s.id_venta).includes(q)) return true
-      if (String(s.id).includes(q)) return true
-      if (s.cliente?.toLowerCase().includes(q)) return true
-      if (s.destino?.toLowerCase().includes(q)) return true
-      if (s.items.some(it => it.nombre_producto?.toLowerCase().includes(q))) return true
-      if (s.items.some(it => String(it.id_producto).includes(q))) return true
-      return false
-    })
-
-  const todasSugerencias = buildSugerencias(solicitudesParaSugerencias, stock, catalogo)
-  const categorias = [...new Set(todasSugerencias.map(r => r.categoria).filter(Boolean))].sort()
-
-  const sugerenciasFiltradas = todasSugerencias
-    .filter(r => filtrosCategorias.length === 0 || filtrosCategorias.includes(r.categoria))
-    .filter(r => filtrosCoberturas.length === 0 || filtrosCoberturas.includes(r.cobertura))
-    .filter(r => !filtroActivo || Object.keys(catalogo).length === 0 || String(r.activo) === filtroActivo)
-
-  const sinStock    = sugerenciasFiltradas.filter(r => r.cobertura === 'sin_stock').length
-  const parcial     = sugerenciasFiltradas.filter(r => r.cobertura === 'parcial').length
-  const cubiertos   = sugerenciasFiltradas.filter(r => r.cobertura === 'cubierto').length
-  const sucConDef   = new Set(sugerenciasFiltradas.filter(r => r.cobertura !== 'cubierto').map(r => r.sucursal)).size
-
-  const bySucursal: Record<string, SugerenciaRow[]> = {}
-  for (const r of sugerenciasFiltradas) {
-    if (!bySucursal[r.sucursal]) bySucursal[r.sucursal] = []
-    bySucursal[r.sucursal].push(r)
-  }
-
-  const STAT_CARDS = [
-    { value: sinStock,   label: 'Sin stock en red',       color: sinStock   > 0 ? '#E52322' : '#B9BBB7', key: 'sin_stock' },
-    { value: parcial,    label: 'Cobertura parcial',      color: parcial    > 0 ? '#d97706' : '#B9BBB7', key: 'parcial'   },
-    { value: cubiertos,  label: 'Cubiertos',              color: '#10b981',                               key: 'cubierto'  },
-    { value: sucConDef,  label: 'Sucursales con déficit', color: sucConDef  > 0 ? '#254A96' : '#B9BBB7', key: ''          },
-  ]
-
-  return (
-    <div className="px-4 md:px-6 py-4">
-
-      {/* ── Barra de filtros ─────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border px-4 pt-4 pb-3 mb-4 space-y-3" style={{ borderColor: '#f0f0f0' }}>
-
-        {/* Fila 0: Toggle de Vista */}
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-semibold" style={{ color: '#B9BBB7' }}>VISTA</label>
-          {(['excel', 'comercial'] as const).map(v => (
-            <button key={v} onClick={() => { setVistaSD(v); setFiltrosEstadoComercial([]) }}
-              className="text-xs px-3 py-1.5 rounded-full font-semibold transition-colors"
-              style={{
-                background: vistaSD === v ? '#254A96' : '#f0f4ff',
-                color: vistaSD === v ? '#fff' : '#254A96',
-                border: `1px solid ${vistaSD === v ? '#254A96' : '#d0daf5'}`,
-              }}>
-              {v === 'excel' ? '📥 Importados de Excel' : '👤 Cargados por comercial'}
-            </button>
-          ))}
-        </div>
-
-        {/* Fila 1: Fechas + botones */}
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Desde</label>
-            <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
-              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-          </div>
-          <div>
-            <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Hasta</label>
-            <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
-              className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }} />
-          </div>
-          {vistaSD === 'excel' && Object.keys(catalogo).length > 0 && (
-            <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#254A96' }}>Producto</label>
-              <select value={filtroActivo} onChange={e => setFiltroActivo(e.target.value)}
-                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none" style={{ borderColor: '#e8edf8' }}>
-                <option value="">Todos</option>
-                <option value="true">Solo activos</option>
-                <option value="false">Solo inactivos</option>
-              </select>
-            </div>
-          )}
-          <button onClick={cargarSolicitudes} disabled={loading}
-            className="px-4 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
-            style={{ background: '#254A96' }}>
-            {loading ? '…' : '🔄 Actualizar'}
-          </button>
-          {solicitudes.length > 0 && (
-            <>
-              <span className="text-xs" style={{ color: '#B9BBB7' }}>
-                {vistaSD === 'comercial'
-                  ? `${solicitudes.length} pedido${solicitudes.length !== 1 ? 's' : ''} de comercial`
-                  : `${solicitudes.length} SDs cargadas`}
-              </span>
-              {vistaSD === 'excel' && (
-                <button onClick={confirmar} disabled={confirmando}
-                  className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-50 ml-auto"
-                  style={{ background: '#10b981' }}>
-                  {confirmando ? 'Guardando…' : '✓ Confirmar verificación'}
-                </button>
-              )}
-            </>
-          )}
-        </div>
-
-        {solicitudes.length > 0 && (<>
-          {/* Fila 2: Buscador de texto */}
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1 max-w-md">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm" style={{ color: '#B9BBB7' }}>🔍</span>
-              <input
-                type="text"
-                value={filtroTexto}
-                onChange={e => setFiltroTexto(e.target.value)}
-                placeholder="Buscar por NV, cliente, código o producto…"
-                className="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-1"
-                style={{ borderColor: filtroTexto ? '#254A96' : '#e8edf8' }}
-              />
-            </div>
-            {filtroTexto && (
-              <button onClick={() => setFiltroTexto('')}
-                className="text-xs px-2.5 py-1.5 rounded-lg"
-                style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>
-                ✕
-              </button>
-            )}
-            {filtroTexto && (
-              <span className="text-xs" style={{ color: '#254A96' }}>
-                {solicitudesParaSugerencias.length} de {solicitudes.length} solicitudes
-              </span>
-            )}
-          </div>
-
-          {/* Fila 3: Sucursal chips */}
-          <div>
-            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>SUCURSAL</label>
-            <div className="flex flex-wrap gap-1.5">
-              {SUCURSALES.map(s => (
-                <button key={s} onClick={() => setFiltrosSucursal(prev => togFiltro(prev, s))}
-                  className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
-                  style={{
-                    background: filtrosSucursal.includes(s) ? '#254A96' : '#f0f4ff',
-                    color: filtrosSucursal.includes(s) ? '#fff' : '#254A96',
-                    border: `1px solid ${filtrosSucursal.includes(s) ? '#254A96' : '#d0daf5'}`,
-                  }}>
-                  {s}
-                </button>
-              ))}
-              {filtrosSucursal.length > 0 && (
-                <button onClick={() => setFiltrosSucursal([])} className="text-xs px-2 py-1 rounded-full"
-                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
-              )}
-            </div>
-          </div>
-
-          {/* Estado de pedido — solo vista Comercial */}
-          {vistaSD === 'comercial' && Object.keys(pedidosSucursalMap).length > 0 && (() => {
-            const estadosComercial = [...new Set(Object.values(pedidosSucursalMap).map(v => v.estado).filter(Boolean))].sort()
-            return estadosComercial.length > 0 ? (
-              <div>
-                <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>ESTADO DEL PEDIDO</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {estadosComercial.map(e => {
-                    const on = filtrosEstadoComercial.includes(e)
-                    const cnt = Object.values(pedidosSucursalMap).filter(v => v.estado === e).length
-                    return (
-                      <button key={e} onClick={() => setFiltrosEstadoComercial(prev => togFiltro(prev, e))}
-                        className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
-                        style={{
-                          background: on ? '#254A96' : '#f4f4f3',
-                          color: on ? '#fff' : '#444',
-                          border: `1px solid ${on ? '#254A96' : '#e0e0e0'}`,
-                        }}>
-                        {e} <span style={{ opacity: 0.7 }}>({cnt})</span>
-                      </button>
-                    )
-                  })}
-                  {filtrosEstadoComercial.length > 0 && (
-                    <button onClick={() => setFiltrosEstadoComercial([])} className="text-xs px-2 py-1 rounded-full"
-                      style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
-                  )}
-                </div>
-              </div>
-            ) : null
-          })()}
-
-          {/* Filas 3-5: solo vista Excel */}
-          {vistaSD === 'excel' && <>
-
-          {/* Fila 3: Cobertura chips */}
-          <div>
-            <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>COBERTURA</label>
-            <div className="flex flex-wrap gap-1.5">
-              {[
-                { v: 'sin_stock', label: 'Sin stock',  activeBg: '#E52322', activeFg: '#fff', idleBg: '#fde8e8', idleFg: '#E52322' },
-                { v: 'parcial',   label: 'Parcial',    activeBg: '#d97706', activeFg: '#fff', idleBg: '#fef3c7', idleFg: '#b45309' },
-                { v: 'cubierto',  label: 'Cubierto',   activeBg: '#10b981', activeFg: '#fff', idleBg: '#d1fae5', idleFg: '#065f46' },
-              ].map(opt => {
-                const on = filtrosCoberturas.includes(opt.v)
-                return (
-                  <button key={opt.v} onClick={() => setFiltrosCoberturas(prev => togFiltro(prev, opt.v))}
-                    className="text-xs px-2.5 py-1 rounded-full font-semibold transition-colors"
-                    style={{ background: on ? opt.activeBg : opt.idleBg, color: on ? opt.activeFg : opt.idleFg }}>
-                    {opt.label}
-                  </button>
-                )
-              })}
-              {filtrosCoberturas.length > 0 && (
-                <button onClick={() => setFiltrosCoberturas([])} className="text-xs px-2 py-1 rounded-full"
-                  style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
-              )}
-            </div>
-          </div>
-
-          {/* Fila 4: Estado de Entrega chips */}
-          {estadosDisp.length > 0 && (
-            <div>
-              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>ESTADO DE ENTREGA</label>
-              <div className="flex flex-wrap gap-1.5">
-                {estadosDisp.map(e => {
-                  const on = filtrosEstado.includes(e)
-                  const cnt = solicitudes.filter(s => s.estado === e).length
-                  return (
-                    <button key={e} onClick={() => setFiltrosEstado(prev => togFiltro(prev, e))}
-                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
-                      style={{
-                        background: on ? '#254A96' : '#f4f4f3',
-                        color: on ? '#fff' : '#444',
-                        border: `1px solid ${on ? '#254A96' : '#e0e0e0'}`,
-                      }}>
-                      {e} <span style={{ opacity: 0.7 }}>({cnt})</span>
-                    </button>
-                  )
-                })}
-                {filtrosEstado.length > 0 && (
-                  <button onClick={() => setFiltrosEstado([])} className="text-xs px-2 py-1 rounded-full"
-                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Fila 5: Categoría */}
-          {categorias.length > 0 && (
-            <div>
-              <label className="text-xs font-semibold block mb-1.5" style={{ color: '#B9BBB7' }}>CATEGORÍA</label>
-              <div className="flex flex-wrap gap-1.5">
-                {categorias.map(c => {
-                  const on = filtrosCategorias.includes(c)
-                  return (
-                    <button key={c} onClick={() => setFiltrosCategorias(prev => togFiltro(prev, c))}
-                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors"
-                      style={{
-                        background: on ? '#7c3aed' : '#f3f0ff',
-                        color: on ? '#fff' : '#7c3aed',
-                        border: `1px solid ${on ? '#7c3aed' : '#ddd6fe'}`,
-                      }}>
-                      {c}
-                    </button>
-                  )
-                })}
-                {filtrosCategorias.length > 0 && (
-                  <button onClick={() => setFiltrosCategorias([])} className="text-xs px-2 py-1 rounded-full"
-                    style={{ color: '#B9BBB7', border: '1px solid #e0e0e0' }}>✕ limpiar</button>
-                )}
-              </div>
-            </div>
-          )}
-
-          </>}
-        </>)}
-      </div>
-
-      {/* Stock fecha — solo Excel */}
-      {vistaSD === 'excel' && stockFecha && (
-        <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
-          ⏱ Stock evaluado al: <strong style={{ color: '#1a1a1a' }}>{fmtFecha(stockFecha)}</strong>
-        </p>
-      )}
-
-      {/* Nota informativa vista comercial */}
-      {vistaSD === 'comercial' && solicitudes.length > 0 && (
-        <p className="text-xs mb-3" style={{ color: '#B9BBB7' }}>
-          👤 Sucursales según el pedido cargado en la app (puede diferir del Excel)
-        </p>
-      )}
-
-      {/* Nombres sin identificar — solo vista comercial, para diagnóstico */}
-      {vistaSD === 'comercial' && solicitudes.length > 0 && (() => {
-        const sinId = [...new Set(
-          solicitudes.flatMap(s => s.items)
-            .filter(i => !i.id_producto || i.id_producto === 0)
-            .map(i => i.nombre_producto)
-        )].sort()
-        if (sinId.length === 0) return null
-        return (
-          <details className="mb-3 text-xs rounded-lg border p-3" style={{ borderColor: '#e0c4ff', background: '#faf5ff' }}>
-            <summary className="cursor-pointer font-semibold" style={{ color: '#7c3aed' }}>
-              ⚠ {sinId.length} nombre{sinId.length !== 1 ? 's' : ''} sin identificar (click para ver)
-            </summary>
-            <ul className="mt-2 space-y-0.5 font-mono" style={{ color: '#4b5563' }}>
-              {sinId.map(n => <li key={n}>• {n}</li>)}
-            </ul>
-          </details>
-        )
-      })()}
-
-      {<>
-
-        {/* ── Stats ────────────────────────────────────────────────────────── */}
-        {solicitudes.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            {STAT_CARDS.map(stat => (
-              <button key={stat.label}
-                onClick={() => stat.key && setFiltrosCoberturas(prev => togFiltro(prev, stat.key))}
-                className="bg-white rounded-xl border p-4 text-center transition-shadow hover:shadow-md"
-                style={{ borderColor: filtrosCoberturas.includes(stat.key) ? stat.color : '#f0f0f0', borderWidth: filtrosCoberturas.includes(stat.key) ? 2 : 1, cursor: stat.key ? 'pointer' : 'default' }}>
-                <div className="text-3xl font-bold" style={{ color: stat.color }}>{stat.value}</div>
-                <div className="text-xs mt-1" style={{ color: '#B9BBB7' }}>{stat.label}</div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* ── Lista ────────────────────────────────────────────────────────── */}
-        {loading ? (
-          <div className="flex justify-center py-24">
-            <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
-              style={{ borderColor: '#254A96', borderTopColor: 'transparent' }} />
-          </div>
-        ) : sugerenciasFiltradas.length === 0 ? (
-          <div className="flex flex-col items-center py-24" style={{ color: '#B9BBB7' }}>
-            <div className="text-5xl mb-4">📋</div>
-            <p className="font-medium">{solicitudes.length === 0 ? 'No hay solicitudes cargadas' : 'Sin resultados para los filtros'}</p>
-            {solicitudes.length === 0 && <p className="text-xs mt-1">Importá el Excel de SDs e ingresá hacé click en Actualizar</p>}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {Object.entries(bySucursal)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([suc, rows]) => (
-                <SucursalGroup key={suc} sucursal={suc} rows={rows}
-                  expanded={expandedBranches.has(suc)}
-                  onToggle={() => setExpandedBranches(prev => {
-                    const s = new Set(prev); s.has(suc) ? s.delete(suc) : s.add(suc); return s
-                  })}
-                  showToast={showToast}
-                  userEmail={userEmail}
-                  solicitudes={solicitudesParaSugerencias}
-                  onIrATransferencia={onIrATransferencia}
-                />
-              ))}
-          </div>
-        )}
-
-      </>}
-    </div>
-  )
-}
-
-// ─── Grupo por sucursal ────────────────────────────────────────────────────────
-function SucursalGroup({ sucursal, rows, expanded, onToggle, showToast, userEmail, solicitudes, onIrATransferencia }: {
-  sucursal: string; rows: SugerenciaRow[]; expanded: boolean; onToggle: () => void
-  showToast: (msg: string, tipo?: 'ok' | 'err') => void; userEmail: string; solicitudes: SdSolicitud[]
-  onIrATransferencia?: (nv: string) => void
-}) {
-  const sinStock    = rows.filter(r => r.cobertura === 'sin_stock' && r.id_producto > 0).length
-  const parcial     = rows.filter(r => r.cobertura === 'parcial').length
-  const cubierto    = rows.filter(r => r.cobertura === 'cubierto').length
-  const sinIdentif  = rows.filter(r => !(r.id_producto > 0)).length
-
-  return (
-    <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#f0f0f0' }}>
-      <div className="px-4 py-3 flex items-center gap-3 cursor-pointer select-none"
-        style={{ background: '#fafbff' }} onClick={onToggle}>
-        <span className="font-semibold text-sm" style={{ color: '#254A96' }}>🏬 {sucursal}</span>
-        <div className="flex items-center gap-2 flex-wrap">
-          {sinStock > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-              style={{ background: '#fde8e8', color: '#E52322' }}>✕ {sinStock} sin stock</span>
-          )}
-          {parcial > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-              style={{ background: '#fef3c7', color: '#b45309' }}>△ {parcial} parcial</span>
-          )}
-          {cubierto > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-              style={{ background: '#d1fae5', color: '#065f46' }}>✓ {cubierto} cubierto</span>
-          )}
-          {sinIdentif > 0 && (
-            <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
-              style={{ background: '#f3f0ff', color: '#7c3aed' }}>? {sinIdentif} sin identificar</span>
-          )}
-        </div>
-        <span className="ml-auto text-xs" style={{ color: '#B9BBB7' }}>{expanded ? '▲' : '▼'}</span>
-      </div>
-
-      {expanded && (
-        <div className="border-t divide-y" style={{ borderColor: '#f0f0f0' }}>
-          {rows
-            .sort((a, b) => {
-              const o: Record<string, number> = { sin_stock: 0, parcial: 1, cubierto: 2 }
-              return (o[a.cobertura] ?? 0) - (o[b.cobertura] ?? 0) || a.nombre_producto.localeCompare(b.nombre_producto)
-            })
-            .map(row => <ProductoRow key={row.id_producto > 0 ? String(row.id_producto) : `name:${row.nombre_producto}`} row={row} showToast={showToast} userEmail={userEmail} solicitudes={solicitudes} onIrATransferencia={onIrATransferencia} />)
-          }
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── Fila de producto (vista agregada) ────────────────────────────────────────
-function ProductoRow({ row, showToast, userEmail, solicitudes, onIrATransferencia }: {
-  row: SugerenciaRow
-  showToast: (msg: string, tipo?: 'ok' | 'err') => void
-  userEmail: string
-  solicitudes: SdSolicitud[]
-  onIrATransferencia?: (nv: string) => void
-}) {
-  const [formTransfer, setFormTransfer] = useState<null | { abierto: true }>(null)
-  const [tfCantidad, setTfCantidad] = useState(row.deficit)
-  const [tfOrigen, setTfOrigen] = useState(row.sucursal_mejor)
-  const [tfFecha, setTfFecha] = useState('')
-  const [enviando, setEnviando] = useState(false)
-  const [solicitudesActivas, setSolicitudesActivas] = useState<any[]>([])
-  const [cargandoAlerta, setCargandoAlerta] = useState(false)
-
-  const cob = {
-    cubierto:  { bg: '#d1fae5', color: '#065f46', label: 'Cubierto' },
-    parcial:   { bg: '#fef3c7', color: '#b45309', label: 'Cobertura parcial' },
-    sin_stock: { bg: '#fde8e8', color: '#E52322', label: 'Sin stock disponible' },
-  }[row.cobertura]
-
-  async function crearTransferencia() {
-    setEnviando(true)
-    try {
-      const res = await fetch('/api/requerimientos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tipo: 'abastecimiento',
-          sucursal_origen: tfOrigen,
-          sucursal_destino: row.sucursal,
-          estado: 'pendiente',
-          fecha_req: hoy(),
-          fecha_solicitada: tfFecha || null,
-          solicitado_por: userEmail,
-          items: [{ id_producto: row.id_producto, nombre_producto: row.nombre_producto, cantidad_solicitada: tfCantidad }],
-        }),
-      })
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando transferencia') }
-      showToast('✓ Transferencia creada')
-      setFormTransfer(null)
-    } catch (e: any) {
-      showToast(`Error: ${e.message}`, 'err')
-    }
-    setEnviando(false)
-  }
-
-  return (
-    <div>
-      <div className="flex items-center gap-4 px-4 py-3 flex-wrap"
-        style={{ background: row.cobertura === 'sin_stock' ? '#fefafa' : '#fff' }}>
-
-        {/* Nombre + badges */}
-        <div className="flex-1 min-w-48">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-sm"
-              style={{ color: row.cobertura === 'sin_stock' ? '#dc2626' : '#1a1a1a',
-                       fontWeight: row.cobertura === 'sin_stock' ? 600 : 500 }}>
-              {row.nombre_producto}
-            </span>
-            {row.id_producto > 0 ? (
-              <span className="text-xs font-mono px-1.5 py-0.5 rounded"
-                style={{ background: '#f4f4f3', color: '#888', border: '1px solid #e8e8e8' }}>
-                #{row.id_producto}
-              </span>
-            ) : (
-              <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                style={{ background: '#f3f0ff', color: '#7c3aed' }}>? sin identificar</span>
-            )}
-            {row.categoria && (
-              <span className="text-xs px-1.5 py-0.5 rounded font-medium"
-                style={{ background: '#e8edf8', color: '#254A96' }}>{row.categoria}</span>
-            )}
-            {!row.activo && (
-              <span className="text-xs px-1.5 py-0.5 rounded font-bold"
-                style={{ background: '#fef3c7', color: '#b45309' }}>⚠ INACTIVO</span>
-            )}
-          </div>
-          {/* NV + SD IDs */}
-          {row.sol_ids.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {row.sol_ids.map(solId => {
-                const sol = solicitudes.find(s => s.id === solId)
-                if (!sol) return null
-                return (
-                  <span key={solId} className="text-xs font-mono px-1.5 py-0.5 rounded"
-                    style={{ background: '#f0f4ff', color: '#4b6cb7', border: '1px solid #d0daf5' }}>
-                    NV&nbsp;{sol.id_venta} · SD&nbsp;{sol.id}
-                  </span>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Cobertura badge */}
-        <span className="text-xs px-2.5 py-1 rounded-full font-semibold whitespace-nowrap"
-          style={{ background: cob.bg, color: cob.color }}>{cob.label}</span>
-
-        {/* Stats numéricos */}
-        <div className="flex items-center gap-5 text-center text-xs shrink-0">
-          <div>
-            <div className="text-xl font-bold leading-none" style={{ color: '#254A96' }}>{row.demandado}</div>
-            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Demandado</div>
-          </div>
-          <div>
-            <div className="text-xl font-bold leading-none"
-              style={{ color: row.stock_local === 0 ? '#E52322' : row.stock_local >= row.demandado ? '#10b981' : '#d97706' }}>
-              {row.stock_local}
-            </div>
-            <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Stock local</div>
-          </div>
-          {row.deficit > 0 && (
-            <div>
-              <div className="text-xl font-bold leading-none" style={{ color: '#E52322' }}>{row.deficit}</div>
-              <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Déficit</div>
-            </div>
-          )}
-          {row.disponible_otros > 0 && (
-            <div>
-              <div className="text-xl font-bold leading-none" style={{ color: '#f97316' }}>{row.disponible_otros}</div>
-              <div className="mt-0.5" style={{ color: '#B9BBB7' }}>Disp. en {row.sucursal_mejor}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Botón Transferir */}
-        {row.cobertura !== 'cubierto' && (
-          <button
-            onClick={async () => {
-              if (formTransfer) {
-                setFormTransfer(null)
-                setSolicitudesActivas([])
-              } else {
-                setTfCantidad(row.deficit)
-                setTfOrigen(row.sucursal_mejor)
-                setTfFecha('')
-                setFormTransfer({ abierto: true })
-                if (row.id_producto > 0) {
-                  setCargandoAlerta(true)
-                  const { data } = await supabase
-                    .from('requerimiento_items')
-                    .select('cantidad_solicitada, requerimientos!inner(id, nv, notas, estado, sucursal_origen, sucursal_destino, fecha_req)')
-                    .eq('id_producto', row.id_producto)
-                  const activas = (data ?? []).filter((it: any) =>
-                    ['pendiente', 'conf_stock', 'preparacion', 'en_transito'].includes(it.requerimientos.estado)
-                    && it.requerimientos.sucursal_destino === row.sucursal
-                  )
-                  setSolicitudesActivas(activas)
-                  setCargandoAlerta(false)
-                }
-              }
-            }}
-            className="text-xs px-2.5 py-1 rounded-lg font-semibold shrink-0"
-            style={{ background: '#fff7ed', color: '#ea580c', border: '1px solid #fed7aa' }}>
-            🔄 Transferir
-          </button>
-        )}
-      </div>
-
-      {/* Formulario inline de transferencia */}
-      {formTransfer && (
-        <div className="px-4 pb-4 pt-2 border-t" style={{ background: '#fffbf5', borderColor: '#fed7aa' }}>
-          {/* Alerta de solicitudes activas */}
-          {cargandoAlerta && (
-            <p className="text-xs mb-3" style={{ color: '#b45309' }}>Verificando solicitudes existentes…</p>
-          )}
-          {!cargandoAlerta && solicitudesActivas.length > 0 && (() => {
-            const nvsSolicitudes = new Set(solicitudes.filter(s => row.sol_ids.includes(s.id)).map((s: any) => String(s.id_venta)))
-            const sdsSolicitudes = new Set(row.sol_ids.map(String))
-            return (
-              <div className="mb-3 rounded-lg p-3 text-xs" style={{ background: '#fef3c7', border: '1px solid #fcd34d' }}>
-                <p className="font-bold mb-2" style={{ color: '#92400e' }}>
-                  ⚠ {solicitudesActivas.length === 1 ? 'Ya hay una solicitud activa' : `Ya hay ${solicitudesActivas.length} solicitudes activas`} para este material en {row.sucursal}
-                </p>
-                {solicitudesActivas.map((item: any, i: number) => {
-                  const req = item.requerimientos
-                  const sdMatch = req.notas?.match(/SD #(\d+)/)
-                  const esMisma = (req.nv && nvsSolicitudes.has(req.nv)) || (sdMatch && sdsSolicitudes.has(sdMatch[1]))
-                  const estadoLabel: Record<string, string> = { pendiente: 'Pendiente', conf_stock: 'Aprobada', preparacion: 'En preparación', en_transito: 'En tránsito' }
-                  return (
-                    <div key={i} className="flex flex-wrap items-center gap-2 mt-1 pt-1" style={{ borderTop: i > 0 ? '1px solid #fcd34d' : 'none' }}>
-                      <span style={{ color: '#78350f' }}>
-                        {req.sucursal_origen} → {req.sucursal_destino}
-                      </span>
-                      <span className="font-semibold" style={{ color: '#92400e' }}>{item.cantidad_solicitada} u</span>
-                      <span className="px-1.5 py-0.5 rounded font-medium" style={{ background: '#fde68a', color: '#92400e' }}>{estadoLabel[req.estado] ?? req.estado}</span>
-                      {req.nv && (onIrATransferencia
-                        ? <button onClick={() => onIrATransferencia(req.nv)}
-                            className="underline font-semibold" style={{ color: '#92400e' }} title="Ver en pestaña Transferencias">
-                            NV {req.nv} →
-                          </button>
-                        : <span style={{ color: '#78350f' }}>NV {req.nv}</span>
-                      )}
-                      {sdMatch && <span style={{ color: '#78350f' }}>SD #{sdMatch[1]}</span>}
-                      <span className="font-bold px-1.5 py-0.5 rounded" style={{ background: esMisma ? '#fecaca' : '#e0e7ff', color: esMisma ? '#dc2626' : '#3730a3' }}>
-                        {esMisma ? '↑ misma NV/SD' : '↑ NV/SD diferente'}
-                      </span>
-                    </div>
-                  )
-                })}
-                <p className="mt-2" style={{ color: '#78350f' }}>
-                  Podés aumentar el volumen de la transferencia existente o crear una nueva si va a proveedor directo.
-                </p>
-              </div>
-            )
-          })()}
-          <div className="flex items-end gap-3 flex-wrap">
-            <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Cantidad</label>
-              <input type="number" min={1} value={tfCantidad}
-                onChange={e => setTfCantidad(parseInt(e.target.value) || 1)}
-                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none w-24"
-                style={{ borderColor: '#fed7aa' }} />
-            </div>
-            <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Sucursal origen</label>
-              <select value={tfOrigen} onChange={e => setTfOrigen(e.target.value)}
-                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
-                style={{ borderColor: '#fed7aa' }}>
-                <option value="">— Seleccionar —</option>
-                {SUCURSALES.filter(s => s !== row.sucursal).map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-semibold block mb-1" style={{ color: '#ea580c' }}>Fecha solicitada</label>
-              <input type="date" value={tfFecha} onChange={e => setTfFecha(e.target.value)}
-                className="border rounded-lg px-2.5 py-1.5 text-sm focus:outline-none"
-                style={{ borderColor: '#fed7aa' }} />
-            </div>
-            <button
-              onClick={crearTransferencia}
-              disabled={enviando || !tfOrigen}
-              className="px-4 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
-              style={{ background: '#10b981' }}>
-              {enviando ? 'Creando…' : 'Crear transferencia'}
-            </button>
-            <button
-              onClick={() => setFormTransfer(null)}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium"
-              style={{ background: '#f4f4f3', color: '#666' }}>
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -2908,12 +1675,15 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
 // TAB: PREPARACIÓN — lista de productos a preparar por fecha/sucursal
 // ═══════════════════════════════════════════════════════════════════════════════
 type PickingItem = { nombre: string; cantidad: number; unidad: string; codigo_material?: string | null }
-type PickingPedido = { nv: string | number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; camion_id: string; vuelta: number; items: PickingItem[] }
+type PickingPedido = { id?: string; estado?: string; nv: string | number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; camion_id: string; vuelta: number; items: PickingItem[] }
 
-function TabPreparacion() {
+function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
+  rol: string; userId: string; userNombre: string; miSucursal: string | null
+  showToast: (msg: string, tipo?: 'ok' | 'err') => void
+}) {
   const [fechaDesde, setFechaDesde] = useState(hoy())
   const [fechaHasta, setFechaHasta] = useState(hoy())
-  const [sucursal, setSucursal] = useState('')
+  const [sucursal, setSucursal] = useState(miSucursal && SUCURSALES.includes(miSucursal) && rol === 'deposito' ? miSucursal : '')
   const [productos, setProductos] = useState<PickingItem[]>([])
   const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: PickingItem[] }[]>([])
   const [pedidosDetalle, setPedidosDetalle] = useState<PickingPedido[]>([])
@@ -3209,43 +1979,51 @@ function TabPreparacion() {
             )}
           </div>
 
-          {productos.length === 0 ? (
-            <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
-              <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos con ítems para ese período.</p>
-            </div>
+          {sucursal ? (
+            <ValidacionPrepView pedidos={pedidosDetalle as any} sucursal={sucursal} desde={fechaDesde} hasta={fechaHasta}
+              puedeValidar={['deposito', 'gerencia', 'admin_flota'].includes(rol)} userId={userId} userNombre={userNombre} showToast={showToast} />
           ) : (
-            <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: '#e8edf8' }}>
-                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Código</th>
-                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Material</th>
-                    <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Cantidad</th>
-                    <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Unidad</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {productos.map((p, i) => (
-                    <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafc', borderTop: '1px solid #f0f0f0' }}>
-                      <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap" style={{ color: p.codigo_material ? '#4b5563' : '#d1d5db' }}>{p.codigo_material ?? '—'}</td>
-                      <td className="px-4 py-2.5" style={{ color: '#1e1e1e' }}>{p.nombre}</td>
-                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: '#254A96' }}>
-                        {p.cantidad.toLocaleString('es-AR')}
-                      </td>
-                      <td className="px-4 py-2.5" style={{ color: '#666' }}>{p.unidad ?? 'u'}</td>
+            <>
+              <p className="text-xs mb-3" style={{ color: '#6b7280' }}>Elegí una sucursal para validar lo que hay físicamente, día por día.</p>
+          {productos.length === 0 ? (
+              <div className="bg-white rounded-xl border p-8 text-center" style={{ borderColor: '#e8edf8' }}>
+                <p className="text-sm" style={{ color: '#B9BBB7' }}>No hay pedidos con ítems para ese período.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl border overflow-hidden" style={{ borderColor: '#e8edf8' }}>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ background: '#e8edf8' }}>
+                      <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Código</th>
+                      <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Material</th>
+                      <th className="text-right px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Cantidad</th>
+                      <th className="text-left px-4 py-3 font-semibold text-xs" style={{ color: '#254A96' }}>Unidad</th>
                     </tr>
-                  ))}
-                  <tr style={{ background: '#e8edf8', borderTop: '2px solid #d4dbef' }}>
-                    <td className="px-4 py-2.5" />
-                    <td className="px-4 py-2.5 font-semibold text-xs" style={{ color: '#254A96' }}>TOTAL</td>
-                    <td className="px-4 py-2.5 text-right font-bold" style={{ color: '#254A96' }}>
-                      {totalUnidades.toLocaleString('es-AR')}
-                    </td>
-                    <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>unidades</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {productos.map((p, i) => (
+                      <tr key={i} style={{ background: i % 2 === 0 ? '#fff' : '#f9fafc', borderTop: '1px solid #f0f0f0' }}>
+                        <td className="px-4 py-2.5 font-mono text-xs whitespace-nowrap" style={{ color: p.codigo_material ? '#4b5563' : '#d1d5db' }}>{p.codigo_material ?? '—'}</td>
+                        <td className="px-4 py-2.5" style={{ color: '#1e1e1e' }}>{p.nombre}</td>
+                        <td className="px-4 py-2.5 text-right font-semibold" style={{ color: '#254A96' }}>
+                          {p.cantidad.toLocaleString('es-AR')}
+                        </td>
+                        <td className="px-4 py-2.5" style={{ color: '#666' }}>{p.unidad ?? 'u'}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#e8edf8', borderTop: '2px solid #d4dbef' }}>
+                      <td className="px-4 py-2.5" />
+                      <td className="px-4 py-2.5 font-semibold text-xs" style={{ color: '#254A96' }}>TOTAL</td>
+                      <td className="px-4 py-2.5 text-right font-bold" style={{ color: '#254A96' }}>
+                        {totalUnidades.toLocaleString('es-AR')}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs" style={{ color: '#B9BBB7' }}>unidades</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+            </>
           )}
 
           {/* Sección retiros */}

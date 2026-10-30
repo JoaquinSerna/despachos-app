@@ -1221,8 +1221,11 @@ function TabRequerimientos({ filtroEstados, rol, showToast, userEmail, highlight
           items: itemsValidos.map(i => ({ id_producto: i.id_producto ?? null, nombre_producto: i.nombre.trim(), cantidad_solicitada: i.cantidad })),
         }),
       })
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error ?? 'Error creando transferencia') }
-      showToast('✓ Transferencia creada')
+      const creada = await res.json().catch(() => ({} as any))
+      if (!res.ok) throw new Error(creada.error ?? 'Error creando transferencia')
+      showToast(creada.aprobada_automaticamente
+        ? `✓ Transferencia aprobada automáticamente (tiene la venta NV ${nfNV})${creada.id_extra ? ' — la cantidad de más quedó pendiente' : ''}`
+        : '✓ Transferencia creada')
       setModalNueva(false)
       cargarReqs()
     } catch (e: any) {

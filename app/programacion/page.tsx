@@ -2622,6 +2622,63 @@ function ProgramacionInner() {
     }
   }
 
+  // Sugerir 2 (experimental): OR-Tools en una función Python. Agrupa por dirección/cliente y minimiza camiones y km.
+  async function handleSugerir2() {
+    const sin = pedidos.filter(p => !p.camion_id)
+    if (!sin.length) return
+    const camionesLibres = camiones.filter(c => !camionesBlockeados.has(c.codigo))
+    const ya = pedidos.filter(p => p.camion_id)
+    const dep = DEPOSITOS[sucursal]
+    if (!dep) { showToast('Sugerir 2: la sucursal no tiene depósito configurado', 'err'); return }
+    const mapear = (p: Pedido) => ({
+      id: p.id, nv: p.nv, cliente: p.cliente, direccion: p.direccion, latitud: p.latitud, longitud: p.longitud,
+      peso_total_kg: p.peso_total_kg ?? 0, volumen_total_m3: p.volumen_total_m3 ?? 0,
+      requiere_volcador: !!p.requiere_volcador, items: (p.items ?? []).map(it => it.nombre),
+    })
+    setCargando(true)
+    try {
+      const res = await fetch('/api/sugerir_ortools', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sucursal, deposito: dep,
+          pedidos: sin.map(mapear),
+          camiones: camionesLibres,
+          ya_asignados: ya.map(p => ({ ...mapear(p), camion_id: p.camion_id })),
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      if (data.error) throw new Error(data.error)
+      const asigs: Record<string, string | null> = data.asignacion ?? {}
+      if (data.ordenEntrega && Object.keys(data.ordenEntrega).length > 0) ordenGoogleRef.current = data.ordenEntrega
+      const act = pedidos.map(p => ({ ...p, camion_id: p.id in asigs ? asigs[p.id] : p.camion_id }))
+      setPedidos(act); construirColumnas(act, camiones)
+      setOverflowPedidos(vueltaActiva < 4 ? act.filter(p => asigs[p.id] === null) : [])
+      const payloadResumen = { engine: 'ortools', camionesUsados: data.camionesUsados, kmTotal: data.kmTotal, paradas: data.paradas, distancias: data.distancias }
+      ultimaSugerenciaRef.current = { asigs, timestamp: new Date().toISOString(), engine: 'ortools', payloadResumen }
+      const motivos = [...new Set(Object.values(data.sinAsignar ?? {}) as string[])].join(' / ')
+      const nSin = Object.keys(data.sinAsignar ?? {}).length
+      const dist = data.distancias === 'calle' ? 'por calle' : 'en línea recta (aprox.)'
+      showToast(`🧮 Sugerir 2 — ${data.camionesUsados} camión(es), ${data.kmTotal} km ${dist}${nSin ? ` — ${nSin} sin asignar: ${motivos}` : ''}`, nSin ? 'err' : undefined)
+      if (userId) {
+        logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
+          fecha, sucursal, vuelta: vueltaActiva, engine: 'ortools', payload_google: payloadResumen,
+          total_sin_asignar_antes: sin.length,
+          asignados_por_ia: Object.values(asigs).filter(Boolean).length,
+          sin_camion_ia: Object.values(asigs).filter(c => c === null).length,
+          sugerencia: sin.map(p => ({
+            id: p.id, nv: p.nv, cliente: p.cliente, localidad: p.localidad ?? null,
+            peso_kg: p.peso_total_kg ?? 0, posiciones: p.volumen_total_m3 ?? 0, camion_sugerido: asigs[p.id] ?? null,
+          })),
+        })
+      }
+    } catch (e: any) {
+      showToast(`Sugerir 2 falló: ${e?.message ?? e}`, 'err')
+    }
+    setCargando(false)
+  }
+
   async function handleLimpiar() {
     // Solo limpiar pedidos editables; no tocar en_camino, entregado, etc.
     const editablesIds = new Set(pedidos.filter(p => p.estado === 'pendiente' || p.estado === 'programado').map(p => p.id))
@@ -3366,6 +3423,10 @@ function ProgramacionInner() {
               <button onClick={handleSugerir} disabled={cargando || guardando || totalSin === 0}
                 className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
                 style={{ background: '#7c3aed' }}>✦ Sugerir</button>
+              <button onClick={handleSugerir2} disabled={cargando || guardando || totalSin === 0}
+                title="Experimental: optimiza con OR-Tools (agrupa por dirección/cliente, menos camiones y km)"
+                className="px-4 py-2 text-sm font-medium rounded-lg text-white transition-colors disabled:opacity-40"
+                style={{ background: '#0f766e' }}>✦ Sugerir 2</button>
               {asignadosSinConfirmar.length > 0 && (
                 <span
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold"

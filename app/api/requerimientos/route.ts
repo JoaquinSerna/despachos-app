@@ -18,13 +18,17 @@ export async function GET(req: NextRequest) {
   const sucursal_destino = searchParams.get('sucursal_destino') ?? ''
   const fecha_desde = searchParams.get('fecha_desde') ?? ''
   const fecha_hasta = searchParams.get('fecha_hasta') ?? ''
+  const nv = searchParams.get('nv') ?? ''
 
   let query = admin
     .from('requerimientos')
     .select('*, requerimiento_items(*)')
     .order('created_at', { ascending: false })
 
-  if (tab === 'pendientes') {
+  if (nv) {
+    // Todo lo ya solicitado para esa venta (sirve para avisar de duplicados), menos lo rechazado
+    query = query.eq('nv', nv).neq('estado', 'rechazado')
+  } else if (tab === 'pendientes') {
     query = query.in('estado', ['pendiente', 'conf_stock', 'preparacion'])
   } else if (tab === 'transito') {
     query = query.eq('estado', 'en_transito')

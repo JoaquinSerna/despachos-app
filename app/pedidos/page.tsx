@@ -195,6 +195,9 @@ export default function PedidosPage() {
   const [transFecha, setTransFecha] = useState('')
   const [transNotas, setTransNotas] = useState('')
   const [transLoading, setTransLoading] = useState(false)
+  // Lo que ya se pidió por transferencia para la misma venta (para avisar de duplicados)
+  const [transPrevias, setTransPrevias] = useState<{ origen: string; destino: string; estado: string; items: { id_producto: number | null; nombre: string; cantidad: number }[] }[]>([])
+  const [transConfirmaDup, setTransConfirmaDup] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -529,13 +532,37 @@ export default function PedidosPage() {
     setTransOrigen('')
     setTransFecha(p.fecha_entrega ?? '')
     setTransNotas('')
+    setTransPrevias([]); setTransConfirmaDup(false)
     setModalTransfer(p)
+    if (p.nv) {
+      fetch(`/api/requerimientos?nv=${encodeURIComponent(p.nv)}`)
+        .then(r => r.json())
+        .then((rows: any[]) => {
+          if (!Array.isArray(rows)) return
+          setTransPrevias(rows.map(r => ({
+            origen: r.sucursal_origen, destino: r.sucursal_destino, estado: r.estado,
+            items: (r.requerimiento_items ?? []).map((x: any) => ({ id_producto: x.id_producto ?? null, nombre: x.nombre_producto ?? '', cantidad: Number(x.cantidad_aprobada ?? x.cantidad_solicitada) || 0 })),
+          })))
+        })
+        .catch(() => { /* sin aviso si no se pudo consultar */ })
+    }
+  }
+
+  const claveProducto = (n: string) => (n ?? '').replace(/^\s*\d+\s*[.)-]\s*/, '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  // Para un producto: las transferencias anteriores de la misma venta que ya lo incluyen
+  function yaSolicitado(it: { nombre: string; id_producto: number | null }) {
+    const previas = transPrevias
+      .map(t => ({ t, cant: t.items.filter(x => (it.id_producto && x.id_producto && String(it.id_producto) === String(x.id_producto)) || (it.nombre && claveProducto(x.nombre) === claveProducto(it.nombre))).reduce((a, x) => a + x.cantidad, 0) }))
+      .filter(x => x.cant > 0)
+    return { previas, total: previas.reduce((a, x) => a + x.cant, 0) }
   }
 
   async function confirmarTransferencia() {
     if (!modalTransfer || !transOrigen) return
-    setTransLoading(true)
     const itemsValidos = transItems.filter(it => it.nombre.trim() && it.cantidad > 0)
+    // Si algún producto ya se pidió para esta venta, se pide confirmación antes de sumar más
+    if (!transConfirmaDup && itemsValidos.some(it => yaSolicitado(it).total > 0)) { setTransConfirmaDup(true); return }
+    setTransLoading(true)
     const res = await fetch('/api/requerimientos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -877,7 +904,14 @@ export default function PedidosPage() {
                   <div className="border rounded-xl overflow-hidden" style={{ borderColor: '#e8edf8' }}>
                     {transItems.map((it, idx) => (
                       <div key={idx} className="flex items-center gap-3 px-3 py-2 text-sm border-b last:border-0" style={{ borderColor: '#f4f4f3' }}>
-                        <span className="flex-1 text-xs" style={{ color: '#1a1a1a' }}>{it.nombre}</span>
+                        <span className="flex-1 text-xs" style={{ color: '#1a1a1a' }}>
+                          {it.nombre}
+                          {yaSolicitado(it).total > 0 && (
+                            <span className="block mt-0.5" style={{ color: '#b45309' }}>
+                              ⚠ Ya solicitado: {yaSolicitado(it).total} u. ({yaSolicitado(it).previas.map(x => `${x.t.origen} → ${x.t.destino}, ${x.t.estado.replace('_', ' ')}`).join(' · ')})
+                            </span>
+                          )}
+                        </span>
                         <input type="number" min={1} value={it.cantidad}
                           onChange={e => {
                             const upd = [...transItems]
@@ -909,11 +943,16 @@ export default function PedidosPage() {
               </div>
             </div>
 
+            {transConfirmaDup && (
+              <p className="mt-4 text-xs px-3 py-2 rounded-lg" style={{ background: '#fef3c7', color: '#92400e' }}>
+                <b>Estos productos ya fueron solicitados</b> para esta venta (ver ⚠ arriba). Si seguís, se suma más cantidad a lo ya pedido. ¿Querés agregar más cantidad?
+              </p>
+            )}
             <div className="flex gap-2 mt-5">
               <button onClick={confirmarTransferencia} disabled={transLoading || !transOrigen}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
-                style={{ background: '#254A96' }}>
-                {transLoading ? 'Creando...' : '🔄 Crear requerimiento'}
+                style={{ background: transConfirmaDup ? '#d97706' : '#254A96' }}>
+                {transLoading ? 'Creando...' : transConfirmaDup ? 'Sí, agregar más cantidad' : '🔄 Crear requerimiento'}
               </button>
               <button onClick={() => setModalTransfer(null)}
                 className="px-4 py-2.5 rounded-xl text-sm font-medium"

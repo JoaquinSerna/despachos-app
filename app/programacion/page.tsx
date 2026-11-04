@@ -2660,7 +2660,7 @@ function ProgramacionInner() {
       const motivos = [...new Set(Object.values(data.sinAsignar ?? {}) as string[])].join(' / ')
       const nSin = Object.keys(data.sinAsignar ?? {}).length
       const dist = data.distancias === 'calle' ? 'por calle' : 'en línea recta (aprox.)'
-      showToast(`🧮 Sugerir 2 — ${data.camionesUsados} camión(es), ${data.kmTotal} km ${dist}${nSin ? ` — ${nSin} sin asignar: ${motivos}` : ''}`, nSin ? 'err' : undefined)
+      showToast(`🧮 Sugerir 2 — ${data.camionesUsados} camión(es), ${data.kmTotal} km ${dist}${data.reintento ? ` (${data.reintento})` : ''}${nSin ? ` — ${nSin} sin asignar: ${motivos}` : ''}`, nSin ? 'err' : undefined)
       if (userId) {
         logAuditoria(userId, userNombre, 'Aplicó sugerencia IA', 'Programación', {
           fecha, sucursal, vuelta: vueltaActiva, engine: 'ortools', payload_google: payloadResumen,

@@ -137,6 +137,7 @@ def resolver(payload):
     nuevos = [preparar_pedido(p) for p in payload['pedidos']]
     ya = [preparar_pedido(p) for p in payload.get('ya_asignados', []) if p.get('camion_id')]
     segundos = max(2, min(25, int(payload.get('segundos') or 8)))
+    partir = set(payload.get('_partir') or [])   # 2do intento: los lugares con pedidos que no entraron se reparten pedido por pedido
 
     por_camion = {c['codigo']: c for c in camiones}
     carga = {c['codigo']: {'kg': 0.0, 'pos': 0.0, 'largo': False, 'nolargo': False, 'n': 0} for c in camiones}
@@ -167,6 +168,13 @@ def resolver(payload):
         if nolargo and cg['largo']:
             return False
         return True
+
+    def motivo_sin_lugar(s):
+        aptos = [c for c in camiones if puede_llevar(c['codigo'], s['largo'], s['nolargo'], s['volcador'], s['grua'])]
+        mayor = max((c['tonelaje_max_kg'] for c in aptos), default=0)
+        if s['kg'] > mayor:
+            return f"Pesa {int(s['kg'])} kg y el camión más grande que lo puede llevar carga {int(mayor)} kg"
+        return 'No alcanzó la capacidad de los camiones del día (kg o posiciones)'
 
     # 1) Grupos de "mismo lugar" entre pedidos nuevos y ya asignados
     todos = ya + nuevos
@@ -207,6 +215,10 @@ def resolver(payload):
         if rep is None:
             for p in miembros_nu:
                 sin_asignar[p['id']] = 'Sin coordenadas ni otro pedido en el mismo lugar'
+            continue
+        if partir and len(miembros_nu) > 1 and any(p['id'] in partir for p in miembros_nu):
+            for p in miembros_nu:
+                libres.append({'pedidos': [p], 'xy': p['xy'] or rep['xy'], 'kg': p['kg'], 'pos': p['pos'], 'largo': p['largo'], 'nolargo': not p['largo'], 'volcador': p['volcador'], 'grua': p['grua']})
             continue
         libres.append({'pedidos': miembros_nu, 'xy': rep['xy'], 'kg': kg, 'pos': pos, 'largo': largo, 'nolargo': nolargo, 'volcador': volc, 'grua': grua})
 
@@ -281,10 +293,17 @@ def resolver(payload):
             for s in libres:
                 for p in s['pedidos']:
                     if p['id'] not in asignacion:
-                        sin_asignar.setdefault(p['id'], 'No entra en ningún camión (capacidad)')
+                        sin_asignar.setdefault(p['id'], motivo_sin_lugar(s))
 
     for p in nuevos:
         asignacion.setdefault(p['id'], None)
+    sin_lugar = [i for i, m in sin_asignar.items() if m.startswith(('Pesa', 'No alcanzó'))]
+    if sin_lugar and not partir:
+        # Lo que no entró puede ser por tratar un lugar como una sola parada: se reintenta separando los pedidos
+        otro = resolver({**payload, '_partir': sin_lugar})
+        if len(otro['sinAsignar']) < len(sin_asignar):
+            otro['reintento'] = 'pedidos del mismo lugar separados para que entren'
+            return otro
     return {
         'asignacion': asignacion, 'ordenEntrega': orden, 'sinAsignar': sin_asignar, 'rutas': rutas,
         'engine': 'ortools', 'distancias': distancias, 'sucursal': sucursal,

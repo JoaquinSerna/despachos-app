@@ -46,6 +46,8 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
   const [fechaSol, setFechaSol] = useState('')
   const [notaTr, setNotaTr] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [combinada, setCombinada] = useState(false)
+  const [escala, setEscala] = useState('')
   const [esperando, setEsperando] = useState<{ id: string; nota: string } | null>(null)
 
   const puedeDecidir = rol === 'deposito' || rol === 'gerencia' || rol === 'admin_flota'
@@ -88,8 +90,9 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
     filtro === 'todos' ? true : filtro === 'sin_decidir' ? !f.v.decision : !!f.v.decision), [faltantes, filtro])
   const sinDecidir = faltantes.filter(f => !f.v.decision).length
 
-  function abrirTransferencia(f: Faltante) {
+  function abrirTransferencia(f: Faltante, conEscala = false) {
     setModal(f)
+    setCombinada(conEscala); setEscala(conEscala && f.v.sucursal !== 'Guernica' ? 'Guernica' : '')
     setOrigen(''); setCantidad(String(f.falta)); setFechaSol(f.v.fecha)
     const lista = f.linea.pedidos.map(p => `NV ${p.nv} (${p.cliente}) x${fmtNum(p.cantidad)}`).join(' · ')
     setNotaTr(`Faltante en preparación del ${f.v.fecha}. ${lista}`)
@@ -100,22 +103,33 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
     const cant = Number(cantidad)
     if (!origen) { showToast('Elegí la sucursal de origen', 'err'); return }
     if (!(cant > 0)) { showToast('Ingresá una cantidad válida', 'err'); return }
+    if (combinada && (!escala || escala === origen || escala === modal.v.sucursal)) { showToast('Elegí la sucursal intermedia (distinta del origen y del destino)', 'err'); return }
     setEnviando(true)
     try {
       const idNum = modal.v.codigo && /^\d+$/.test(modal.v.codigo) ? Number(modal.v.codigo) : null
-      const crear = async (extra: { nv: string | null; cliente: string | null }, cantidadItem: number) => {
+      const ruta = combinada ? `${origen} → ${escala} → ${modal.v.sucursal}` : ''
+      const crear = async (extra: { nv: string | null; cliente: string | null }, cantidadItem: number, tramo?: { de: string; a: string; n: 1 | 2; previoId?: string }) => {
+        const nota = [notaTr.trim(), tramo ? `🔁 Transferencia combinada ${ruta} — tramo ${tramo.n} de 2.${tramo.n === 2 ? ' Se aprueba sola cuando llegue el tramo 1.' : ''}` : ''].filter(Boolean).join('\n')
         const res = await fetch('/api/requerimientos', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tipo: 'abastecimiento', sucursal_origen: origen, sucursal_destino: modal.v.sucursal, estado: 'pendiente',
+            tipo: 'abastecimiento', sucursal_origen: tramo?.de ?? origen, sucursal_destino: tramo?.a ?? modal.v.sucursal, estado: 'pendiente',
             fecha_req: hoyISO(), fecha_solicitada: fechaSol || null, solicitado_por: userEmail,
-            nv: extra.nv, cliente: extra.cliente, notas: notaTr.trim() || null,
+            nv: extra.nv, cliente: extra.cliente, notas: nota || null,
+            ...(tramo?.n === 2 ? { requerimiento_previo_id: tramo.previoId, sin_autoaprobar: true } : {}),
             items: [{ id_producto: idNum, nombre_producto: modal.v.nombre, cantidad_solicitada: cantidadItem }],
           }),
         })
         const j = await res.json()
         if (!res.ok || !j.id) throw new Error(j.error ?? 'No se pudo crear la transferencia')
         return j as { id: string; aprobada_automaticamente?: boolean; id_extra?: string | null }
+      }
+      // Con escala se crean 2 tramos encadenados: origen → escala y escala → destino (este se aprueba al llegar el 1ro)
+      const crearConTramos = async (extra: { nv: string | null; cliente: string | null }, cantidadItem: number) => {
+        if (!combinada) return crear(extra, cantidadItem)
+        const t1 = await crear(extra, cantidadItem, { de: origen, a: escala, n: 1 })
+        await crear(extra, cantidadItem, { de: escala, a: modal.v.sucursal, n: 2, previoId: t1.id })
+        return t1
       }
       // Una transferencia por cada venta (NV) afectada: se aprueba sola por lo que esa venta necesita.
       // Lo que sobra de la cantidad pedida va aparte, sin venta, y queda pendiente de aprobar.
@@ -126,24 +140,24 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
       for (const p of modal.linea.pedidos) {
         if (resto <= 0) break
         const asignar = Math.min(resto, p.cantidad)
-        const j = await crear({ nv: String(p.nv), cliente: p.cliente }, asignar)
+        const j = await crearConTramos({ nv: String(p.nv), cliente: p.cliente }, asignar)
         resto -= asignar
         primeraId = primeraId || j.id
         if (j.aprobada_automaticamente) aprobadas++; else pendientes++
         if (j.id_extra) pendientes++
       }
       if (resto > 0) {
-        const j = await crear({ nv: null, cliente: null }, resto)
+        const j = await crearConTramos({ nv: null, cliente: null }, resto)
         primeraId = primeraId || j.id
         pendientes++
       }
       const j = { id: primeraId }
       const { error } = await supabase.from('prep_validaciones').update({
-        decision: 'transferencia', decision_nota: `${cant} desde ${origen}`, decision_req_id: j.id, decision_por: userId, decision_en: new Date().toISOString(),
+        decision: 'transferencia', decision_nota: combinada ? `${cant} ${origen} → ${escala} → ${modal.v.sucursal}` : `${cant} desde ${origen}`, decision_req_id: j.id, decision_por: userId, decision_en: new Date().toISOString(),
       }).eq('id', modal.v.id)
       if (error) throw new Error('La transferencia se creó, pero no se pudo marcar la decisión')
-      if (userId) logAuditoria(userId, userNombre, 'Pidió transferencia por faltante', 'Abastecimiento', { sucursal: modal.v.sucursal, fecha: modal.v.fecha, producto: modal.v.nombre, cantidad: cant, origen, requerimiento: j.id })
-      showToast(`Transferencia desde ${origen}: ${aprobadas} aprobada${aprobadas !== 1 ? 's' : ''} automáticamente por tener venta${pendientes > 0 ? ` y ${pendientes} pendiente${pendientes !== 1 ? 's' : ''} de aprobar` : ''}`)
+      if (userId) logAuditoria(userId, userNombre, 'Pidió transferencia por faltante', 'Abastecimiento', { sucursal: modal.v.sucursal, fecha: modal.v.fecha, producto: modal.v.nombre, cantidad: cant, origen, escala: combinada ? escala : null, requerimiento: j.id })
+      showToast(combinada ? `Transferencia combinada ${ruta}: tramo 1 ${aprobadas > 0 ? 'aprobado' : 'pendiente de aprobar'}; el tramo 2 se aprueba solo cuando llegue` : `Transferencia desde ${origen}: ${aprobadas} aprobada${aprobadas !== 1 ? 's' : ''} automáticamente por tener venta${pendientes > 0 ? ` y ${pendientes} pendiente${pendientes !== 1 ? 's' : ''} de aprobar` : ''}`)
       setModal(null)
       await cargar()
     } catch (e: any) { showToast(e.message ?? 'Error', 'err') }
@@ -264,6 +278,7 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
                 ) : (
                   <>
                     <button onClick={() => abrirTransferencia(f)} style={btn('#1d4ed8', '#fff')}>🔄 Pedir transferencia</button>
+                    <button onClick={() => abrirTransferencia(f, true)} style={btn('#fff', '#1d4ed8', '1.5px solid #93c5fd')}>🔁 Transferencia combinada</button>
                     <button onClick={() => setEsperando({ id: f.v.id, nota: '' })} style={btn('#fff', '#7c3aed', '1.5px solid #c4b5fd')}>⏳ Esperar mercadería</button>
                   </>
                 )
@@ -279,7 +294,7 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
       {modal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => !enviando && setModal(null)}>
           <div onClick={e => e.stopPropagation()} className="bg-white rounded-2xl p-5" style={{ width: '100%', maxWidth: 480, maxHeight: '92vh', overflowY: 'auto' }}>
-            <h3 className="font-bold mb-1" style={{ color: '#254A96', fontSize: 17 }}>🔄 Pedir transferencia</h3>
+            <h3 className="font-bold mb-1" style={{ color: '#254A96', fontSize: 17 }}>{combinada ? '🔁 Transferencia combinada' : '🔄 Pedir transferencia'}</h3>
             <p className="text-sm mb-3" style={{ color: '#6b7280' }}><b>{modal.v.nombre}</b> → destino <b>{modal.v.sucursal}</b></p>
             <div className="space-y-3">
               <div>
@@ -290,6 +305,18 @@ export default function TabFaltantes({ rol, userEmail, userId, userNombre, miSuc
                 </select>
                 <p className="text-xs mt-1" style={{ color: '#9ca3af' }}>Verificá en el ERP que esa sucursal tenga stock.</p>
               </div>
+              {combinada && (
+                <div>
+                  <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Pasa por (sucursal intermedia) <span style={{ color: '#E52322' }}>*</span></label>
+                  <select value={escala} onChange={e => setEscala(e.target.value)} className="w-full border rounded-xl px-3 py-2 text-sm" style={{ borderColor: '#e8edf8' }}>
+                    <option value="">Seleccionar sucursal intermedia…</option>
+                    {SUCURSALES.filter(s => s !== modal.v.sucursal && s !== origen).map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <p className="text-xs mt-1" style={{ color: '#6b7280' }}>
+                    {origen && escala ? <>Se crean 2 pedidos: <b>{origen} → {escala}</b> y <b>{escala} → {modal.v.sucursal}</b>. El segundo se aprueba solo cuando llegue el primero.</> : 'Se crean 2 pedidos encadenados: origen → intermedia y intermedia → destino.'}
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Cantidad</label>

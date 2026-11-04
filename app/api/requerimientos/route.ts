@@ -100,10 +100,10 @@ async function crearRequerimiento(admin: ReturnType<typeof getAdmin>, reqData: a
 export async function POST(req: NextRequest) {
   const admin = getAdmin()
   const body = await req.json()
-  const { items, ...reqData } = body
+  const { items, sin_autoaprobar, ...reqData } = body
 
   // Con una venta asignada: se aprueba sola por lo que la venta necesita y lo extra queda pendiente
-  const conVenta = !!reqData.nv && String(reqData.nv).trim() !== '' && (reqData.estado ?? 'pendiente') === 'pendiente' && Array.isArray(items) && items.length > 0
+  const conVenta = !sin_autoaprobar && !!reqData.nv && String(reqData.nv).trim() !== '' && (reqData.estado ?? 'pendiente') === 'pendiente' && Array.isArray(items) && items.length > 0
   if (conVenta) {
     let reparto: Awaited<ReturnType<typeof repartirSegunVenta>> = null
     try { reparto = await repartirSegunVenta(admin, String(reqData.nv).trim(), items) } catch { reparto = null }
@@ -161,6 +161,26 @@ export async function PATCH(req: NextRequest) {
       await admin.from('requerimiento_items')
         .update({ cantidad_aprobada, notas })
         .eq('id', itemId)
+    }
+  }
+
+  // Transferencia combinada: al llegar el 1er tramo, el siguiente se aprueba solo (ya hay mercadería en la sucursal intermedia)
+  if (updates.estado === 'entregado') {
+    const { data: siguientes } = await admin.from('requerimientos')
+      .select('id, notas, requerimiento_items(id, cantidad_solicitada)')
+      .eq('requerimiento_previo_id', id).eq('estado', 'pendiente')
+    for (const sig of (siguientes ?? []) as any[]) {
+      const nota = `${sig.notas ? sig.notas + '\n' : ''}✅ Aprobada automáticamente: llegó el tramo anterior de la transferencia combinada.`
+      await admin.from('requerimientos').update({ estado: 'conf_stock', notas: nota }).eq('id', sig.id)
+      for (const it of sig.requerimiento_items ?? []) {
+        await admin.from('requerimiento_items').update({ cantidad_aprobada: it.cantidad_solicitada }).eq('id', it.id)
+      }
+      try {
+        await fetch(new URL('/api/recalcular-posiciones', req.url), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requerimiento_id: sig.id }),
+        })
+      } catch { /* no bloquea la entrega */ }
     }
   }
 

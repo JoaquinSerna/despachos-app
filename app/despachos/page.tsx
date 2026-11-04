@@ -571,7 +571,7 @@ export default function NuevoDespacho() {
       await supabase.from('pedido_items').insert(
         productosNV.map((p: any) => ({
           pedido_id: pedidoInsertado.id,
-          codigo_material: String(p.id_producto),
+          codigo_material: p.id_producto != null ? String(p.id_producto) : null,
           nombre: p.descripcion,
           cantidad: p.cantidad,
           unidad: p.material?.unidad_base || 'u',
@@ -1119,6 +1119,12 @@ export default function NuevoDespacho() {
                     <span className="ml-2 text-xs" style={{ color: '#B9BBB7' }}>×{p.cantidad}</span>
                     {!p.material && (
                       <span className="ml-2 text-xs font-medium" style={{ color: '#f59e0b' }}>⚠ sin match en maestro</span>
+                    )}
+                    {p.corregido_desde && (
+                      <span className="ml-2 text-xs font-medium" style={{ color: '#b45309' }}>⚠ el PDF decía “{p.corregido_desde}”: se corrigió al producto del catálogo (cód. {p.id_producto}). Revisalo con la NV.</span>
+                    )}
+                    {p.sin_catalogo && (
+                      <span className="ml-2 text-xs font-medium" style={{ color: '#b45309' }}>⚠ no está en el catálogo: revisá que coincida con la NV</span>
                     )}
                     {esHierroDeForma(p) && (
                       <button type="button" onClick={() => setHierroModal(true)}

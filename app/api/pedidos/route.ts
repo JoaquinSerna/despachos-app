@@ -199,6 +199,7 @@ export async function POST(req: NextRequest) {
           items.map((item: any) => ({
             pedido_id: data.id,
             nombre: item.descripcion ?? item.nombre ?? '',
+            codigo_material: item.id_producto != null ? String(item.id_producto) : null,
             cantidad: item.cantidad ?? 1,
             unidad: item.unidad ?? 'u',
           }))

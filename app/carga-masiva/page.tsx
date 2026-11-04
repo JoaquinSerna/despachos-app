@@ -47,7 +47,7 @@ interface SolicitudRaw {
   longitud: number | null
   horario: string
   prioridad_texto: string
-  productos: { descripcion: string; cantidad: number }[]
+  productos: { descripcion: string; cantidad: number; id_producto?: number | null; corregido_desde?: string; sin_catalogo?: boolean }[]
 }
 
 interface SolicitudEdit {
@@ -573,6 +573,8 @@ export default function CargaMasiva() {
                                   padding: '2px 8px', margin: '2px 4px 2px 0',
                                 }}>
                                   {p.descripcion} × {p.cantidad}
+                                  {p.corregido_desde && <span style={{ color: '#b45309' }} title={`El PDF decía: ${p.corregido_desde}`}> ⚠ corregido (decía “{p.corregido_desde}”)</span>}
+                                  {p.sin_catalogo && <span style={{ color: '#b45309' }}> ⚠ no está en el catálogo</span>}
                                 </span>
                               ))}
                             </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import { ajustarProductosACatalogo } from '@/app/lib/catalogo-nv'
 
 const PROMPT = `Este PDF contiene múltiples Solicitudes de Despacho. Extraé TODAS las solicitudes y devolvé SOLO un JSON array válido sin texto adicional ni markdown.
 
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
       for (const sol of solicitudes) {
         if (Array.isArray(sol.productos)) {
           sol.productos = sol.productos.map((p: any) => ({ ...p, descripcion: typeof p.descripcion === 'string' ? p.descripcion.toUpperCase() : p.descripcion }))
+          sol.productos = await ajustarProductosACatalogo(sol.productos)
         }
       }
     }

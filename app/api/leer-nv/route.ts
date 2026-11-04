@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ajustarProductosACatalogo } from '@/app/lib/catalogo-nv'
 import Anthropic from '@anthropic-ai/sdk'
 
 export async function POST(request: NextRequest) {
@@ -88,6 +89,7 @@ No incluyas productos cuya descripción contenga "Transporte" ni "Pallet". Solo 
 
     if (Array.isArray(datos.productos)) {
       datos.productos = datos.productos.map((p: any) => ({ ...p, descripcion: typeof p.descripcion === 'string' ? p.descripcion.toUpperCase() : p.descripcion }))
+      datos.productos = await ajustarProductosACatalogo(datos.productos)
     }
 
     return NextResponse.json({ success: true, datos })

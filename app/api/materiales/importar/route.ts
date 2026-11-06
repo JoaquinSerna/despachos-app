@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
         unidad_base: row.unidad_base || 'u',
         unidad_logistica: row.unidad_logistica || 'u',
         cant_x_unid_log: row.cant_x_unid_log || 1,
-        posiciones_x_unid_log: row.posiciones_x_unid_log || 1,
+        posiciones_x_unid_log: row.posiciones_x_unid_log ?? 1, // 0 es valido (complementarios que no suman posiciones)
         peso_kg_x_posicion: row.peso_kg_x_posicion || 0,
         notas: row.notas?.trim() || null,
       })

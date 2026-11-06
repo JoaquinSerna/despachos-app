@@ -168,6 +168,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
   async function marcarEnTransito() {
     if (!transito) return
     if (!seleccion.size) { showToast('Elegí al menos una solicitud', 'err'); return }
+    if (!nViaje.trim()) { showToast('Cargá el N° de viaje (ERP) para pasar a tránsito', 'err'); return }
     setEnviando(true)
     let ok = 0
     const fallos: string[] = []
@@ -350,7 +351,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
             )}
             <div className="grid grid-cols-2 gap-2 mb-4">
               <div>
-                <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>N° Viaje (ERP)</label>
+                <label className="text-xs font-medium block mb-0.5" style={{ color: '#254A96' }}>N° Viaje (ERP) *</label>
                 <input value={nViaje} onChange={e => setNViaje(e.target.value)} placeholder="ej: 1360" className="w-full border rounded-lg px-2.5 py-1.5 text-sm" style={{ borderColor: '#e8edf8' }} />
               </div>
               <div>

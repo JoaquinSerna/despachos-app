@@ -1709,6 +1709,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
   const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: PickingItem[] }[]>([])
   const [pedidosDetalle, setPedidosDetalle] = useState<PickingPedido[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
+  const [sdsErp, setSdsErp] = useState(0)
   const [loading, setLoading] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [error, setError] = useState('')
@@ -1731,6 +1732,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
       setRetiros(json.retiros ?? [])
       setPedidosDetalle(json.pedidos_detalle ?? [])
       setPedidosCount(json.pedidos_count ?? 0)
+      setSdsErp((json.sds_erp ?? []).length)
       setCargado(true)
     } catch (e: any) {
       setError(e.message)
@@ -1993,7 +1995,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
         <>
           <div className="flex items-center gap-4 mb-3">
             <span className="text-sm font-medium" style={{ color: '#254A96' }}>
-              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}
+              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}{sdsErp > 0 && <> + {sdsErp} SD del Excel del ERP sin pedido en Omega</>}
             </span>
             {totalUnidades > 0 && (
               <span className="text-xs" style={{ color: '#B9BBB7' }}>{totalUnidades.toLocaleString('es-AR')} unidades totales</span>

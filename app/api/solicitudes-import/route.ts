@@ -22,6 +22,18 @@ const SUCURSAL_MAP: Record<string, string> = {
   'costa atlantica': 'Pinamar',
 }
 
+// Encabezados del Excel sin importar mayusculas, acentos ni espacios ("Fecha Despacho" = fecha_despacho)
+function normRow(r: any): any {
+  const o: any = {}
+  for (const k of Object.keys(r)) {
+    o[k.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/[\s.]+/g, '_')] = r[k]
+  }
+  if (o.fecha_despacho == null && o.fecha != null) o.fecha_despacho = o.fecha
+  if (o.horario_entrega == null && o.horario != null) o.horario_entrega = o.horario
+  if (o.direccion_obra == null && o.direccion != null) o.direccion_obra = o.direccion
+  return o
+}
+
 function normalizeSucursal(s: string) {
   return SUCURSAL_MAP[s?.toLowerCase()?.trim()] ?? s
 }
@@ -97,7 +109,7 @@ export async function POST(req: NextRequest) {
 
     // Leer hoja de solicitudes
     const ws = wb.Sheets['Solicitudes de Despacho'] ?? wb.Sheets[wb.SheetNames[0]]
-    const rows: any[] = XLSX.utils.sheet_to_json(ws)
+    const rows: any[] = XLSX.utils.sheet_to_json(ws).map(normRow)
 
     if (!rows.length) return NextResponse.json({ error: 'Hoja de solicitudes vacía' }, { status: 400 })
 
@@ -155,9 +167,10 @@ export async function POST(req: NextRequest) {
 
     // Leer items si la hoja existe
     let itemsCount = 0
-    if (!soloAnalizar && wb.Sheets['items_solicitudes']) {
-      const wsItems = wb.Sheets['items_solicitudes']
-      const itemRows: any[] = XLSX.utils.sheet_to_json(wsItems)
+    const hojaItems = wb.SheetNames.find(n => /items/i.test(n))
+    if (!soloAnalizar && hojaItems) {
+      const wsItems = wb.Sheets[hojaItems]
+      const itemRows: any[] = XLSX.utils.sheet_to_json(wsItems).map(normRow)
       itemsCount = itemRows.length
       const toInsert = itemRows.map(r => ({
         id_solicitud: Number(r['id_solicitud']),

@@ -37,9 +37,10 @@ async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hast
       sols = sols.concat(data ?? [])
       if (!data || data.length < 1000) break
     }
-    sols = sols.filter(s => !/cancel|anulad|rechazad|deliver|entregad/i.test(String(s.estado ?? '')))
+    sols = sols.filter(s => !/cancel|anulad|rechazad|deliver|entregad|^sent$|enviad/i.test(String(s.estado ?? '')))
     if (!sols.length) return vacio
 
+    // Solo lo pendiente: lo ya enviado o entregado no se prepara
     // Las que ya tienen pedido en Omega (por NV) no se repiten
     const nvs = [...new Set(sols.map(s => String(s.id_venta)).filter(n => n && n !== '0'))]
     const enOmega = new Set<string>()

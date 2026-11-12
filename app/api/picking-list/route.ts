@@ -37,7 +37,7 @@ async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hast
       sols = sols.concat(data ?? [])
       if (!data || data.length < 1000) break
     }
-    sols = sols.filter(s => !/cancel|anulad|rechazad/i.test(String(s.estado ?? '')))
+    sols = sols.filter(s => !/cancel|anulad|rechazad|deliver|entregad/i.test(String(s.estado ?? '')))
     if (!sols.length) return vacio
 
     // Las que ya tienen pedido en Omega (por NV) no se repiten
@@ -54,11 +54,11 @@ async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hast
     const items: typeof vacio.items = []
     for (let i = 0; i < ids.length; i += 500) {
       const { data } = await admin.from('solicitudes_importadas_items')
-        .select('id_producto, nombre_producto, cantidad_solicitada, cantidad_entregada').in('id_solicitud', ids.slice(i, i + 500))
+        .select('id_producto, nombre_producto, tipo, cantidad_solicitada, cantidad_entregada').in('id_solicitud', ids.slice(i, i + 500))
       for (const it of data ?? []) {
         const cant = Number(it.cantidad_solicitada ?? 0) - Number(it.cantidad_entregada ?? 0)
         const rawNombre = stripPrefix(String(it.nombre_producto ?? ''))
-        if (cant <= 0 || !rawNombre) continue
+        if (cant <= 0 || !rawNombre || /addon/i.test(String(it.tipo ?? ''))) continue // los addons son servicios (transporte), no se preparan
         items.push({ nombre: toTitleCase(rawNombre), cantidad: cant, unidad: 'u', codigo_material: Number(it.id_producto) > 0 ? String(it.id_producto) : null })
       }
     }

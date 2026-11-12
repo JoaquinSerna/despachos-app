@@ -35,7 +35,9 @@ function normRow(r: any): any {
 }
 
 function normalizeSucursal(s: string) {
-  return SUCURSAL_MAP[s?.toLowerCase()?.trim()] ?? s
+  // sin acentos: el ERP exporta "Costa Atlántica", "Cañuelas", etc.
+  const k = String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+  return SUCURSAL_MAP[k] ?? SUCURSAL_MAP[String(s ?? '').toLowerCase().trim()] ?? s
 }
 
 function parseDate(val: any): string | null {
@@ -131,7 +133,7 @@ export async function POST(req: NextRequest) {
       prioridad: String(r['prioridad'] ?? ''),
       estado: String(r['estado'] ?? ''),
       id_venta: Number(r['id_venta'] ?? 0),
-      cliente: String(r['cliente'] ?? ''),
+      cliente: String(r['cliente'] || r['destino_de_venta'] || ''),
       destino: String(r['destino_de_venta'] ?? ''),
       direccion: String(r['direccion_obra'] ?? ''),
       latitud: r['latitud'] ? Number(r['latitud']) : null,

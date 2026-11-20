@@ -455,9 +455,14 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
   }
 
   async function cambiarEstado(nuevoEstado: string, cantOverride?: Record<string, number>) {
+    if (nuevoEstado === 'en_transito' && !editNViaje.trim()) { showToast('Cargá el N° de viaje (ERP) para pasar a tránsito', 'err'); return }
     setGuardando(true)
     const updates: any = { estado: nuevoEstado }
-    if (nuevoEstado === 'en_transito') { updates.n_viaje = editNViaje; updates.cod_vehiculo = editVehiculo }
+    if (nuevoEstado === 'en_transito') { updates.n_viaje = editNViaje.trim(); updates.cod_vehiculo = editVehiculo }
+    else {
+      if (editNViaje.trim() && editNViaje.trim() !== (req.n_viaje ?? '')) updates.n_viaje = editNViaje.trim()
+      if (editVehiculo.trim() && editVehiculo.trim() !== (req.cod_vehiculo ?? '')) updates.cod_vehiculo = editVehiculo.trim()
+    }
     if (nuevoEstado === 'entregado') { updates.fecha_recepcion = editFechaRec || hoy(); updates.tipo_entrega = editTipoEntrega || 'completa' }
     if (editNotas) updates.notas = editNotas
     const source = cantOverride
@@ -589,6 +594,19 @@ function ReqRow({ req: initialReq, rol, showToast, userEmail, onUpdated, camionC
                   </datalist>
                 </div>
               </div>
+              {req.estado === 'en_transito' && (editNViaje.trim() !== (req.n_viaje ?? '') || editVehiculo.trim() !== (req.cod_vehiculo ?? '')) && (
+                <button disabled={guardando} onClick={async () => {
+                  setGuardando(true)
+                  const res = await fetch('/api/requerimientos', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: req.id, n_viaje: editNViaje.trim() || null, cod_vehiculo: editVehiculo.trim() || null }) })
+                  const d = await res.json()
+                  setGuardando(false)
+                  if (!d.success) { showToast(`Error: ${d.error}`, 'err'); return }
+                  showToast('Viaje y vehículo guardados')
+                  setReq(r => ({ ...r, n_viaje: editNViaje.trim() || null, cod_vehiculo: editVehiculo.trim() || null })); onUpdated()
+                }} className="text-xs px-3 py-1.5 rounded-lg font-semibold disabled:opacity-50" style={{ background: '#e0f2fe', color: '#0369a1' }}>
+                  💾 Guardar viaje / vehículo
+                </button>
+              )}
               {(req.estado === 'en_transito' || req.estado === 'entregado') && (
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -1691,6 +1709,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
   const [retiros, setRetiros] = useState<{ id: string; nv: number; cliente: string; direccion: string; sucursal: string; fecha_entrega: string; items: PickingItem[] }[]>([])
   const [pedidosDetalle, setPedidosDetalle] = useState<PickingPedido[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
+  const [sdsErp, setSdsErp] = useState(0)
   const [loading, setLoading] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [error, setError] = useState('')
@@ -1713,6 +1732,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
       setRetiros(json.retiros ?? [])
       setPedidosDetalle(json.pedidos_detalle ?? [])
       setPedidosCount(json.pedidos_count ?? 0)
+      setSdsErp((json.sds_erp ?? []).length)
       setCargado(true)
     } catch (e: any) {
       setError(e.message)
@@ -1975,7 +1995,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
         <>
           <div className="flex items-center gap-4 mb-3">
             <span className="text-sm font-medium" style={{ color: '#254A96' }}>
-              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}
+              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}{sdsErp > 0 && <> + {sdsErp} SD del Excel del ERP sin pedido en Omega</>}
             </span>
             {totalUnidades > 0 && (
               <span className="text-xs" style={{ color: '#B9BBB7' }}>{totalUnidades.toLocaleString('es-AR')} unidades totales</span>

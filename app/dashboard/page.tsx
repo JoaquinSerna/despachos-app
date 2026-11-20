@@ -72,6 +72,12 @@ export default function Dashboard() {
   const [reprogFechaDash, setReprogFechaDash] = useState('')
   const [reprogVueltaDash, setReprogVueltaDash] = useState(1)
   const [reprogMotivoDash, setReprogMotivoDash] = useState('')
+  const [reprogCerradasManual, setReprogCerradasManual] = useState<number[]>([])
+  useEffect(() => {
+    if (!pedidoReprogDash || !reprogFechaDash) { setReprogCerradasManual([]); return }
+    supabase.from('vueltas_cerradas_manual').select('vuelta').eq('fecha', reprogFechaDash).eq('sucursal', pedidoReprogDash.sucursal)
+      .then(({ data }) => setReprogCerradasManual((data ?? []).map((r: any) => r.vuelta as number).filter((v: number) => v !== 0)))
+  }, [pedidoReprogDash, reprogFechaDash])
   const [toastDash, setToastDash] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [refrescando, setRefrescando] = useState(false)
   const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null)
@@ -284,7 +290,7 @@ export default function Dashboard() {
               <div>
                 <label className="block text-xs font-medium mb-1" style={{ color: '#254A96' }}>Vuelta</label>
                 {(() => {
-                  const cerradas = vueltasCerradasPara(reprogFechaDash)
+                  const cerradas = [...new Set([...vueltasCerradasPara(reprogFechaDash), ...reprogCerradasManual])]
                   return (
                     <>
                       <select value={reprogVueltaDash} onChange={e => setReprogVueltaDash(parseInt(e.target.value))}
@@ -294,13 +300,13 @@ export default function Dashboard() {
                           const cerrada = franja ? cerradas.includes(v) : false
                           return (
                             <option key={v} value={v} disabled={cerrada}>
-                              Vuelta {v}{cerrada ? ' — ⛔ Fuera de horario' : ''}
+                              Vuelta {v}{cerrada ? (reprogCerradasManual.includes(v) ? ' — ⛔ Cerrada por logística' : ' — ⛔ Fuera de horario') : ''}
                             </option>
                           )
                         })}
                       </select>
                       {reprogFechaDash && cerradas.includes(reprogVueltaDash) && (
-                        <p className="text-xs mt-1" style={{ color: '#E52322' }}>Esta vuelta ya cerró para esa fecha.</p>
+                        <p className="text-xs mt-1" style={{ color: '#E52322' }}>{reprogCerradasManual.includes(reprogVueltaDash) ? 'Esa vuelta está cerrada por logística. Elegí otra.' : 'Esta vuelta ya cerró para esa fecha.'}</p>
                       )}
                     </>
                   )
@@ -316,8 +322,13 @@ export default function Dashboard() {
                   style={{ borderColor: reprogFechaDash && reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim() ? '#E52322' : '#e8edf8' }} />
               </div>
             </div>
-            <div className="flex gap-2 mt-5">
-              <button disabled={!reprogFechaDash || vueltasCerradasPara(reprogFechaDash).includes(reprogVueltaDash) || (reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim())}
+            {(!reprogFechaDash || (reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim())) && (
+              <p className="text-xs mt-3" style={{ color: '#b45309' }}>
+                {!reprogFechaDash ? 'Elegí la nueva fecha.' : 'Escribí el motivo para poder confirmar.'}
+              </p>
+            )}
+            <div className="flex gap-2 mt-3">
+              <button disabled={!reprogFechaDash || vueltasCerradasPara(reprogFechaDash).includes(reprogVueltaDash) || reprogCerradasManual.includes(reprogVueltaDash) || (reprogFechaDash !== pedidoReprogDash?.fecha_entrega && !reprogMotivoDash.trim())}
                 onClick={() => handleReprogramarDashboard(pedidoReprogDash, reprogFechaDash, reprogVueltaDash, reprogMotivoDash)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
                 style={{ background: '#254A96' }}>Confirmar</button>

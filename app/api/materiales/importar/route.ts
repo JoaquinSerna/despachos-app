@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
         unidad_base: row.unidad_base || 'u',
         unidad_logistica: row.unidad_logistica || 'u',
         cant_x_unid_log: row.cant_x_unid_log || 1,
-        posiciones_x_unid_log: row.posiciones_x_unid_log || 1,
+        posiciones_x_unid_log: row.posiciones_x_unid_log ?? 1, // 0 es valido (complementarios que no suman posiciones)
         peso_kg_x_posicion: row.peso_kg_x_posicion || 0,
         notas: row.notas?.trim() || null,
       })
@@ -60,6 +60,9 @@ export async function POST(req: NextRequest) {
     if (row.descripcion_pdf?.trim()) {
       // La celda puede tener varias variantes separadas por "; " — resolverlas todas
       const variantes = row.descripcion_pdf.split(';').map((v: string) => v.trim()).filter(Boolean)
+      // Algunas descripciones del PDF tienen ';' propio (ej: "ADHESIVOS; TIPO: ..."): probar tambien el texto completo
+      const completa = row.descripcion_pdf.trim()
+      if (variantes.length > 1 && !variantes.includes(completa)) variantes.push(completa)
       for (const variante of variantes) {
         const { error: aliasErr } = await supabaseAdmin
           .from('material_aliases')

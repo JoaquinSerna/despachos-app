@@ -480,6 +480,10 @@ export default function NuevoDespacho() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError('')
 
+    // Si la sesion vencio, Supabase rechaza el alta con "row-level security": avisar claro
+    const { data: { session: sesionActiva } } = await supabase.auth.getSession()
+    if (!sesionActiva) { setError('Tu sesión venció. Cerrá sesión y volvé a entrar para cargar el pedido.'); setLoading(false); return }
+
     // Cada hierro de 6 a 32 mm tiene que tener definido si va derecho o doblado
     if (productosNV.some((p: any) => esHierroDeForma(p) && !p.forma_hierro)) {
       setError('Elegí si cada hierro va derecho o doblado antes de guardar.')
@@ -681,6 +685,9 @@ export default function NuevoDespacho() {
     e.preventDefault()
     setLoadingRetiro(true)
     setErrorRetiro('')
+
+    const { data: { session: sesionActivaR } } = await supabase.auth.getSession()
+    if (!sesionActivaR) { setErrorRetiro('Tu sesión venció. Cerrá sesión y volvé a entrar para cargar el retiro.'); setLoadingRetiro(false); return }
 
     const itemsValidos = itemsRetiro.filter(it => it.nombre_producto.trim())
     if (itemsValidos.length === 0) {

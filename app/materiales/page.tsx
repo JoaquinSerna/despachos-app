@@ -211,7 +211,7 @@ export default function MaterialesPage() {
           unidad_base: r.unidad_base?.toString().trim() || 'u',
           unidad_logistica: r.unidad_logistica?.toString().trim() || 'u',
           cant_x_unid_log: Number(r.cant_x_unid_log) || 1,
-          posiciones_x_unid_log: Number(r.posiciones_x_unid_log) || 1,
+          posiciones_x_unid_log: r.posiciones_x_unid_log === '' || r.posiciones_x_unid_log == null || isNaN(Number(r.posiciones_x_unid_log)) ? 1 : Number(r.posiciones_x_unid_log),
           peso_kg_x_posicion: Number(r.peso_kg_x_posicion) || 0,
           notas: r.notas?.toString().trim() || null,
         }))

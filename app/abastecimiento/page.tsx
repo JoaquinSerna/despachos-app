@@ -1570,8 +1570,17 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
     const file = e.target.files?.[0]; if (!file) return
     setImportandoSols(true)
     const fd = new FormData(); fd.append('file', file)
-    const res = await fetch('/api/solicitudes-import', { method: 'POST', body: fd })
-    const data = await res.json()
+    let data: any
+    try {
+      const res = await fetch('/api/solicitudes-import', { method: 'POST', body: fd })
+      data = await res.json()
+    } catch {
+      // Si el servidor corta (tiempo o tamaño) responde HTML y antes no se veia ningun aviso
+      setImportandoSols(false)
+      showToast('No se pudo importar: el servidor cortó la importación. Probá de nuevo; si sigue, avisá.', 'err')
+      if (fileSolsRef.current) fileSolsRef.current.value = ''
+      return
+    }
     setImportandoSols(false)
     if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
     showToast(`${data.total} solicitudes importadas (datos anteriores reemplazados)`)

@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 
+// El import borra e inserta miles de filas: con el limite por defecto se cortaba a mitad de camino
+export const maxDuration = 60
+
 function getAdmin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -92,6 +95,18 @@ function parseDate(val: any): string | null {
   } catch { return null }
 }
 
+// Inserta en lotes de 500, varios lotes a la vez (antes eran uno por uno y tardaba ~10 s)
+async function insertarEnLotes(admin: ReturnType<typeof getAdmin>, tabla: string, filas: any[]): Promise<string | null> {
+  const lotes: any[][] = []
+  for (let i = 0; i < filas.length; i += 500) lotes.push(filas.slice(i, i + 500))
+  for (let i = 0; i < lotes.length; i += 4) {
+    const res = await Promise.all(lotes.slice(i, i + 4).map(l => admin.from(tabla).insert(l)))
+    const fallo = res.find(r => r.error)
+    if (fallo?.error) return fallo.error.message
+  }
+  return null
+}
+
 // POST /api/solicitudes-import
 // Recibe el Excel de solicitudes de despacho exportado del sistema ERP
 // Cruza con pedidos existentes en la app y devuelve:
@@ -161,10 +176,8 @@ export async function POST(req: NextRequest) {
 
       const now = new Date().toISOString()
       const toInsert = solicitudes.map(s => ({ ...s, importado_en: now }))
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const { error } = await admin.from('solicitudes_importadas').insert(toInsert.slice(i, i + 500))
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      }
+      const errSols = await insertarEnLotes(admin, 'solicitudes_importadas', toInsert)
+      if (errSols) return NextResponse.json({ error: errSols }, { status: 500 })
     }
 
     // Leer items si la hoja existe
@@ -186,10 +199,8 @@ export async function POST(req: NextRequest) {
         cantidad_entregada: Number(r['cantidad_entregada'] ?? 0),
         hojas_de_ruta: String(r['hojas_de_ruta'] ?? ''),
       }))
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const { error } = await admin.from('solicitudes_importadas_items').insert(toInsert.slice(i, i + 500))
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      }
+      const errItems = await insertarEnLotes(admin, 'solicitudes_importadas_items', toInsert)
+      if (errItems) return NextResponse.json({ error: errItems }, { status: 500 })
     }
 
     return NextResponse.json({

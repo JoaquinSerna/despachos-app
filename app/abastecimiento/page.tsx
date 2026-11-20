@@ -1570,11 +1570,20 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
     const file = e.target.files?.[0]; if (!file) return
     setImportandoSols(true)
     const fd = new FormData(); fd.append('file', file)
-    const res = await fetch('/api/solicitudes-import', { method: 'POST', body: fd })
-    const data = await res.json()
+    let data: any
+    try {
+      const res = await fetch('/api/solicitudes-import', { method: 'POST', body: fd })
+      data = await res.json()
+    } catch {
+      // Si el servidor corta (tiempo o tamaño) responde HTML y antes no se veia ningun aviso
+      setImportandoSols(false)
+      showToast('No se pudo importar: el servidor cortó la importación. Probá de nuevo; si sigue, avisá.', 'err')
+      if (fileSolsRef.current) fileSolsRef.current.value = ''
+      return
+    }
     setImportandoSols(false)
     if (data.error) { showToast(`Error: ${data.error}`, 'err'); return }
-    showToast(`${data.total} solicitudes importadas (datos anteriores reemplazados)`)
+    showToast(`${data.total} solicitudes importadas y actualizadas (el historial se conserva)`)
     setResultSols(data)
     if (fileSolsRef.current) fileSolsRef.current.value = ''
   }
@@ -1675,7 +1684,7 @@ function TabImportar({ rol, showToast }: { rol: string; showToast: (msg: string,
         </div>
         <p className="text-xs" style={{ color: '#B9BBB7' }}>
           Exportá el Excel de solicitudes del ERP (hojas "Solicitudes de Despacho" e "items_solicitudes").
-          Cada importación <strong>reemplaza</strong> todos los datos anteriores.
+          Cada importación <strong>actualiza</strong> las solicitudes que trae (por número de SD) y conserva las anteriores.
           Usá "🗑 Limpiar" para borrar sin importar.
         </p>
         {resultSols && (
@@ -1710,6 +1719,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
   const [pedidosDetalle, setPedidosDetalle] = useState<PickingPedido[]>([])
   const [pedidosCount, setPedidosCount] = useState(0)
   const [sdsErp, setSdsErp] = useState(0)
+  const [erpImportado, setErpImportado] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [exportando, setExportando] = useState(false)
   const [error, setError] = useState('')
@@ -1733,6 +1743,7 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
       setPedidosDetalle(json.pedidos_detalle ?? [])
       setPedidosCount(json.pedidos_count ?? 0)
       setSdsErp((json.sds_erp ?? []).length)
+      setErpImportado(json.erp_importado_en ?? null)
       setCargado(true)
     } catch (e: any) {
       setError(e.message)
@@ -1995,8 +2006,17 @@ function TabPreparacion({ rol, userId, userNombre, miSucursal, showToast }: {
         <>
           <div className="flex items-center gap-4 mb-3">
             <span className="text-sm font-medium" style={{ color: '#254A96' }}>
-              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}{sdsErp > 0 && <> + {sdsErp} SD del Excel del ERP sin pedido en Omega</>}
+              {productos.length} producto{productos.length !== 1 ? 's' : ''} — {pedidosCount} pedido{pedidosCount !== 1 ? 's' : ''}{sdsErp > 0 && <> + {sdsErp} SD del Excel del ERP</>}
             </span>
+            {(() => {
+              const horas = erpImportado ? (Date.now() - new Date(erpImportado).getTime()) / 3600000 : null
+              const viejo = horas == null || horas > 24
+              return (
+                <span className="text-xs px-2 py-1 rounded-lg" style={{ background: viejo ? '#fef3c7' : '#f0fdf4', color: viejo ? '#92400e' : '#166534' }}>
+                  {erpImportado ? `Excel de solicitudes importado: ${new Date(erpImportado).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}${viejo ? ' — desactualizado, importá el de hoy' : ''}` : 'Todavía no se importó el Excel de solicitudes'}
+                </span>
+              )
+            })()}
             {totalUnidades > 0 && (
               <span className="text-xs" style={{ color: '#B9BBB7' }}>{totalUnidades.toLocaleString('es-AR')} unidades totales</span>
             )}

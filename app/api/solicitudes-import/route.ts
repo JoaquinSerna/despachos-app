@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import * as XLSX from 'xlsx'
 
+// El import borra e inserta miles de filas: con el limite por defecto se cortaba a mitad de camino
+export const maxDuration = 60
+
 function getAdmin() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -92,6 +95,29 @@ function parseDate(val: any): string | null {
   } catch { return null }
 }
 
+// Inserta en lotes de 500, varios lotes a la vez (antes eran uno por uno y tardaba ~10 s)
+async function insertarEnLotes(admin: ReturnType<typeof getAdmin>, tabla: string, filas: any[]): Promise<string | null> {
+  const lotes: any[][] = []
+  for (let i = 0; i < filas.length; i += 500) lotes.push(filas.slice(i, i + 500))
+  for (let i = 0; i < lotes.length; i += 4) {
+    const res = await Promise.all(lotes.slice(i, i + 4).map(l => admin.from(tabla).insert(l)))
+    const fallo = res.find(r => r.error)
+    if (fallo?.error) return fallo.error.message
+  }
+  return null
+}
+
+async function upsertEnLotes(admin: ReturnType<typeof getAdmin>, tabla: string, filas: any[], clave: string): Promise<string | null> {
+  const lotes: any[][] = []
+  for (let i = 0; i < filas.length; i += 500) lotes.push(filas.slice(i, i + 500))
+  for (let i = 0; i < lotes.length; i += 4) {
+    const res = await Promise.all(lotes.slice(i, i + 4).map(l => admin.from(tabla).upsert(l, { onConflict: clave })))
+    const fallo = res.find(r => r.error)
+    if (fallo?.error) return fallo.error.message
+  }
+  return null
+}
+
 // POST /api/solicitudes-import
 // Recibe el Excel de solicitudes de despacho exportado del sistema ERP
 // Cruza con pedidos existentes en la app y devuelve:
@@ -153,42 +179,38 @@ export async function POST(req: NextRequest) {
     const cargados = solicitudes.filter(s => nvsEnApp.has(String(s.id_venta)))
     const noCargados = solicitudes.filter(s => !nvsEnApp.has(String(s.id_venta)))
 
-    // Si no es solo análisis, reemplazar TODA la tabla (borrar + insertar)
-    if (!soloAnalizar) {
-      // Borrar items primero (FK), luego solicitudes
-      await admin.from('solicitudes_importadas_items').delete().gte('id_solicitud', 0)
-      await admin.from('solicitudes_importadas').delete().gte('id', 0)
-
-      const now = new Date().toISOString()
-      const toInsert = solicitudes.map(s => ({ ...s, importado_en: now }))
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const { error } = await admin.from('solicitudes_importadas').insert(toInsert.slice(i, i + 500))
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      }
-    }
-
-    // Leer items si la hoja existe
+    // Si no es solo análisis: se actualiza por número de SD y se conserva el historial
+    // (antes se borraba todo, y las SD viejas se perdian aunque tuvieran transferencias pendientes)
     let itemsCount = 0
-    const hojaItems = wb.SheetNames.find(n => /items/i.test(n))
-    if (!soloAnalizar && hojaItems) {
-      const wsItems = wb.Sheets[hojaItems]
-      const itemRows: any[] = XLSX.utils.sheet_to_json(wsItems).map(normRow)
-      itemsCount = itemRows.length
-      const toInsert = itemRows.map(r => ({
-        id_solicitud: Number(r['id_solicitud']),
-        id_venta: Number(r['id_venta']),
-        id_producto: Number(r['id_producto']),
-        nombre_producto: String(r['nombre_producto'] ?? ''),
-        tipo: String(r['tipo'] ?? ''),
-        categoria: String(r['categoria'] ?? ''),
-        subcategoria: String(r['subcategoria'] ?? ''),
-        cantidad_solicitada: Number(r['cantidad_solicitada'] ?? 0),
-        cantidad_entregada: Number(r['cantidad_entregada'] ?? 0),
-        hojas_de_ruta: String(r['hojas_de_ruta'] ?? ''),
-      }))
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const { error } = await admin.from('solicitudes_importadas_items').insert(toInsert.slice(i, i + 500))
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!soloAnalizar) {
+      const now = new Date().toISOString()
+      const errSols = await upsertEnLotes(admin, 'solicitudes_importadas', solicitudes.map(s => ({ ...s, importado_en: now })), 'id')
+      if (errSols) return NextResponse.json({ error: errSols }, { status: 500 })
+
+      const hojaItems = wb.SheetNames.find(n => /items/i.test(n))
+      if (hojaItems) {
+        const itemRows: any[] = XLSX.utils.sheet_to_json(wb.Sheets[hojaItems]).map(normRow)
+        itemsCount = itemRows.length
+        const toInsert = itemRows.map(r => ({
+          id_solicitud: Number(r['id_solicitud']),
+          id_venta: Number(r['id_venta']),
+          id_producto: Number(r['id_producto']),
+          nombre_producto: String(r['nombre_producto'] ?? ''),
+          tipo: String(r['tipo'] ?? ''),
+          categoria: String(r['categoria'] ?? ''),
+          subcategoria: String(r['subcategoria'] ?? ''),
+          cantidad_solicitada: Number(r['cantidad_solicitada'] ?? 0),
+          cantidad_entregada: Number(r['cantidad_entregada'] ?? 0),
+          hojas_de_ruta: String(r['hojas_de_ruta'] ?? ''),
+        }))
+        // Los items de las SD que vienen en este Excel se reemplazan; los de las demas SD no se tocan
+        const idsSol = [...new Set(toInsert.map(i => i.id_solicitud))]
+        for (let i = 0; i < idsSol.length; i += 200) {
+          const { error } = await admin.from('solicitudes_importadas_items').delete().in('id_solicitud', idsSol.slice(i, i + 200))
+          if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        }
+        const errItems = await insertarEnLotes(admin, 'solicitudes_importadas_items', toInsert)
+        if (errItems) return NextResponse.json({ error: errItems }, { status: 500 })
       }
     }
 

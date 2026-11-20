@@ -83,8 +83,16 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
     let vivo = true
     ;(async () => {
       const por: Record<string, { fecha_entrega: string | null; estado: string }[]> = {}
-      for (let i = 0; i < nvs.length; i += 200) {
-        const { data } = await supabase.from('pedidos').select('nv, estado, fecha_entrega').in('nv', nvs.slice(i, i + 200))
+      // 1) Solicitudes del Excel del ERP (Wemul): es la fuente actual
+      try {
+        const res = await fetch('/api/ventas-erp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nvs }) })
+        const erp = await res.json()
+        if (res.ok) for (const [nv, lista] of Object.entries(erp as Record<string, any[]>)) por[nv] = lista.map(x => ({ fecha_entrega: x.fecha_entrega, estado: x.estado }))
+      } catch { /* si falla, quedan los pedidos de Omega */ }
+      // 2) Respaldo: pedidos cargados en Omega antes de la migracion
+      const faltan = nvs.filter(n => !por[n])
+      for (let i = 0; i < faltan.length; i += 200) {
+        const { data } = await supabase.from('pedidos').select('nv, estado, fecha_entrega').in('nv', faltan.slice(i, i + 200))
         for (const p of (data ?? []) as any[]) { const k = String(p.nv); (por[k] ??= []).push({ fecha_entrega: p.fecha_entrega, estado: p.estado }) }
       }
       if (!vivo) return
@@ -150,8 +158,8 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
 
   const toggleEstado = (k: string) => setEstados(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k])
   const claveRuta = (r: Ruta) => `${r.origen}→${r.destino}`
-  const textoFecha = (a: Aporte) => a.nv && !a.fecha ? '⚠ sin fecha (la NV no tiene pedido cargado)'
-    : !a.fecha ? '' : `${a.fuente === 'pedido' ? 'entrega del pedido' : 'entrega solicitada'} ${fmtFecha(a.fecha)}`
+  const textoFecha = (a: Aporte) => a.nv && !a.fecha ? '⚠ sin fecha (la NV no está en el Excel de solicitudes importado)'
+    : !a.fecha ? '' : `${a.fuente === 'pedido' ? 'entrega de la SD' : 'entrega solicitada'} ${fmtFecha(a.fecha)}`
   const etiquetaAporte = (a: Aporte) => a.nv ? `NV ${a.nv}${a.cliente ? ` · ${a.cliente}` : ''}` : 'Sin NV (reposición)'
 
   const abrirTransito = (r: Ruta) => {
@@ -201,7 +209,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
         totales.push({ 'Origen': r.origen, 'Destino': r.destino, 'ID Producto': p.id_producto ?? '', 'Producto': p.nombre, 'Cantidad total': p.total, 'Solicitudes': p.aportes.length })
         for (const a of p.aportes) {
           detalle.push({ 'Origen': r.origen, 'Destino': r.destino, 'ID Producto': p.id_producto ?? '', 'Producto': p.nombre, 'Cantidad': a.cantidad,
-            'NV': a.nv ?? 'Sin NV', 'Cliente': a.cliente ?? '', 'Fecha de entrega': a.fecha ? fmtFecha(a.fecha) : '', 'Origen de la fecha': a.fuente === 'pedido' ? 'Pedido de la NV' : a.fuente === 'solicitud' ? 'Solicitud' : '', 'Estado': ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado })
+            'NV': a.nv ?? 'Sin NV', 'Cliente': a.cliente ?? '', 'Fecha de entrega': a.fecha ? fmtFecha(a.fecha) : '', 'Origen de la fecha': a.fuente === 'pedido' ? 'SD de la NV (Excel del ERP)' : a.fuente === 'solicitud' ? 'Solicitud' : '', 'Estado': ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado })
         }
       }
     }
@@ -423,7 +431,7 @@ export default function TabConsolidado({ rol, showToast }: { rol: string; showTo
                               {a.nv
                                 ? <span className="rounded-full px-2 py-0.5 font-semibold" style={{ background: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>NV {a.nv}{a.cliente ? ` · ${a.cliente}` : ''}</span>
                                 : <span style={{ color: '#9ca3af' }}>Sin NV (reposición)</span>}
-                              {textoFecha(a) && <span style={{ color: a.nv && !a.fecha ? '#b45309' : '#6b7280' }}>📅 {textoFecha(a).replace('⚠ ', '')}{a.pedidoEstado && !PEDIDO_ACTIVO.includes(a.pedidoEstado) ? ' (pedido ya ' + a.pedidoEstado.replace('_', ' ') + ')' : ''}</span>}
+                              {textoFecha(a) && <span style={{ color: a.nv && !a.fecha ? '#b45309' : '#6b7280' }}>📅 {textoFecha(a).replace('⚠ ', '')}{a.pedidoEstado && !PEDIDO_ACTIVO.includes(a.pedidoEstado) ? ' (SD ya ' + a.pedidoEstado.replace('_', ' ') + ')' : ''}</span>}
                               {a.estado !== 'pendiente' && <span style={{ color: '#9ca3af' }}>· {ESTADOS.find(e => e.key === a.estado)?.label ?? a.estado}</span>}
                             </div>
                           ))}

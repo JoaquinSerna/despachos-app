@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../supabase'
 import { puedeEditar } from '../lib/permisos'
+import Lubricantes from './Lubricantes'
 
 const SUCURSALES = ['LP520', 'LP139', 'Guernica', 'Cañuelas', 'Pinamar']
 const TOLERANCIA_MIN = 10
@@ -47,7 +48,7 @@ const MOTIVOS_PAUSA = [
   'Otro',
 ]
 
-type Tab = 'abiertas' | 'nueva' | 'actividad' | 'catalogo'
+type Tab = 'abiertas' | 'nueva' | 'lubri' | 'actividad' | 'catalogo'
 
 interface CatItem {
   id: string; grupo: string; sistema: string; nombre: string
@@ -188,6 +189,7 @@ export default function TallerPage() {
   const [sucursal, setSucursal] = useState('Guernica')
   const [sucursalLibre, setSucursalLibre] = useState(false) // usuario con "Todas las sucursales": puede cambiar de obra
   const [tab, setTab] = useState<Tab>('abiertas')
+  const [actVista, setActVista] = useState<'trabajos' | 'lubricantes'>('trabajos')
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'err' } | null>(null)
   const [ahora, setAhora] = useState(Date.now())
 
@@ -815,6 +817,7 @@ export default function TallerPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'abiertas', label: `🛠️ En curso${abiertas.length ? ` (${abiertas.length})` : ''}` },
     ...(puedeEd ? [{ key: 'nueva' as Tab, label: '➕ Iniciar trabajo' }] : []),
+    ...(puedeEd ? [{ key: 'lubri' as Tab, label: '🛢️ Iniciar lubricante' }] : []),
     { key: 'actividad', label: '📊 Actividad' },
     ...(esAdmin ? [{ key: 'catalogo' as Tab, label: '📚 Catálogo' }] : []),
   ]
@@ -1091,7 +1094,25 @@ export default function TallerPage() {
         )}
 
         {/* ───────── ACTIVIDAD ───────── */}
+        {tab === 'lubri' && (
+          <Lubricantes vista="nuevo" sucursal={sucursal} esAdmin={esAdmin} puedeEd={puedeEd} userId={userId}
+            camiones={camiones} equipos={equipos} mecanicos={mecanicos.filter(m => m.activo).map(m => m.nombre)} showToast={showToast} />
+        )}
+
         {tab === 'actividad' && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            {([['trabajos', '🔧 Trabajos'], ['lubricantes', '🛢️ Lubricantes']] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setActVista(k)} style={chip(actVista === k)}>{l}</button>
+            ))}
+          </div>
+        )}
+
+        {tab === 'actividad' && actVista === 'lubricantes' && (
+          <Lubricantes vista="actividad" sucursal={sucursal} esAdmin={esAdmin} puedeEd={puedeEd} userId={userId}
+            camiones={camiones} equipos={equipos} mecanicos={[]} showToast={showToast} />
+        )}
+
+        {tab === 'actividad' && actVista === 'trabajos' && (
           <>
             <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
               <div style={{ padding: '12px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>

@@ -9,71 +9,49 @@ function getAdmin() {
   )
 }
 
-export interface ComprometidoRow {
+interface ComprometidoRow {
   id_producto: number
   sucursal: string
   comprometido: number
 }
 
 // GET /api/stock-proyectado
-// Devuelve la cantidad comprometida en pedidos activos por id_producto y sucursal
-// Stock proyectado = stock_actual - comprometido
+// Cantidad comprometida por id_producto (ERP) y sucursal en las solicitudes de despacho pendientes
+// del Excel del ERP (Wemul), de hoy en adelante. Stock proyectado = stock_actual - comprometido
 export async function GET() {
   const admin = getAdmin()
-  const today = new Date().toISOString().split('T')[0]
+  const hoy = new Date().toISOString().split('T')[0]
 
-  // 1. Pedidos activos con su sucursal
-  const { data: pedidos, error: ePedidos } = await admin
-    .from('pedidos')
-    .select('id, sucursal')
-    .in('estado', ['pendiente', 'conf_stock', 'programado'])
-    .gte('fecha_entrega', today)
-
-  if (ePedidos) return NextResponse.json({ error: ePedidos.message }, { status: 500 })
-  if (!pedidos || pedidos.length === 0) return NextResponse.json([])
-
-  const pedidoIds = pedidos.map((p: any) => p.id)
-  const pedidoSucursal: Record<number, string> = {}
-  for (const p of pedidos as any[]) pedidoSucursal[p.id] = p.sucursal
-
-  // 2. Items de esos pedidos
-  const { data: items, error: eItems } = await admin
-    .from('pedido_items')
-    .select('pedido_id, nombre, cantidad')
-    .in('pedido_id', pedidoIds)
-
-  if (eItems) return NextResponse.json({ error: eItems.message }, { status: 500 })
-  if (!items || items.length === 0) return NextResponse.json([])
-
-  // 3. Aliases (descripcion_pdf → material_id)
-  const { data: aliases, error: eAliases } = await admin
-    .from('aliases')
-    .select('descripcion_pdf, material_id')
-    .eq('resuelto', true)
-
-  if (eAliases) return NextResponse.json({ error: eAliases.message }, { status: 500 })
-
-  const aliasMap = new Map<string, number>()
-  for (const a of (aliases ?? []) as any[]) {
-    aliasMap.set(a.descripcion_pdf, a.material_id)
+  const sucursalDe: Record<number, string> = {}
+  const ids: number[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin.from('solicitudes_importadas').select('id, sucursal')
+      .eq('estado', 'pending').gte('fecha_despacho', hoy).order('id').range(from, from + 999)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    for (const s of data ?? []) { sucursalDe[s.id] = s.sucursal; ids.push(s.id) }
+    if (!data || data.length < 1000) break
   }
+  if (!ids.length) return NextResponse.json([])
 
-  // 4. Agregar comprometido por (id_producto, sucursal)
-  const comprometidoMap = new Map<string, number>()
-  for (const item of (items ?? []) as any[]) {
-    const materialId = aliasMap.get(item.nombre)
-    if (!materialId) continue
-    const sucursal = pedidoSucursal[item.pedido_id]
-    if (!sucursal) continue
-    const key = `${materialId}|${sucursal}`
-    comprometidoMap.set(key, (comprometidoMap.get(key) ?? 0) + Number(item.cantidad))
+  const mapa = new Map<string, number>()
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data, error } = await admin.from('solicitudes_importadas_items')
+      .select('id_solicitud, id_producto, tipo, cantidad_solicitada, cantidad_entregada').in('id_solicitud', ids.slice(i, i + 300))
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    for (const it of data ?? []) {
+      if (/addon/i.test(String(it.tipo ?? '')) || !(Number(it.id_producto) > 0)) continue
+      const falta = Number(it.cantidad_solicitada ?? 0) - Number(it.cantidad_entregada ?? 0)
+      const suc = sucursalDe[it.id_solicitud]
+      if (falta <= 0 || !suc) continue
+      const k = `${it.id_producto}|${suc}`
+      mapa.set(k, (mapa.get(k) ?? 0) + falta)
+    }
   }
 
   const result: ComprometidoRow[] = []
-  for (const [key, comprometido] of comprometidoMap) {
-    const [idStr, sucursal] = key.split('|')
-    result.push({ id_producto: parseInt(idStr), sucursal, comprometido })
+  for (const [k, comprometido] of mapa) {
+    const [id, sucursal] = k.split('|')
+    result.push({ id_producto: Number(id), sucursal, comprometido })
   }
-
   return NextResponse.json(result)
 }

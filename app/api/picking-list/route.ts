@@ -26,7 +26,7 @@ function toTitleCase(s: string): string {
 // SDs importadas del Excel del ERP (Abastecimiento -> Importar -> Solicitudes de despacho) que todavia no
 // tienen pedido cargado en Omega. Se suman a la lista de preparacion para que el deposito vea todo lo que sale.
 async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hasta: string, sucursal: string | null) {
-  const vacio = { items: [] as { nombre: string; cantidad: number; unidad: string; codigo_material: string | null }[], sds: [] as { id: number; nv: string; cliente: string; direccion: string; sucursal: string; fecha_entrega: string }[] }
+  const vacio = { importado_en: null as string | null, items: [] as { nombre: string; cantidad: number; unidad: string; codigo_material: string | null }[], sds: [] as { id: number; nv: string; cliente: string; direccion: string; sucursal: string; fecha_entrega: string }[] }
   try {
     let sols: any[] = []
     for (let from = 0; ; from += 1000) {
@@ -37,18 +37,20 @@ async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hast
       sols = sols.concat(data ?? [])
       if (!data || data.length < 1000) break
     }
+    const { data: ultimo } = await admin.from('solicitudes_importadas').select('importado_en').order('importado_en', { ascending: false }).limit(1)
+    vacio.importado_en = ultimo?.[0]?.importado_en ?? null
     sols = sols.filter(s => !/cancel|anulad|rechazad|deliver|entregad|^sent$|enviad/i.test(String(s.estado ?? '')))
     if (!sols.length) return vacio
 
     // Solo lo pendiente: lo ya enviado o entregado no se prepara
-    // Las que ya tienen pedido en Omega (por NV) no se repiten
-    const nvs = [...new Set(sols.map(s => String(s.id_venta)).filter(n => n && n !== '0'))]
+    // Las SD que ya tienen un pedido cargado en Omega con ese mismo numero de SD no se repiten
     const enOmega = new Set<string>()
-    for (let i = 0; i < nvs.length; i += 500) {
-      const { data } = await admin.from('pedidos').select('nv').in('nv', nvs.slice(i, i + 500))
-      for (const p of data ?? []) enOmega.add(String(p.nv))
+    const sdIds = sols.map(s => String(s.id))
+    for (let i = 0; i < sdIds.length; i += 500) {
+      const { data } = await admin.from('pedidos').select('id_despacho').in('id_despacho', sdIds.slice(i, i + 500))
+      for (const p of data ?? []) enOmega.add(String(p.id_despacho))
     }
-    const faltan = sols.filter(s => !enOmega.has(String(s.id_venta)))
+    const faltan = sols.filter(s => !enOmega.has(String(s.id)))
     if (!faltan.length) return vacio
 
     const ids = faltan.map(s => s.id)
@@ -64,6 +66,7 @@ async function sdsDelErp(admin: ReturnType<typeof getAdmin>, desde: string, hast
       }
     }
     return {
+      importado_en: vacio.importado_en,
       items,
       sds: faltan.map(s => ({ id: s.id, nv: String(s.id_venta ?? ''), cliente: s.cliente ?? '', direccion: s.direccion ?? '', sucursal: s.sucursal ?? '', fecha_entrega: s.fecha_despacho ?? '' })),
     }
@@ -128,7 +131,7 @@ export async function GET(request: NextRequest) {
     sumarErp(soloErp)
     return NextResponse.json({
       productos: Object.values(soloErp).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')),
-      pedidos_count: 0, retiros: [], sds_erp: erp.sds,
+      pedidos_count: 0, retiros: [], sds_erp: erp.sds, erp_importado_en: erp.importado_en,
       fecha_desde: fechaDesde, fecha_hasta: fechaHasta, sucursal: sucursal ?? null,
     })
   }
@@ -209,7 +212,7 @@ export async function GET(request: NextRequest) {
     pedidos_count: pedidosNormales.length,
     pedidos_detalle: pedidosDetalle,
     retiros,
-    sds_erp: erp.sds,
+    sds_erp: erp.sds, erp_importado_en: erp.importado_en,
     fecha_desde: fechaDesde,
     fecha_hasta: fechaHasta,
     sucursal: sucursal ?? null,

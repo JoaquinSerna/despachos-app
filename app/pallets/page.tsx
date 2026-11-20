@@ -134,12 +134,12 @@ export default function PalletsPage() {
   // ── Autocomplete cliente ──
   const buscarClientes = useCallback(async (q: string) => {
     if (q.length < 2) { setSugerencias([]); return }
-    const { data } = await supabase
-      .from('pedidos')
-      .select('cliente')
-      .ilike('cliente', `%${q}%`)
-      .limit(20)
-    if (!data) return
+    const [{ data: ped }, { data: sols }] = await Promise.all([
+      supabase.from('pedidos').select('cliente').ilike('cliente', `%${q}%`).limit(20),
+      supabase.from('solicitudes_importadas').select('cliente').ilike('cliente', `%${q}%`).limit(40),
+    ])
+    const data = [...(sols ?? []), ...(ped ?? [])].filter(r => r.cliente)
+    if (!data.length) { setSugerencias([]); return }
     const unique = [...new Set(data.map(r => r.cliente as string))].sort().slice(0, 8)
     setSugerencias(unique)
   }, [])

@@ -55,12 +55,25 @@ type ItemNuevo = { id_producto?: number | null; nombre_producto: string; cantida
 // Una transferencia que tiene una venta (NV) asignada se aprueba sola por la cantidad que esa venta necesita
 // (menos lo que ya se pidió por transferencia para la misma NV). Lo que se pidió de más queda pendiente de aprobar.
 async function repartirSegunVenta(admin: ReturnType<typeof getAdmin>, nv: string, items: ItemNuevo[]) {
-  const { data: pedidos } = await admin.from('pedidos').select('id').eq('nv', nv).neq('estado', 'cancelado').neq('estado', 'rechazado')
-  const ids = (pedidos ?? []).map((p: any) => p.id)
-  if (!ids.length) return null
-
-  const { data: itemsVenta } = await admin.from('pedido_items').select('nombre, cantidad, codigo_material').in('pedido_id', ids)
-  if (!itemsVenta?.length) return null
+  // 1) Productos de la venta segun el Excel de solicitudes del ERP (Wemul): lo que falta entregar, sin servicios
+  let itemsVenta: { nombre: string; cantidad: number; codigo_material: string | null }[] = []
+  const nvNum = Number(nv)
+  if (Number.isInteger(nvNum) && nvNum > 0) {
+    const { data: erp } = await admin.from('solicitudes_importadas_items')
+      .select('nombre_producto, id_producto, tipo, cantidad_solicitada, cantidad_entregada').eq('id_venta', nvNum)
+    itemsVenta = (erp ?? [])
+      .filter((x: any) => !/addon/i.test(String(x.tipo ?? '')))
+      .map((x: any) => ({ nombre: x.nombre_producto ?? '', cantidad: Math.max(0, Number(x.cantidad_solicitada ?? 0) - Number(x.cantidad_entregada ?? 0)), codigo_material: x.id_producto ? String(x.id_producto) : null }))
+  }
+  // 2) Respaldo: pedidos cargados en Omega antes de la migracion
+  if (!itemsVenta.length) {
+    const { data: pedidos } = await admin.from('pedidos').select('id').eq('nv', nv).neq('estado', 'cancelado').neq('estado', 'rechazado')
+    const ids = (pedidos ?? []).map((p: any) => p.id)
+    if (!ids.length) return null
+    const { data: itemsPedido } = await admin.from('pedido_items').select('nombre, cantidad, codigo_material').in('pedido_id', ids)
+    itemsVenta = (itemsPedido ?? []) as any[]
+  }
+  if (!itemsVenta.length) return null
 
   const { data: previos } = await admin.from('requerimientos')
     .select('requerimiento_items(id_producto, nombre_producto, cantidad_solicitada, cantidad_aprobada)')

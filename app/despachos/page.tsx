@@ -88,7 +88,28 @@ function MapaPreview({ lat, lng }: { lat: number; lng: number }) {
   return <div ref={mapRef} style={{ height: 220, width: '100%' }} />
 }
 
+// Las entregas se cargan ahora en Wemul (ERP). El formulario original queda en el codigo, sin uso, por si hay que reactivarlo.
 export default function NuevoDespacho() {
+  const router = useRouter()
+  return (
+    <div style={{ minHeight: '100dvh', background: '#f4f4f3', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, fontFamily: 'Barlow, sans-serif' }}>
+      <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e0e0e0', padding: 28, maxWidth: 460, textAlign: 'center' }}>
+        <div style={{ fontSize: 42 }}>📦</div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: '#254A96', margin: '8px 0' }}>Nuevo pedido deshabilitado</h1>
+        <p style={{ fontSize: 14, color: '#666', lineHeight: 1.5, margin: '0 0 18px' }}>
+          Las solicitudes de despacho ahora se cargan en <b>Wemul</b>. Desde Omega ya no se crean pedidos.
+        </p>
+        <button onClick={() => router.push('/dashboard')}
+          style={{ padding: '12px 22px', borderRadius: 12, border: 'none', background: '#254A96', color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+          ← Volver al Dashboard
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function NuevoDespachoOriginal() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [leyendoPDF, setLeyendoPDF] = useState(false)
@@ -1552,3 +1573,6 @@ export default function NuevoDespacho() {
     </div>
   )
 }
+
+void NuevoDespachoOriginal
+

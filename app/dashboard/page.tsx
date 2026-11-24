@@ -9,7 +9,7 @@ import NotificacionBell from '../components/NotificacionBell'
 import { FRANJAS, vultaCerrada, vueltasCerradasPara } from '../lib/franjas'
 
 const TODAS_LAS_CARDS = [
-  { href: '/despachos',      icon: '📦', titulo: 'Nuevo pedido',       descripcion: 'Cargar solicitud de despacho',              disponible: true, roles: ['gerencia','ruteador','comercial'] },
+  { href: '/despachos',      icon: '📦', titulo: 'Nuevo pedido',       descripcion: 'Deshabilitado: las entregas se cargan en Wemul', disponible: false, roles: ['gerencia','ruteador','comercial'] },
   { href: '/materiales',     icon: '🏷️', titulo: 'Materiales',         descripcion: 'Maestro de productos y posiciones',          disponible: true, roles: ['gerencia','ruteador','admin_flota','deposito'] },
   { href: '/flota-base',     icon: '⚙️', titulo: 'Flota base',         descripcion: 'Camiones, posiciones y choferes habituales', disponible: true, roles: ['gerencia','admin_flota'] },
   { href: '/flota',          icon: '🚛', titulo: 'Flota del día',      descripcion: 'Configurar camiones y choferes',             disponible: true, roles: ['gerencia','admin_flota'] },
@@ -448,7 +448,7 @@ export default function Dashboard() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-sm" style={{ color: '#254A96' }}>{card.titulo}</span>
                         {!card.disponible && (
-                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100" style={{ color: '#B9BBB7' }}>Próximamente</span>
+                          <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100" style={{ color: '#B9BBB7' }}>{card.href === '/despachos' ? 'Deshabilitado' : 'Próximamente'}</span>
                         )}
                         {card.href === '/programacion' && pedidosGrandes > 0 && (
                           <span className="text-xs px-2 py-0.5 rounded-full font-semibold"
